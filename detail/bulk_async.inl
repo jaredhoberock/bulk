@@ -53,6 +53,8 @@ struct launcher
   {
     l.configure(f);
 
+    std::cout << "num_smem_bytes_per_block: " << l.num_smem_bytes_per_block() << std::endl;
+
     #if THRUST_DEVICE_COMPILER == THRUST_DEVICE_COMPILER_NVCC
     #if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 350)
       if(l.num_blocks() > 0 && l.num_threads_per_block() > 0)
@@ -136,11 +138,24 @@ void bulk_async(launch l, Function f)
 } // end bulk_async()
 
 
-template<typename Function,
-         typename Arg1>
+template<typename Function, typename Arg1>
 void bulk_async(launch l, Function f, Arg1 arg1)
 {
   bulk_async(l, detail::make_closure(f,arg1));
+} // end bulk_async()
+
+
+template<typename Function, typename Arg1, typename Arg2>
+void bulk_async(launch l, Function f, Arg1 arg1, Arg2 arg2)
+{
+  bulk_async(l, detail::make_closure(f,arg1,arg2));
+} // end bulk_async()
+
+
+template<typename Function, typename Arg1, typename Arg2, typename Arg3>
+void bulk_async(launch l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3)
+{
+  bulk_async(l, detail::make_closure(f,arg1,arg2,arg3));
 } // end bulk_async()
 
 

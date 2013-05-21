@@ -49,7 +49,7 @@ class launch
 
     size_t num_smem_bytes_per_block() const
     {
-      return m_num_threads_per_block;
+      return m_num_smem_bytes_per_block;
     }
 
 
@@ -73,6 +73,14 @@ void bulk_async(launch l, Function f);
 
 template<typename Function, typename Arg1>
 void bulk_async(launch l, Function f, Arg1 arg1);
+
+
+template<typename Function, typename Arg1, typename Arg2>
+void bulk_async(launch l, Function f, Arg1 arg1, Arg2 arg2);
+
+
+template<typename Function, typename Arg1, typename Arg2, typename Arg3>
+void bulk_async(launch l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3);
 
 
 } // end bulk_async
