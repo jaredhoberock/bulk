@@ -14,8 +14,12 @@ template<typename Function, typename Tuple>
 class closure
 {
   public:
+    typedef Function function_type;
+
+    typedef Tuple arguments_type;
+
     __host__ __device__
-    closure(Function f, const Tuple &args)
+    closure(function_type f, const arguments_type &args)
       :f(f),
        args(args)
     {}
@@ -28,8 +32,8 @@ class closure
     }
 
   private:
-    Function f;
-    Tuple args;
+    function_type   f;
+    arguments_type args;
 }; // end closure
 
 

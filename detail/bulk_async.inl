@@ -46,7 +46,7 @@ struct launcher
 {
   typedef void (*launch_function_t)(uninitialized<Function>);
 
-  void launch(grid_size_t num_blocks, block_size_t num_threads_per_block, Function f)
+  void launch(grid_size_t num_blocks, block_size_t num_threads_per_block, smem_size_t num_smem_bytes_per_block, Function f)
   {
     #if THRUST_DEVICE_COMPILER == THRUST_DEVICE_COMPILER_NVCC
     #if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 350)
@@ -54,7 +54,7 @@ struct launcher
       {
         uninitialized<Function> wrapped_f;
         wrapped_f.construct(f);
-        launch_by_value<<<num_blocks, num_threads_per_block>>>(wrapped_f);
+        launch_by_value<<<num_blocks, num_threads_per_block, num_smem_bytes_per_block>>>(wrapped_f);
         thrust::system::cuda::detail::synchronize_if_enabled("bulk_async_kernel_by_value");
       } // end if
     #endif // __CUDA_ARCH__
@@ -79,6 +79,24 @@ block_size_t choose_block_size(Function f)
 } // end choose_block_size()
 
 
+// choose a dynamic shared memory size given a function and a block size
+template<typename Function>
+smem_size_t choose_smem_size(block_size_t num_threads_per_block, Function f)
+{
+  namespace ns = thrust::system::cuda::detail;
+
+  ns::function_attributes_t attr = ns::function_attributes(launcher<Function>::get_launch_function());
+
+  size_t occupancy =
+    ns::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(ns::device_properties(),
+                                                                        attr,
+                                                                        num_threads_per_block,
+                                                                        0);
+
+  return ns::proportional_smem_allocation(ns::device_properties(), attr, occupancy);
+} // end choose_smem_size()
+
+
 } // end detail
 
 
@@ -87,10 +105,11 @@ template<typename DerivedPolicy,
 void bulk_async(const thrust::cuda::execution_policy<DerivedPolicy> &,
                 grid_size_t num_blocks,
                 block_size_t num_threads_per_block,
+                smem_size_t num_smem_bytes_per_block,
                 Function f)
 {
   detail::launcher<Function> launcher;
-  launcher.launch(num_blocks, num_threads_per_block, f);
+  launcher.launch(num_blocks, num_threads_per_block, num_smem_bytes_per_block, f);
 } // end bulk_async()
 
 
@@ -102,7 +121,8 @@ void bulk_async(const thrust::cuda::execution_policy<DerivedPolicy> &exec,
 {
   block_size_t num_threads_per_block = detail::choose_block_size(f);
   grid_size_t num_blocks = static_cast<grid_size_t>(thrust::detail::util::divide_ri(num_threads, num_threads_per_block));
-  bulk_async(exec, num_blocks, num_threads_per_block, f);
+  smem_size_t num_smem_bytes_per_block = detail::choose_smem_size(num_threads_per_block, f);
+  bulk_async(exec, num_blocks, num_threads_per_block, num_smem_bytes_per_block, f);
 } // end bulk_async()
 
 
@@ -112,10 +132,11 @@ template<typename DerivedPolicy,
 void bulk_async(const thrust::cuda::execution_policy<DerivedPolicy> &exec,
                 grid_size_t num_blocks,
                 block_size_t num_threads_per_block,
+                smem_size_t num_smem_bytes_per_block,
                 Function f,
                 Arg1 arg1)
 {
-  bulk_async(exec, num_blocks, num_threads_per_block, detail::make_closure(f,arg1));
+  bulk_async(exec, num_blocks, num_threads_per_block, num_smem_bytes_per_block, detail::make_closure(f,arg1));
 } // end bulk_async()
 
 

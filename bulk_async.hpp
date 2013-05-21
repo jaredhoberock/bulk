@@ -9,9 +9,12 @@ namespace bulk_async
 {
 
 
+// XXX these should all just be size_t
 typedef thrust::detail::uint32_t grid_size_t;
 
 typedef thrust::detail::uint32_t block_size_t;
+
+typedef size_t smem_size_t;
 
 
 template<typename DerivedPolicy,
@@ -19,6 +22,7 @@ template<typename DerivedPolicy,
 void bulk_async(const thrust::cuda::execution_policy<DerivedPolicy> &exec,
                 grid_size_t num_blocks,
                 block_size_t num_threads_per_block,
+                smem_size_t num_smem_bytes_per_block,
                 Function f);
 
 
@@ -35,6 +39,7 @@ template<typename DerivedPolicy,
 void bulk_async(const thrust::cuda::execution_policy<DerivedPolicy> &exec,
                 grid_size_t num_blocks,
                 block_size_t num_threads_per_block,
+                smem_size_t num_smem_bytes_per_block,
                 Function f,
                 Arg1 arg1);
 
