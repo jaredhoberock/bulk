@@ -53,8 +53,6 @@ struct launcher
   {
     l.configure(f);
 
-    std::cout << "num_smem_bytes_per_block: " << l.num_smem_bytes_per_block() << std::endl;
-
     #if THRUST_DEVICE_COMPILER == THRUST_DEVICE_COMPILER_NVCC
     #if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 350)
       if(l.num_blocks() > 0 && l.num_threads_per_block() > 0)
