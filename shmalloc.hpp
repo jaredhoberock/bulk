@@ -71,7 +71,7 @@ class on_chip_storage
 
         m_mutex.lock();
         {
-          if(m_num_free_bytes > num_aligned_bytes)
+          if(m_num_free_bytes >= num_aligned_bytes)
           {
             m_num_free_bytes -= num_aligned_bytes;
 
