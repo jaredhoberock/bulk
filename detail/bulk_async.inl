@@ -1,5 +1,6 @@
 #include "../bulk_async.hpp"
 #include "closure.hpp"
+#include "collective_task.hpp"
 #include <thrust/detail/minmax.h>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include <thrust/system/cuda/detail/runtime_introspection.h>
@@ -44,7 +45,9 @@ void launch_by_pointer(const Function *f) {}
 template<typename Function>
 struct launcher
 {
-  typedef void (*launch_function_t)(uninitialized<Function>);
+  typedef collective_task<Function> task_type;
+
+  typedef void (*launch_function_t)(uninitialized<task_type>);
 
   void launch(grid_size_t num_blocks, block_size_t num_threads_per_block, smem_size_t num_smem_bytes_per_block, Function f)
   {
@@ -52,9 +55,11 @@ struct launcher
     #if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 350)
       if(num_blocks > 0 && num_threads_per_block > 0)
       {
-        uninitialized<Function> wrapped_f;
-        wrapped_f.construct(f);
-        launch_by_value<<<num_blocks, num_threads_per_block, num_smem_bytes_per_block>>>(wrapped_f);
+        task_type task(f, num_smem_bytes_per_block);
+
+        uninitialized<task_type> wrapped_task;
+        wrapped_task.construct(task);
+        launch_by_value<<<num_blocks, num_threads_per_block, num_smem_bytes_per_block>>>(wrapped_task);
         thrust::system::cuda::detail::synchronize_if_enabled("bulk_async_kernel_by_value");
       } // end if
     #endif // __CUDA_ARCH__
@@ -63,7 +68,7 @@ struct launcher
 
   static launch_function_t get_launch_function()
   {
-    return launch_by_value<Function>;
+    return launch_by_value<task_type>;
   } // end get_launch_function()
 }; // end launcher
 
@@ -79,7 +84,6 @@ block_size_t choose_block_size(Function f)
 } // end choose_block_size()
 
 
-// choose a dynamic shared memory size given a function and a block size
 template<typename Function>
 smem_size_t choose_smem_size(block_size_t num_threads_per_block, Function f)
 {
