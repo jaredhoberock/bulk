@@ -5,6 +5,10 @@
 #include <thrust/detail/util/blocking.h>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 
+
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 200)
+
+
 namespace bulk_async
 {
 namespace detail
@@ -137,4 +141,7 @@ inline void shfree(void *ptr)
 
 
 } // end bulk_async
+
+
+#endif // __CUDA_ARCH__ >= 200
 

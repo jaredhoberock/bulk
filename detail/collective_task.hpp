@@ -21,12 +21,14 @@ class collective_task
     __device__
     void operator()()
     {
+#if __CUDA_ARCH__ >= 200
       // initialize shared storage
       if(threadIdx.x == 0)
       {
         detail::s_storage.construct(num_dynamic_smem_bytes);
       }
       __syncthreads();
+#endif
       
       // execute the closure
       closure();
