@@ -6,7 +6,7 @@
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 
 
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 200)
+#if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 200)
 
 
 namespace bulk_async
