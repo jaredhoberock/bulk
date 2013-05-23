@@ -141,6 +141,36 @@ inline void shfree(void *ptr)
 } // end shfree()
 
 
+template<typename ThreadGroup>
+__device__
+inline void *malloc(ThreadGroup &g, size_t num_bytes)
+{
+  __shared__ void *s_result;
+
+  if(g.index() == 0)
+  {
+    shmalloc(num_bytes);
+  } // end if
+
+  g.wait();
+
+  return s_result;
+} // end malloc()
+
+
+template<typename ThreadGroup>
+__device__
+inline void free(ThreadGroup &g, void *ptr)
+{
+  if(g.index() == 0)
+  {
+    shfree(ptr);
+  } // end if
+
+  g.wait();
+} // end free()
+
+
 } // end bulk
 
 
