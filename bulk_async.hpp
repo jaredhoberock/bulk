@@ -2,54 +2,75 @@
 
 #include <thrust/detail/config.h>
 #include <thrust/detail/cstdint.h>
+#include "thread_group.hpp"
 
 
 namespace bulk_async
 {
 
 
-class launch
+template<typename ThreadGroup>
+class group_launch_config
 {
   public:
     static const size_t use_default = UINT_MAX;
 
-    launch(size_t num_blocks,
-           size_t num_threads_per_block,
-           size_t num_smem_bytes_per_block = use_default)
-      : m_num_blocks(num_blocks),
-        m_num_threads_per_block(num_threads_per_block),
-        m_num_smem_bytes_per_block(num_smem_bytes_per_block),
-        m_num_threads(num_blocks * num_threads_per_block)
+
+    typedef ThreadGroup thread_group_type;
+
+
+    group_launch_config(thread_group_type group,
+                        size_t num_groups,
+                        size_t num_smem_bytes_per_group = use_default)
+      : m_example_group(group),
+        m_num_groups(num_groups),
+        m_num_smem_bytes_per_group(num_smem_bytes_per_group),
+        m_num_threads(num_groups * m_example_group.size())
     {}
 
 
-    launch(size_t num_threads)
-      : m_num_blocks(use_default),
-        m_num_threads_per_block(use_default),
-        m_num_smem_bytes_per_block(use_default),
+    group_launch_config(size_t num_threads)
+      : m_num_groups(use_default),
+        m_example_group(use_default),
+        m_num_smem_bytes_per_group(use_default),
         m_num_threads(num_threads)
     {}
 
 
     template<typename Function>
-    void configure(Function f);
-
-
-    size_t num_blocks() const
+    void configure(Function f,
+                   typename enable_if_static_thread_group<
+                     ThreadGroup,
+                     Function
+                   >::type * = 0)
     {
-      return m_num_blocks;
+      // no-op -- a static_thread_group is configured by definition
+    }
+
+
+    template<typename Function>
+    void configure(Function f,
+                   typename disable_if_static_thread_group<
+                     ThreadGroup,
+                     Function
+                   >::type * = 0);
+
+
+    size_t num_groups() const
+    {
+      return m_num_groups;
     }
 
     
-    size_t num_threads_per_block() const
+    size_t num_threads_per_group() const
     {
-      return m_num_threads_per_block;
+      return m_example_group.size();
     }
 
 
-    size_t num_smem_bytes_per_block() const
+    size_t num_smem_bytes_per_group() const
     {
-      return m_num_smem_bytes_per_block;
+      return m_num_smem_bytes_per_group;
     }
 
 
@@ -60,27 +81,53 @@ class launch
 
 
   private:
-    size_t m_num_blocks;
-    size_t m_num_threads_per_block;
-    size_t m_num_smem_bytes_per_block;
+    thread_group_type m_example_group;
+    size_t m_num_groups;
+    size_t m_num_smem_bytes_per_group;
     size_t m_num_threads;
 };
 
 
-template<typename Function>
-void bulk_async(launch l, Function f);
+typedef group_launch_config<thread_group> launch_config;
 
 
-template<typename Function, typename Arg1>
-void bulk_async(launch l, Function f, Arg1 arg1);
+template<typename ThreadGroup>
+  typename enable_if_thread_group<
+    ThreadGroup,
+    group_launch_config<ThreadGroup>
+  >::type
+    launch(ThreadGroup g, size_t num_groups, size_t num_smem_bytes_per_group = launch_config::use_default)
+{
+  return group_launch_config<ThreadGroup>(g, num_groups, num_smem_bytes_per_group);
+}
 
 
-template<typename Function, typename Arg1, typename Arg2>
-void bulk_async(launch l, Function f, Arg1 arg1, Arg2 arg2);
+inline launch_config launch(size_t num_groups, size_t group_size, size_t num_smem_bytes_per_group = launch_config::use_default)
+{
+  return launch_config(thread_group(group_size), num_groups, num_smem_bytes_per_group);
+}
 
 
-template<typename Function, typename Arg1, typename Arg2, typename Arg3>
-void bulk_async(launch l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3);
+inline launch_config launch(size_t num_threads)
+{
+  return launch_config(num_threads);
+}
+
+
+template<typename LaunchConfig, typename Function>
+void bulk_async(LaunchConfig l, Function f);
+
+
+template<typename LaunchConfig, typename Function, typename Arg1>
+void bulk_async(LaunchConfig l, Function f, Arg1 arg1);
+
+
+template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2>
+void bulk_async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2);
+
+
+template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2, typename Arg3>
+void bulk_async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3);
 
 
 } // end bulk_async

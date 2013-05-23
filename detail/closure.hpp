@@ -31,6 +31,21 @@ class closure
       apply_from_tuple(f,args);
     }
 
+
+    __host__ __device__
+    function_type function() const
+    {
+      return f;
+    }
+
+
+    __host__ __device__
+    arguments_type arguments() const
+    {
+      return args;
+    }
+
+
   private:
     function_type   f;
     arguments_type args;

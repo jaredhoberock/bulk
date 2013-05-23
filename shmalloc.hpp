@@ -4,6 +4,7 @@
 #include <thrust/detail/cstdint.h>
 #include <thrust/detail/util/blocking.h>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
+#include <cstdlib>
 
 
 #if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 200)
