@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../shmalloc.hpp"
+#include "../malloc.hpp"
 #include <thrust/detail/type_traits.h>
 #include "../thread_group.hpp"
 #include <thrust/detail/tuple_transform.h>
