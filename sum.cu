@@ -1,6 +1,5 @@
 #include <cstdio>
-#include "async.hpp"
-#include "shmalloc.hpp"
+#include "bulk.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
 #include <thrust/reduce.h>

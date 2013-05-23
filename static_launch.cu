@@ -1,8 +1,6 @@
 #include <cstdio>
 #include <iostream>
-#include "async.hpp"
-#include "shmalloc.hpp"
-#include "thread_group.hpp"
+#include "bulk.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
 #include <thrust/reduce.h>
