@@ -10,7 +10,7 @@ template<typename ThreadGroup, typename Iterator1, typename Size, typename Itera
 __device__
 void block_copy_n(ThreadGroup &this_group, Iterator1 first, Size n, Iterator2 result)
 {
-  for(Size i = this_group.index(); i < n; i += this_group.size())
+  for(Size i = this_group.this_thread.index(); i < n; i += this_group.size())
   {
     result[i] = first[i];
   }
@@ -34,9 +34,9 @@ struct reduce
     {
       unsigned int half_n = n / 2;
 
-      if(this_group.index() < half_n)
+      if(this_group.this_thread.index() < half_n)
       {
-        s_data[this_group.index()] += s_data[n - this_group.index() - 1];
+        s_data[this_group.this_thread.index()] += s_data[n - this_group.this_thread.index() - 1];
       }
 
       this_group.wait();
@@ -46,7 +46,7 @@ struct reduce
 
     this_group.wait();
 
-    if(this_group.index() == 0)
+    if(this_group.this_thread.index() == 0)
     {
       *result = s_data[0];
     }

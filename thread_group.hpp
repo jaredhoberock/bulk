@@ -2,6 +2,7 @@
 
 #include <thrust/detail/config.h>
 #include <thrust/detail/type_traits.h>
+#include "thread.hpp"
 
 namespace bulk
 {
@@ -12,11 +13,18 @@ namespace thread_group_detail
 
 // "group" instead of "array"
 // this thing is nothing like std::array or a C array
-template<typename Derived>
+template<typename Derived, typename Thread = bulk::thread>
 class thread_group_base
 {
   public:
+    typedef Thread thread_type;
+
     typedef unsigned int size_type;
+
+    __host__ __device__
+    thread_group_base()
+      : this_thread()
+    {}
 
     // "wait" instead of "barrier"
     // "wait" is a verb; "barrier" a noun
@@ -26,23 +34,19 @@ class thread_group_base
       __syncthreads();
     }
 
-    __device__
-    size_type index() const
-    {
-      return threadIdx.x;
-    }
-
     __device__ 
     size_type global_index() const
     {
-      return derived().group_index() * derived().size() + derived().index();
+      return derived().index() * derived().size() + this_thread.index();
     }
 
     __device__
-    size_type group_index() const
+    size_type index() const
     {
       return blockIdx.x;
     }
+
+    thread_type this_thread;
 
   private:
     __host__ __device__

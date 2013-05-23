@@ -147,7 +147,7 @@ inline void *malloc(ThreadGroup &g, size_t num_bytes)
 {
   __shared__ void *s_result;
 
-  if(g.index() == 0)
+  if(g.this_thread.index() == 0)
   {
     s_result = shmalloc(num_bytes);
   } // end if
@@ -162,7 +162,7 @@ template<typename ThreadGroup>
 __device__
 inline void free(ThreadGroup &g, void *ptr)
 {
-  if(g.index() == 0)
+  if(g.this_thread.index() == 0)
   {
     shfree(ptr);
   } // end if
