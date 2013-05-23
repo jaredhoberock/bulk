@@ -1,6 +1,6 @@
 #include <cstdio>
 #include <iostream>
-#include "bulk_async.hpp"
+#include "async.hpp"
 #include "shmalloc.hpp"
 #include "thread_group.hpp"
 #include <thrust/device_vector.h>
@@ -32,7 +32,7 @@ struct reduce
 
     if(this_group.index() == 0)
     {
-      s_s_data = static_cast<int *>(bulk_async::shmalloc(n * sizeof(int)));
+      s_s_data = static_cast<int *>(bulk::shmalloc(n * sizeof(int)));
     }
     this_group.wait();
 
@@ -59,7 +59,7 @@ struct reduce
     if(this_group.index() == 0)
     {
       *result = s_data[0];
-      bulk_async::shfree(s_data);
+      bulk::shfree(s_data);
     }
   }
 };
@@ -76,12 +76,12 @@ int main()
 
   thrust::device_vector<int> result(1);
 
-  using bulk_async::launch;
+  using bulk::launch;
 
-  bulk_async::static_thread_group<group_size> group_spec;
+  bulk::static_thread_group<group_size> group_spec;
 
   // size smem ourself
-  bulk_async::bulk_async(launch(group_spec, 1, group_size * sizeof(int)), reduce(), bulk_async::there, vec.data(), result.data());
+  bulk::async(launch(group_spec, 1, group_size * sizeof(int)), reduce(), bulk::there, vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 }

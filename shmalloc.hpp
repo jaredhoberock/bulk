@@ -10,7 +10,7 @@
 #if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 200)
 
 
-namespace bulk_async
+namespace bulk
 {
 namespace detail
 {
@@ -141,7 +141,7 @@ inline void shfree(void *ptr)
 } // end shfree()
 
 
-} // end bulk_async
+} // end bulk
 
 
 #endif // __CUDA_ARCH__ >= 200

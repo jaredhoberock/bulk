@@ -1,5 +1,5 @@
 #include <cstdio>
-#include "bulk_async.hpp"
+#include "async.hpp"
 #include "shmalloc.hpp"
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
@@ -29,7 +29,7 @@ struct reduce
 
     if(threadIdx.x == 0)
     {
-      s_s_data = static_cast<int *>(bulk_async::shmalloc(n * sizeof(int)));
+      s_s_data = static_cast<int *>(bulk::shmalloc(n * sizeof(int)));
     }
     __syncthreads();
 
@@ -55,7 +55,7 @@ struct reduce
     if(threadIdx.x == 0)
     {
       *result = s_data[0];
-      bulk_async::shfree(s_data);
+      bulk::shfree(s_data);
     }
   }
 };
@@ -72,15 +72,15 @@ int main()
 
   thrust::device_vector<int> result(1);
 
-  using bulk_async::launch;
+  using bulk::launch;
 
   // let the runtime size smem
-  bulk_async::bulk_async(launch(1, block_size), reduce(), vec.data(), result.data());
+  bulk::async(launch(1, block_size), reduce(), vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 
   // size smem ourself
-  bulk_async::bulk_async(launch(1, block_size, block_size * sizeof(int)), reduce(), vec.data(), result.data());
+  bulk::async(launch(1, block_size, block_size * sizeof(int)), reduce(), vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 }

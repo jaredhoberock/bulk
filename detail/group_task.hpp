@@ -6,7 +6,7 @@
 #include <thrust/detail/tuple_transform.h>
 
 
-namespace bulk_async
+namespace bulk
 {
 namespace detail
 {
@@ -97,5 +97,5 @@ class group_task
 
 
 } // end detail
-} // end bulk_async
+} // end bulk
 

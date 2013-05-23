@@ -3,7 +3,7 @@
 #include <thrust/detail/config.h>
 #include <thrust/detail/type_traits.h>
 
-namespace bulk_async
+namespace bulk
 {
 namespace thread_group_detail
 {
@@ -201,5 +201,5 @@ struct placeholder {};
 static const detail::placeholder there;
 
 
-} // end bulk_async
+} // end bulk
 

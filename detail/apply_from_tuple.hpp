@@ -2,7 +2,7 @@
 
 #include <thrust/tuple.h>
 
-namespace bulk_async
+namespace bulk
 {
 namespace detail
 {
@@ -142,5 +142,5 @@ void apply_from_tuple(Function f, const thrust::tuple<Arg1,Arg2,Arg3,Arg4,Arg5,A
 
 
 } // end detail
-} // end bulk_async
+} // end bulk
 

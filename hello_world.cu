@@ -1,6 +1,6 @@
 #include <iostream>
 #include <cstdio>
-#include "bulk_async.hpp"
+#include "async.hpp"
 
 struct hello
 {
@@ -18,7 +18,7 @@ struct hello
 
 int main()
 {
-  bulk_async::bulk_async(bulk_async::launch(1), hello(), 1);
+  bulk::async(bulk::launch(1), hello(), 1);
 
   cudaDeviceSynchronize();
 

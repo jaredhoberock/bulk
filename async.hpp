@@ -5,7 +5,7 @@
 #include "thread_group.hpp"
 
 
-namespace bulk_async
+namespace bulk
 {
 
 
@@ -115,22 +115,22 @@ inline launch_config launch(size_t num_threads)
 
 
 template<typename LaunchConfig, typename Function>
-void bulk_async(LaunchConfig l, Function f);
+void async(LaunchConfig l, Function f);
 
 
 template<typename LaunchConfig, typename Function, typename Arg1>
-void bulk_async(LaunchConfig l, Function f, Arg1 arg1);
+void async(LaunchConfig l, Function f, Arg1 arg1);
 
 
 template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2>
-void bulk_async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2);
+void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2);
 
 
 template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2, typename Arg3>
-void bulk_async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3);
+void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3);
 
 
-} // end bulk_async
+} // end bulk
 
-#include "detail/bulk_async.inl"
+#include "detail/async.inl"
 

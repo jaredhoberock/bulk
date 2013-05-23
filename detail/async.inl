@@ -1,5 +1,5 @@
 #include <thrust/detail/config.h>
-#include "../bulk_async.hpp"
+#include "../async.hpp"
 #include "closure.hpp"
 #include "group_task.hpp"
 #include <thrust/detail/minmax.h>
@@ -9,7 +9,7 @@
 #include <thrust/system/cuda/detail/synchronize.h>
 #include <thrust/detail/util/blocking.h>
 
-namespace bulk_async
+namespace bulk
 {
 namespace detail
 {
@@ -60,7 +60,7 @@ struct launcher
         static_cast<size_t>(l.num_smem_bytes_per_group())
       >>>(wrapped_task);
 
-      thrust::system::cuda::detail::synchronize_if_enabled("bulk_async_kernel_by_value");
+      thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
     } // end if
   } // end go()
 
@@ -132,33 +132,33 @@ template<typename ThreadGroup>
 
 
 template<typename LaunchConfig, typename Function>
-void bulk_async(LaunchConfig l, Function f)
+void async(LaunchConfig l, Function f)
 {
   detail::launcher<typename LaunchConfig::thread_group_type, Function> launcher;
   launcher.go(l, f);
-} // end bulk_async()
+} // end async()
 
 
 template<typename LaunchConfig, typename Function, typename Arg1>
-void bulk_async(LaunchConfig l, Function f, Arg1 arg1)
+void async(LaunchConfig l, Function f, Arg1 arg1)
 {
-  bulk_async(l, detail::make_closure(f,arg1));
-} // end bulk_async()
+  async(l, detail::make_closure(f,arg1));
+} // end async()
 
 
 template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2>
-void bulk_async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2)
+void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2)
 {
-  bulk_async(l, detail::make_closure(f,arg1,arg2));
-} // end bulk_async()
+  async(l, detail::make_closure(f,arg1,arg2));
+} // end async()
 
 
 template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2, typename Arg3>
-void bulk_async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3)
+void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3)
 {
-  bulk_async(l, detail::make_closure(f,arg1,arg2,arg3));
-} // end bulk_async()
+  async(l, detail::make_closure(f,arg1,arg2,arg3));
+} // end async()
 
 
-} // end bulk_async
+} // end bulk
 

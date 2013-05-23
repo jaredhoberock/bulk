@@ -4,7 +4,7 @@
 #include <thrust/tuple.h>
 #include "apply_from_tuple.hpp"
 
-namespace bulk_async
+namespace bulk
 {
 namespace detail
 {
@@ -177,5 +177,5 @@ closure<
 
 
 } // end detail
-} // end bulk_async
+} // end bulk
 
