@@ -24,17 +24,9 @@ struct reduce
   __device__
   void operator()(ThreadGroup &this_group, thrust::device_ptr<int> data, thrust::device_ptr<int> result)
   {
-    __shared__ int *s_s_data;
-
     unsigned int n = this_group.size();
 
-    if(this_group.index() == 0)
-    {
-      s_s_data = static_cast<int *>(bulk::shmalloc(n * sizeof(int)));
-    }
-    this_group.wait();
-
-    int *s_data = s_s_data;
+    int *s_data = static_cast<int*>(bulk::malloc(this_group, n * sizeof(int)));
 
     block_copy_n(this_group, data, n, s_data);
 
@@ -57,8 +49,11 @@ struct reduce
     if(this_group.index() == 0)
     {
       *result = s_data[0];
-      bulk::shfree(s_data);
     }
+
+    this_group.wait();
+
+    bulk::free(this_group, s_data);
   }
 };
 

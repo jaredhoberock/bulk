@@ -149,7 +149,7 @@ inline void *malloc(ThreadGroup &g, size_t num_bytes)
 
   if(g.index() == 0)
   {
-    shmalloc(num_bytes);
+    s_result = shmalloc(num_bytes);
   } // end if
 
   g.wait();
