@@ -74,12 +74,12 @@ int main()
   using bulk::launch;
 
   // let the runtime size smem
-  bulk::async(launch(1, block_size), reduce(), vec.data(), result.data());
+  bulk::async(par(1, block_size), reduce(), vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 
   // size smem ourself
-  bulk::async(launch(1, block_size, block_size * sizeof(int)), reduce(), vec.data(), result.data());
+  bulk::async(par(1, block_size, block_size * sizeof(int)), reduce(), vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 }

@@ -18,7 +18,7 @@ struct hello
 
 int main()
 {
-  bulk::async(bulk::launch(1), hello(), 1);
+  bulk::async(bulk::par(1), hello(), 1);
 
   cudaDeviceSynchronize();
 

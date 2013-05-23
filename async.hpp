@@ -96,19 +96,19 @@ template<typename ThreadGroup>
     ThreadGroup,
     group_launch_config<ThreadGroup>
   >::type
-    launch(ThreadGroup g, size_t num_groups, size_t num_smem_bytes_per_group = launch_config::use_default)
+    par(ThreadGroup g, size_t num_groups, size_t num_smem_bytes_per_group = launch_config::use_default)
 {
   return group_launch_config<ThreadGroup>(g, num_groups, num_smem_bytes_per_group);
 }
 
 
-inline launch_config launch(size_t num_groups, size_t group_size, size_t num_smem_bytes_per_group = launch_config::use_default)
+inline launch_config par(size_t num_groups, size_t group_size, size_t num_smem_bytes_per_group = launch_config::use_default)
 {
   return launch_config(thread_group(group_size), num_groups, num_smem_bytes_per_group);
 }
 
 
-inline launch_config launch(size_t num_threads)
+inline launch_config par(size_t num_threads)
 {
   return launch_config(num_threads);
 }

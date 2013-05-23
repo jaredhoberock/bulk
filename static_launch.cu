@@ -69,12 +69,13 @@ int main()
 
   thrust::device_vector<int> result(1);
 
-  using bulk::launch;
+  using bulk::par;
+  using bulk::async;
 
   bulk::static_thread_group<group_size> group_spec;
 
   // size smem ourself
-  bulk::async(launch(group_spec, 1, group_size * sizeof(int)), reduce(), bulk::there, vec.data(), result.data());
+  async(par(group_spec, 1), reduce(), bulk::there, vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 }
