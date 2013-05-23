@@ -1,4 +1,4 @@
-bulk_async
+bulk
 ==========
 
 Launching collective tasks in bulk
