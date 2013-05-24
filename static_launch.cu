@@ -6,18 +6,6 @@
 #include <thrust/reduce.h>
 #include <cassert>
 
-template<typename ThreadGroup, typename Iterator1, typename Size, typename Iterator2>
-__device__
-void copy_n(ThreadGroup &this_group, Iterator1 first, Size n, Iterator2 result)
-{
-  for(Size i = this_group.this_thread.index(); i < n; i += this_group.size())
-  {
-    result[i] = first[i];
-  }
-
-  this_group.wait();
-}
-
 struct reduce
 {
   template<typename ThreadGroup>
@@ -28,7 +16,7 @@ struct reduce
 
     int *s_data = static_cast<int*>(bulk::malloc(this_group, n * sizeof(int)));
 
-    copy_n(this_group, data, n, s_data);
+    bulk::copy_n(this_group, data, n, s_data);
 
     while(n > 1)
     {
@@ -69,12 +57,9 @@ int main()
 
   thrust::device_vector<int> result(1);
 
-  using bulk::par;
-  using bulk::async;
-
   bulk::static_thread_group<group_size> group_spec;
 
-  async(par(group_spec, 1), reduce(), bulk::there, vec.data(), result.data());
+  bulk::async(bulk::par(group_spec, 1), reduce(), bulk::there, vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 }

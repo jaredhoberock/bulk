@@ -3,6 +3,7 @@
 #include <thrust/detail/config.h>
 #include <thrust/detail/type_traits.h>
 #include <bulk/thread.hpp>
+#include <thrust/execution_policy.h>
 
 namespace bulk
 {
@@ -15,6 +16,7 @@ namespace thread_group_detail
 // this thing is nothing like std::array or a C array
 template<typename Derived, typename Thread = bulk::thread>
 class thread_group_base
+  : public thrust::execution_policy<Derived>
 {
   public:
     typedef Thread thread_type;
