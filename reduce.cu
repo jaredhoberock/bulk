@@ -1,23 +1,24 @@
-#include <cstdio>
-#include <iostream>
 #include <bulk/bulk.hpp>
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
 #include <thrust/reduce.h>
 #include <thrust/extrema.h>
 #include <cassert>
+#include <iostream>
 
 struct reduce_partitions
 {
-  template<typename ThreadGroup, typename Iterator1, typename Iterator2>
+  template<typename ThreadGroup, typename Iterator1, typename Size, typename Iterator2>
   __device__
-  void operator()(ThreadGroup &this_group, Iterator1 first, Iterator1 last, unsigned int partition_size, Iterator2 result)
+  void operator()(ThreadGroup &this_group, Iterator1 first, Iterator1 last, Size partition_size, Iterator2 result)
   {
+    typedef typename thrust::iterator_value<Iterator1>::type value_type;
+
     Iterator1 partition_first = first + partition_size * this_group.index();
 
-    Iterator1 partition_last = thrust::min(first + partition_size, last);
+    Iterator1 partition_last = thrust::min(partition_first + partition_size, last);
 
-    int sum = bulk::reduce(this_group, partition_first, partition_last, 0, thrust::plus<int>());
+    value_type sum = bulk::reduce(this_group, partition_first, partition_last, value_type(0), thrust::plus<value_type>());
 
     if(this_group.this_thread.index() == 0)
     {
@@ -50,7 +51,7 @@ T my_reduce(Iterator first, Iterator last, T init, BinaryOperation binary_op)
 
   const unsigned int partition_size = thrust::max<unsigned int>(group_size, divide_ri(n, subscription * num_processors));
 
-  unsigned int num_partial_sums = thrust::min<unsigned int>(1, divide_ri(n, partition_size));
+  unsigned int num_partial_sums = thrust::max<unsigned int>(1, divide_ri(n, partition_size));
 
   thrust::device_vector<T> partial_sums(num_partial_sums);
 
@@ -61,7 +62,7 @@ T my_reduce(Iterator first, Iterator last, T init, BinaryOperation binary_op)
   // we only need a single additional step because partition_size > subscription * num_processors
   if(partial_sums.size() > 1)
   {
-    bulk::async(bulk::par(g, partial_sums.size()), reduce_partitions(), bulk::there, partial_sums.begin(), partial_sums.end(), partial_sums.size(), partial_sums.begin());
+    bulk::async(bulk::par(g, 1), reduce_partitions(), bulk::there, partial_sums.begin(), partial_sums.end(), partial_sums.size(), partial_sums.begin());
   } // end while
 
   return partial_sums[0];
@@ -76,8 +77,14 @@ int main()
 
   thrust::sequence(vec.begin(), vec.end());
 
-  int result = my_reduce(vec.begin(), vec.end(), 0, thrust::plus<int>());
+  int my_result = my_reduce(vec.begin(), vec.end(), 0, thrust::plus<int>());
 
-  assert(thrust::reduce(vec.begin(), vec.end()) == result);
+  std::cout << "my_result: " << my_result << std::endl;
+
+  int thrust_result = thrust::reduce(vec.begin(), vec.end(), 0, thrust::plus<int>());
+
+  std::cout << "thrust_result: " << thrust_result << std::endl;
+
+  assert(thrust_result == my_result);
 }
 
