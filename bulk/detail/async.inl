@@ -160,5 +160,19 @@ void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3)
 } // end async()
 
 
+template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2, typename Arg3, typename Arg4>
+void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
+{
+  async(l, detail::make_closure(f,arg1,arg2,arg3,arg4));
+} // end async()
+
+
+template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
+void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
+{
+  async(l, detail::make_closure(f,arg1,arg2,arg3,arg4,arg5));
+} // end async()
+
+
 } // end bulk
 
