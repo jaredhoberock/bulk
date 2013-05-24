@@ -6,7 +6,7 @@
 #include <thrust/reduce.h>
 #include <cassert>
 
-struct reduce
+struct reduce_kernel
 {
   template<typename ThreadGroup>
   __device__
@@ -14,34 +14,12 @@ struct reduce
   {
     unsigned int n = this_group.size();
 
-    int *s_data = static_cast<int*>(bulk::malloc(this_group, n * sizeof(int)));
-
-    bulk::copy_n(this_group, data, n, s_data);
-
-    while(n > 1)
-    {
-      unsigned int half_n = n / 2;
-
-      if(this_group.this_thread.index() < half_n)
-      {
-        s_data[this_group.this_thread.index()] += s_data[n - this_group.this_thread.index() - 1];
-      }
-
-      this_group.wait();
-
-      n -= half_n;
-    }
-
-    this_group.wait();
+    int sum = bulk::reduce(this_group, data, data + n, 0, thrust::plus<int>());
 
     if(this_group.this_thread.index() == 0)
     {
-      *result = s_data[0];
+      *result = sum;
     }
-
-    this_group.wait();
-
-    bulk::free(this_group, s_data);
   }
 };
 
@@ -59,7 +37,7 @@ int main()
 
   bulk::static_thread_group<group_size> group_spec;
 
-  bulk::async(bulk::par(group_spec, 1), reduce(), bulk::there, vec.data(), result.data());
+  bulk::async(bulk::par(group_spec, 1), reduce_kernel(), bulk::there, vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 }
