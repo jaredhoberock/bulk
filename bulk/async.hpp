@@ -42,10 +42,7 @@ class group_launch_config
                    typename enable_if_static_thread_group<
                      ThreadGroup,
                      Function
-                   >::type * = 0)
-    {
-      // no-op -- a static_thread_group is configured by definition
-    }
+                   >::type * = 0);
 
 
     template<typename Function>

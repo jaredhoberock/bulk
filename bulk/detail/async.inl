@@ -131,6 +131,22 @@ template<typename ThreadGroup>
 } // end launch::configure()
 
 
+template<typename ThreadGroup>
+  template<typename Function>
+    void group_launch_config<ThreadGroup>
+      ::configure(Function f,
+                  typename enable_if_static_thread_group<
+                    ThreadGroup,
+                    Function
+                  >::type *)
+{
+  if(m_num_smem_bytes_per_group == use_default)
+  {
+    m_num_smem_bytes_per_group = detail::choose_smem_size(m_example_group, f);
+  } // end if
+} // end launch::configure()
+
+
 template<typename LaunchConfig, typename Function>
 void async(LaunchConfig l, Function f)
 {
