@@ -2,7 +2,7 @@
 
 #include <thrust/detail/config.h>
 #include <thrust/detail/type_traits.h>
-#include "thread.hpp"
+#include <bulk/thread.hpp>
 
 namespace bulk
 {

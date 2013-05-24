@@ -1,6 +1,6 @@
 #include <iostream>
 #include <cstdio>
-#include "bulk.hpp"
+#include <bulk/bulk.hpp>
 
 struct hello
 {

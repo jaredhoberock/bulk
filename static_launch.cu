@@ -1,6 +1,6 @@
 #include <cstdio>
 #include <iostream>
-#include "bulk.hpp"
+#include <bulk/bulk.hpp>
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
 #include <thrust/reduce.h>
@@ -8,7 +8,7 @@
 
 template<typename ThreadGroup, typename Iterator1, typename Size, typename Iterator2>
 __device__
-void block_copy_n(ThreadGroup &this_group, Iterator1 first, Size n, Iterator2 result)
+void copy_n(ThreadGroup &this_group, Iterator1 first, Size n, Iterator2 result)
 {
   for(Size i = this_group.this_thread.index(); i < n; i += this_group.size())
   {
@@ -28,7 +28,7 @@ struct reduce
 
     int *s_data = static_cast<int*>(bulk::malloc(this_group, n * sizeof(int)));
 
-    block_copy_n(this_group, data, n, s_data);
+    copy_n(this_group, data, n, s_data);
 
     while(n > 1)
     {

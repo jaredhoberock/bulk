@@ -1,7 +1,7 @@
 #include <thrust/detail/config.h>
-#include "../async.hpp"
-#include "closure.hpp"
-#include "group_task.hpp"
+#include <bulk/async.hpp>
+#include <bulk/detail/closure.hpp>
+#include <bulk/detail/group_task.hpp>
 #include <thrust/detail/minmax.h>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include <thrust/system/cuda/detail/runtime_introspection.h>

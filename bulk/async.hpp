@@ -2,7 +2,7 @@
 
 #include <thrust/detail/config.h>
 #include <thrust/detail/cstdint.h>
-#include "thread_group.hpp"
+#include <bulk/thread_group.hpp>
 
 
 namespace bulk
@@ -132,5 +132,5 @@ void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3);
 
 } // end bulk
 
-#include "detail/async.inl"
+#include <bulk/detail/async.inl>
 

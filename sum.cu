@@ -1,5 +1,5 @@
 #include <cstdio>
-#include "bulk.hpp"
+#include <bulk/bulk.hpp>
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
 #include <thrust/reduce.h>
@@ -71,7 +71,7 @@ int main()
 
   thrust::device_vector<int> result(1);
 
-  using bulk::launch;
+  using bulk::par;
 
   // let the runtime size smem
   bulk::async(par(1, block_size), reduce(), vec.data(), result.data());

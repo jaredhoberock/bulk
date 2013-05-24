@@ -2,7 +2,7 @@
 
 #include <thrust/detail/config.h>
 #include <thrust/tuple.h>
-#include "apply_from_tuple.hpp"
+#include <bulk/detail/apply_from_tuple.hpp>
 
 namespace bulk
 {

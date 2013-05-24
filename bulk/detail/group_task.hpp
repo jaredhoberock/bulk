@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../malloc.hpp"
+#include <bulk/malloc.hpp>
 #include <thrust/detail/type_traits.h>
-#include "../thread_group.hpp"
+#include <bulk/thread_group.hpp>
 #include <thrust/detail/tuple_transform.h>
 
 
