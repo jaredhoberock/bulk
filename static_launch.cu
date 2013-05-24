@@ -74,7 +74,6 @@ int main()
 
   bulk::static_thread_group<group_size> group_spec;
 
-  // size smem ourself
   async(par(group_spec, 1), reduce(), bulk::there, vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
