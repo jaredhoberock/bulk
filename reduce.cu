@@ -39,6 +39,7 @@ template<typename Iterator,
 T reduce(Iterator first, Iterator last, T init, BinaryOperation binary_op)
 {
   int n = last - first;
+
   if(n <= 0) return init;
 
   typedef typename thrust::iterator_value<Iterator>::type value_type;
@@ -59,11 +60,10 @@ T reduce(Iterator first, Iterator last, T init, BinaryOperation binary_op)
 
   bulk::async(bulk::par(g, partial_sums.size()), reduce_partitions(), bulk::there, first, last, partition_size, partial_sums.begin());
 
-  while(partial_sums.size() > 1)
+  // we only need a single additional step because partition_size > subscription * num_processors
+  if(partial_sums.size() > 1)
   {
-    bulk::async(bulk::par(g, partial_sums.size()), reduce_partitions(), bulk::there, partial_sums.begin(), partial_sums.end(), partition_size, partial_sums.begin());
-
-    partial_sums.resize(thrust::max(1, divide_ri(partial_sums.size(), partition_size)));
+    bulk::async(bulk::par(g, partial_sums.size()), reduce_partitions(), bulk::there, partial_sums.begin(), partial_sums.end(), partial_sums.size(), partial_sums.begin());
   } // end while
 
   return partial_sums[0];
