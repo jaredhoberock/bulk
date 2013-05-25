@@ -22,7 +22,7 @@ struct ping
 
         *ball += 1;
 
-        printf("ping! ball is now %d\n", next_state);
+        printf("ping! ball is now %d\n", next_state + 1);
       }
     }
   }
@@ -46,7 +46,7 @@ struct pong
 
         *ball += 1;
 
-        printf("pong! ball is now %d\n", next_state);
+        printf("pong! ball is now %d\n", next_state + 1);
       }
     }
   }
