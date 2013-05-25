@@ -3,7 +3,7 @@
 #include <bulk/malloc.hpp>
 #include <thrust/detail/type_traits.h>
 #include <bulk/thread_group.hpp>
-#include <thrust/detail/tuple_transform.h>
+#include <bulk/detail/tuple_transform.hpp>
 
 
 namespace bulk
@@ -57,7 +57,7 @@ class group_task
         >
     {};
 
-    typedef typename thrust::detail::tuple_meta_transform<
+    typedef typename bulk::detail::tuple_meta_transform<
       typename Closure::arguments_type,
       substitutor_result
     >::type substituted_arguments_type;
@@ -85,10 +85,10 @@ class group_task
       }
     };
 
-    __device__
-    substituted_arguments_type substitute_placeholders(ThreadGroup &g, typename Closure::arguments_type args)
+    __host__ __device__
+    static substituted_arguments_type substitute_placeholders(ThreadGroup &g, typename Closure::arguments_type args)
     {
-      return thrust::detail::tuple_host_device_transform<substitutor_result>(args, substitutor(g));
+      return bulk::detail::tuple_host_device_transform<substitutor_result>(args, substitutor(g));
     }
 
     Closure c;

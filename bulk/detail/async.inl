@@ -2,6 +2,7 @@
 #include <bulk/async.hpp>
 #include <bulk/detail/closure.hpp>
 #include <bulk/detail/group_task.hpp>
+#include <bulk/detail/throw_on_error.hpp>
 #include <thrust/detail/minmax.h>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include <thrust/system/cuda/detail/runtime_introspection.h>
@@ -35,33 +36,41 @@ void launch_by_pointer(const Function *f)
 }
 
 
-template<typename ThreadGroup, typename Function>
+template<typename ThreadGroup, typename Closure>
 struct launcher
 {
-  typedef group_task<ThreadGroup, Function> task_type;
+  typedef group_task<ThreadGroup, Closure> task_type;
 
   typedef void (*global_function_t)(uninitialized<task_type>);
 
   template<typename LaunchConfig>
-  void go(LaunchConfig l, Function f)
+  future<void> go(LaunchConfig l, Closure c)
   {
-    l.configure(f);
+    l.configure(c);
 
     if(l.num_groups() > 0 && l.num_threads_per_group() > 0)
     {
-      task_type task(f, l.num_smem_bytes_per_group());
+      task_type task(c, l.num_smem_bytes_per_group());
 
       uninitialized<task_type> wrapped_task;
       wrapped_task.construct(task);
 
+      cudaEvent_t before_event;
+      throw_on_error(cudaEventCreateWithFlags(&before_event, cudaEventDisableTiming | cudaEventBlockingSync), "cudaEventCreateWithFlags in launcher::go");
+      throw_on_error(cudaStreamWaitEvent(l.stream(), before_event, 0), "cudaStreamWaitEvent in launcher::go");
+      throw_on_error(cudaEventDestroy(before_event), "cudaEventDestroy in launcher::go");
+
       launch_by_value<<<
         static_cast<unsigned int>(l.num_groups()),
         static_cast<unsigned int>(l.num_threads_per_group()),
-        static_cast<size_t>(l.num_smem_bytes_per_group())
+        static_cast<size_t>(l.num_smem_bytes_per_group()),
+        l.stream()
       >>>(wrapped_task);
 
       thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
     } // end if
+
+    return future_core_access::create_in_stream(l.stream());
   } // end go()
 
   static global_function_t get_global_function()
@@ -147,46 +156,60 @@ template<typename ThreadGroup>
 } // end launch::configure()
 
 
-template<typename LaunchConfig, typename Function>
-void async(LaunchConfig l, Function f)
+namespace detail
 {
-  detail::launcher<typename LaunchConfig::thread_group_type, Function> launcher;
-  launcher.go(l, f);
+
+
+template<typename LaunchConfig, typename Closure>
+future<void> async(LaunchConfig l, Closure c)
+{
+  detail::launcher<typename LaunchConfig::thread_group_type, Closure> launcher;
+  return launcher.go(l, c);
+} // end async()
+
+
+} // end detail
+
+
+template<typename LaunchConfig, typename Function>
+future<void> async(LaunchConfig l, Function f)
+{
+  return detail::async(l, detail::make_closure(f));
 } // end async()
 
 
 template<typename LaunchConfig, typename Function, typename Arg1>
-void async(LaunchConfig l, Function f, Arg1 arg1)
+future<void> async(LaunchConfig l, Function f, Arg1 arg1)
 {
-  async(l, detail::make_closure(f,arg1));
+  return detail::async(l, detail::make_closure(f,arg1));
 } // end async()
 
 
 template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2>
-void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2)
+future<void> async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2)
 {
-  async(l, detail::make_closure(f,arg1,arg2));
+  return detail::async(l, detail::make_closure(f,arg1,arg2));
 } // end async()
 
 
 template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2, typename Arg3>
-void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3)
+future<void> async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3)
 {
-  async(l, detail::make_closure(f,arg1,arg2,arg3));
+  return detail::async(l, detail::make_closure(f,arg1,arg2,arg3));
 } // end async()
 
 
 template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2, typename Arg3, typename Arg4>
-void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
+future<void> async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4)
 {
-  async(l, detail::make_closure(f,arg1,arg2,arg3,arg4));
+  return detail::async(l, detail::make_closure(f,arg1,arg2,arg3,arg4));
 } // end async()
 
 
 template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
-void async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
+future<void> async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5)
 {
-  async(l, detail::make_closure(f,arg1,arg2,arg3,arg4,arg5));
+  return detail::async(l, detail::make_closure(f,arg1,arg2,arg3,arg4,arg5));
 } // end async()
 
 

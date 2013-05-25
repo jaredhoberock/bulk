@@ -52,6 +52,14 @@ class closure
 }; // end closure
 
 
+template<typename Function, typename Arguments>
+__host__ __device__
+const closure<Function,Arguments> &make_closure(const closure<Function,Arguments> &c)
+{
+  return c;
+}
+
+
 template<typename Function>
 __host__ __device__
 closure<Function, thrust::tuple<> > make_closure(Function f)
