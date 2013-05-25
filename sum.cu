@@ -17,7 +17,7 @@ void block_copy_n(Iterator1 first, Size n, Iterator2 result)
   __syncthreads();
 }
 
-struct reduce
+struct sum
 {
   __device__
   void operator()(thrust::device_ptr<int> data, thrust::device_ptr<int> result)
@@ -74,12 +74,12 @@ int main()
   using bulk::par;
 
   // let the runtime size smem
-  bulk::async(par(1, block_size), reduce(), vec.data(), result.data());
+  bulk::async(par(1, block_size), sum(), vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 
   // size smem ourself
-  bulk::async(par(1, block_size, block_size * sizeof(int)), reduce(), vec.data(), result.data());
+  bulk::async(par(1, block_size, block_size * sizeof(int)), sum(), vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 }
