@@ -27,7 +27,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, typename 
     MGPU_MEM(value_type) totalDevice;
     if(total) totalDevice = context.Malloc<value_type>(1);
     
-    mgpu::KernelParallelScan<NT, VT, Type><<<1, NT, 0, context.Stream()>>>(
+    mgpu::KernelParallelScan<NT, VT, Type><<<1, NT>>>(
     	data_global, count, op, total ? totalDevice->get() : (value_type*)0,
     	totalAtEnd ? (dest_global + count) : (result_type*)0, dest_global);
     
@@ -53,13 +53,13 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, typename 
 
     value_type* totalDevice = total ? (reductionDevice->get() + numBlocks) : (value_type*)0;
     	
-    mgpu::KernelReduce<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(data_global, count, task, reductionDevice->get(), op);
+    mgpu::KernelReduce<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), op);
     
     // Run a parallel latency-oriented scan to reduce the spine of the 
     // raking reduction.
     const int NT2 = 256;
     const int VT2 = 3;
-    mgpu::KernelParallelScan<NT2, VT2, mgpu::MgpuScanTypeExc><<<1, NT2, 0, context.Stream()>>>(reductionDevice->get(), numBlocks, mgpu::ScanOpValue<Op>(op), totalDevice, (value_type*)0, reductionDevice->get());
+    mgpu::KernelParallelScan<NT2, VT2, mgpu::MgpuScanTypeExc><<<1, NT2>>>(reductionDevice->get(), numBlocks, mgpu::ScanOpValue<Op>(op), totalDevice, (value_type*)0, reductionDevice->get());
     
     if(total)
     {
@@ -67,7 +67,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, typename 
     }
     
     // Run a raking scan as a downsweep.
-    mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x, 0, context.Stream()>>>(data_global, count, task, reductionDevice->get(), dest_global, totalAtEnd, op);
+    mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, totalAtEnd, op);
   }
 }
 
