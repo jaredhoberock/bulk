@@ -10,6 +10,8 @@
 #include <thrust/detail/temporary_array.h>
 #include <bulk/thread_group.hpp>
 #include <bulk/algorithm.hpp>
+#include <thrust/copy.h>
+#include <thrust/execution_policy.h>
 
 
 typedef int T;
@@ -40,10 +42,11 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
   
   // total is the sum of encountered elements. It's undefined on the first 
   // loop iteration.
-  value_type total = op.Extract(op.Identity(), -1);
+  //value_type total = op.Extract(op.Identity(), -1);
+  value_type total = 0;
+
   bool totalDefined = false;
-  int start = 0;
-  while(start < count)
+  for(int start = 0; start < count; start += NV)
   {
     int count2 = min(NV, count - start);
 
@@ -51,18 +54,20 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     bulk::copy_n(this_group, cta_global + start, count2, shared.inputs);
     
     // Transpose data into register in thread order. Reduce terms serially.
-    input_type inputs[VT];
-    value_type values[VT];
-    value_type x = op.Extract(op.Identity(), -1);
-    #pragma unroll
+    input_type local_inputs[VT];
+    value_type local_values[VT];
+
+    value_type x = 0;
+
     for(int i = 0; i < VT; ++i)
     {
       int index = VT * tid + i;
       if(index < count2)
       {
-        inputs[i] = shared.inputs[index];
-        values[i] = op.Extract(inputs[i], start + index);
-        x = i ? op.Plus(x, values[i]) : values[i];
+        local_inputs[i] = shared.inputs[index];
+        local_values[i] = shared.inputs[index];
+
+        x = i ? op.Plus(x, local_values[i]) : local_values[i];
       }
     }
     __syncthreads();
@@ -70,6 +75,7 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     // Scan the reduced terms.
     value_type passTotal;
     x = S::Scan(tid, x, shared.scan, &passTotal, mgpu::MgpuScanTypeExc, op);
+
     if(totalDefined)
     {
       x = op.Plus(total, x);
@@ -88,12 +94,12 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
       {
         // If this is not the first element in the scan, add x values[i]
         // into x. Otherwise initialize x to values[i].
-        value_type x2 = (i || tid || totalDefined) ? op.Plus(x, values[i]) : values[i];
+        value_type x2 = (i || tid || totalDefined) ? op.Plus(x, local_values[i]) : local_values[i];
       
         // For inclusive scan, set the new value then store.
         // For exclusive scan, store the old value then set the new one.
         if(mgpu::MgpuScanTypeInc == Type) x = x2;
-        shared.results[index] = op.Combine(inputs[i], x);
+        shared.results[index] = op.Combine(local_inputs[i], x);
         if(mgpu::MgpuScanTypeExc == Type) x = x2;
       }
     }
@@ -102,7 +108,6 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     // store results
     bulk::copy_n(this_group, shared.results, count2, dest_global + start);
 
-    start += NV;
     totalDefined = true;
   }
 }
