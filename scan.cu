@@ -12,6 +12,7 @@
 #include <bulk/algorithm.hpp>
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
+#include <thrust/reduce.h>
 
 
 typedef int T;
@@ -57,8 +58,6 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     input_type local_inputs[VT];
     value_type local_values[VT];
 
-    value_type x = 0;
-
     for(int i = 0; i < VT; ++i)
     {
       int index = VT * tid + i;
@@ -66,10 +65,12 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
       {
         local_inputs[i] = shared.inputs[index];
         local_values[i] = shared.inputs[index];
-
-        x = i ? op.Plus(x, local_values[i]) : local_values[i];
       }
     }
+
+    // XXX this should actually be accumulate
+    value_type x = thrust::reduce(thrust::seq, local_values + 1, local_values + VT, local_values[0]);
+
     __syncthreads();
     		
     // Scan the reduced terms.
