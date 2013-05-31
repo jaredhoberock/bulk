@@ -16,7 +16,7 @@ typedef int T;
 // Scan inputs on a single CTA. Optionally output the total to dest_global at
 // totalIndex.
 template<int NT, int VT, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
-__global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, typename Op::value_type* total_global, typename Op::result_type* end_global, OutputIt dest_global)
+__global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, OutputIt dest_global)
 {
   typedef typename Op::input_type input_type;
   typedef typename Op::value_type value_type;
@@ -99,16 +99,6 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, type
     start += NV;
     totalDefined = true;
   }
-  
-  if(total_global && !tid)
-  {
-    *total_global = total;
-  }
-  
-  if(end_global && !tid)
-  {
-    *end_global = op.Combine(op.Identity(), total);
-  }
 }
 
 
@@ -125,7 +115,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::Cud
     const int NT = 512;
     const int VT = 3;
     
-    my_KernelParallelScan<NT, VT, Type><<<1, NT>>>(data_global, count, op, (value_type*)0, (result_type*)0, dest_global);
+    my_KernelParallelScan<NT, VT, Type><<<1, NT>>>(data_global, count, op, dest_global);
   }
   else
   {
@@ -141,8 +131,6 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::Cud
     int2 task = mgpu::DivideTaskRange(numTiles, numBlocks);
     
     MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(numBlocks + 1);
-
-    value_type* totalDevice = (value_type*)0;
     	
     mgpu::KernelReduce<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), op);
     
@@ -150,7 +138,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::Cud
     // raking reduction.
     const int NT2 = 256;
     const int VT2 = 3;
-    mgpu::KernelParallelScan<NT2, VT2, mgpu::MgpuScanTypeExc><<<1, NT2>>>(reductionDevice->get(), numBlocks, mgpu::ScanOpValue<Op>(op), totalDevice, (value_type*)0, reductionDevice->get());
+    my_KernelParallelScan<NT2, VT2, mgpu::MgpuScanTypeExc><<<1, NT2>>>(reductionDevice->get(), numBlocks, mgpu::ScanOpValue<Op>(op), reductionDevice->get());
     
     // Run a raking scan as a downsweep.
     mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, false, op);
