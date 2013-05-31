@@ -13,6 +13,105 @@
 typedef int T;
 
 
+// Scan inputs on a single CTA. Optionally output the total to dest_global at
+// totalIndex.
+template<int NT, int VT, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
+__global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, typename Op::value_type* total_global, typename Op::result_type* end_global, OutputIt dest_global)
+{
+  typedef typename Op::input_type input_type;
+  typedef typename Op::value_type value_type;
+  typedef typename Op::result_type result_type;
+  const int NV = NT * VT;
+  
+  typedef mgpu::CTAScan<NT, Op> S;
+  union Shared
+  {
+    typename S::Storage scan;
+    input_type inputs[NV];
+    result_type results[NV];
+  };
+  __shared__ Shared shared;
+  
+  int tid = threadIdx.x;
+  
+  // total is the sum of encountered elements. It's undefined on the first 
+  // loop iteration.
+  value_type total = op.Extract(op.Identity(), -1);
+  bool totalDefined = false;
+  int start = 0;
+  while(start < count)
+  {
+    // Load data into shared memory.
+    int count2 = min(NV, count - start);
+    mgpu::DeviceGlobalToShared<NT, VT>(count2, cta_global + start, tid, shared.inputs);
+    
+    // Transpose data into register in thread order. Reduce terms serially.
+    input_type inputs[VT];
+    value_type values[VT];
+    value_type x = op.Extract(op.Identity(), -1);
+    #pragma unroll
+    for(int i = 0; i < VT; ++i)
+    {
+      int index = VT * tid + i;
+      if(index < count2)
+      {
+        inputs[i] = shared.inputs[index];
+        values[i] = op.Extract(inputs[i], start + index);
+        x = i ? op.Plus(x, values[i]) : values[i];
+      }
+    }
+    __syncthreads();
+    		
+    // Scan the reduced terms.
+    value_type passTotal;
+    x = S::Scan(tid, x, shared.scan, &passTotal, mgpu::MgpuScanTypeExc, op);
+    if(totalDefined)
+    {
+      x = op.Plus(total, x);
+      total = op.Plus(total, passTotal);
+    }
+    else
+    {
+      total = passTotal;
+    }
+    
+    #pragma unroll
+    for(int i = 0; i < VT; ++i)
+    {
+      int index = VT * tid + i;
+      if(index < count2)
+      {
+        // If this is not the first element in the scan, add x values[i]
+        // into x. Otherwise initialize x to values[i].
+        value_type x2 = (i || tid || totalDefined) ? op.Plus(x, values[i]) : values[i];
+      
+        // For inclusive scan, set the new value then store.
+        // For exclusive scan, store the old value then set the new one.
+        if(mgpu::MgpuScanTypeInc == Type) x = x2;
+        shared.results[index] = op.Combine(inputs[i], x);
+        if(mgpu::MgpuScanTypeExc == Type) x = x2;
+      }
+    }
+    __syncthreads();
+    
+    mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.results, tid, dest_global + start);
+
+    start += NV;
+    totalDefined = true;
+  }
+  
+  if(total_global && !tid)
+  {
+    *total_global = total;
+  }
+  
+  if(end_global && !tid)
+  {
+    *end_global = op.Combine(op.Identity(), total);
+  }
+}
+
+
 template<mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
 void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
 {
@@ -26,9 +125,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::Cud
     const int NT = 512;
     const int VT = 3;
     
-    mgpu::KernelParallelScan<NT, VT, Type><<<1, NT>>>(
-    	data_global, count, op, (value_type*)0,
-    	(result_type*)0, dest_global);
+    my_KernelParallelScan<NT, VT, Type><<<1, NT>>>(data_global, count, op, (value_type*)0, (result_type*)0, dest_global);
   }
   else
   {
