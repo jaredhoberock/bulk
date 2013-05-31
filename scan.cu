@@ -43,7 +43,6 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
   
   // total is the sum of encountered elements. It's undefined on the first 
   // loop iteration.
-  //value_type total = op.Extract(op.Identity(), -1);
   value_type total = 0;
 
   bool totalDefined = false;
@@ -56,7 +55,6 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     
     // Transpose data into register in thread order. Reduce terms serially.
     input_type local_inputs[VT];
-    value_type local_values[VT];
 
     for(int i = 0; i < VT; ++i)
     {
@@ -64,14 +62,13 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
       if(index < count2)
       {
         local_inputs[i] = shared.inputs[index];
-        local_values[i] = shared.inputs[index];
       }
     }
 
-    // XXX this should actually be accumulate
-    value_type x = thrust::reduce(thrust::seq, local_values + 1, local_values + VT, local_values[0]);
+    // XXX this should actually be accumulate because we desire non-commutativity
+    value_type x = thrust::reduce(thrust::seq, local_inputs + 1, local_inputs + VT, local_inputs[0]);
 
-    __syncthreads();
+    this_group.wait();
     		
     // Scan the reduced terms.
     value_type passTotal;
@@ -95,7 +92,7 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
       {
         // If this is not the first element in the scan, add x values[i]
         // into x. Otherwise initialize x to values[i].
-        value_type x2 = (i || tid || totalDefined) ? op.Plus(x, local_values[i]) : local_values[i];
+        value_type x2 = (i || tid || totalDefined) ? op.Plus(x, local_inputs[i]) : local_inputs[i];
       
         // For inclusive scan, set the new value then store.
         // For exclusive scan, store the old value then set the new one.
@@ -104,7 +101,8 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
         if(mgpu::MgpuScanTypeExc == Type) x = x2;
       }
     }
-    __syncthreads();
+
+    this_group.wait();
     
     // store results
     bulk::copy_n(this_group, shared.results, count2, dest_global + start);
