@@ -7,13 +7,14 @@
 #include <cassert>
 #include <iostream>
 #include "time_invocation_cuda.hpp"
+#include <thrust/detail/temporary_array.h>
 
 
 typedef int T;
 
 
 template<mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
-void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, typename Op::value_type* total, bool totalAtEnd, mgpu::CudaContext& context)
+void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, bool totalAtEnd, mgpu::CudaContext& context)
 {
   typedef typename Op::value_type value_type;
   typedef typename Op::result_type result_type;
@@ -24,17 +25,10 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, typename 
   {
     const int NT = 512;
     const int VT = 3;
-    MGPU_MEM(value_type) totalDevice;
-    if(total) totalDevice = context.Malloc<value_type>(1);
     
     mgpu::KernelParallelScan<NT, VT, Type><<<1, NT>>>(
-    	data_global, count, op, total ? totalDevice->get() : (value_type*)0,
+    	data_global, count, op, (value_type*)0,
     	totalAtEnd ? (dest_global + count) : (result_type*)0, dest_global);
-    
-    if(total)
-    {
-      totalDevice->ToHost(total, 1);
-    }
   }
   else
   {
@@ -51,7 +45,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, typename 
     
     MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(numBlocks + 1);
 
-    value_type* totalDevice = total ? (reductionDevice->get() + numBlocks) : (value_type*)0;
+    value_type* totalDevice = (value_type*)0;
     	
     mgpu::KernelReduce<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), op);
     
@@ -60,11 +54,6 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, typename 
     const int NT2 = 256;
     const int VT2 = 3;
     mgpu::KernelParallelScan<NT2, VT2, mgpu::MgpuScanTypeExc><<<1, NT2>>>(reductionDevice->get(), numBlocks, mgpu::ScanOpValue<Op>(op), totalDevice, (value_type*)0, reductionDevice->get());
-    
-    if(total)
-    {
-      cudaMemcpy(total, totalDevice, sizeof(value_type), cudaMemcpyDeviceToHost);
-    }
     
     // Run a raking scan as a downsweep.
     mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, totalAtEnd, op);
@@ -77,13 +66,12 @@ OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, Output
 {
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
-  mgpu::Scan<mgpu::MgpuScanTypeInc>(thrust::raw_pointer_cast(&*first),
-                                    last - first,
-                                    thrust::raw_pointer_cast(&*result),
-                                    mgpu::ScanOp<mgpu::ScanOpTypeAdd,int>(),
-                                    (int*)0,
-                                    false,
-                                    *ctx);
+  ::Scan<mgpu::MgpuScanTypeInc>(thrust::raw_pointer_cast(&*first),
+                                last - first,
+                                thrust::raw_pointer_cast(&*result),
+                                mgpu::ScanOp<mgpu::ScanOpTypeAdd,int>(),
+                                false,
+                                *ctx);
 
   return result + (last - first);
 }
