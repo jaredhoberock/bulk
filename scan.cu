@@ -8,6 +8,8 @@
 #include <iostream>
 #include "time_invocation_cuda.hpp"
 #include <thrust/detail/temporary_array.h>
+#include <bulk/thread_group.hpp>
+#include <bulk/algorithm.hpp>
 
 
 typedef int T;
@@ -18,6 +20,8 @@ typedef int T;
 template<int NT, int VT, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
 __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, OutputIt dest_global)
 {
+  bulk::static_thread_group<NT,VT> this_group;
+
   typedef typename Op::input_type input_type;
   typedef typename Op::value_type value_type;
   typedef typename Op::result_type result_type;
@@ -41,9 +45,10 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
   int start = 0;
   while(start < count)
   {
-    // Load data into shared memory.
     int count2 = min(NV, count - start);
-    mgpu::DeviceGlobalToShared<NT, VT>(count2, cta_global + start, tid, shared.inputs);
+
+    // copy data into shared memory
+    bulk::copy_n(this_group, cta_global + start, count2, shared.inputs);
     
     // Transpose data into register in thread order. Reduce terms serially.
     input_type inputs[VT];
@@ -94,7 +99,8 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     }
     __syncthreads();
     
-    mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.results, tid, dest_global + start);
+    // store results
+    bulk::copy_n(this_group, shared.results, count2, dest_global + start);
 
     start += NV;
     totalDefined = true;
