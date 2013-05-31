@@ -14,7 +14,7 @@ typedef int T;
 
 
 template<mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
-void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, bool totalAtEnd, mgpu::CudaContext& context)
+void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
 {
   typedef typename Op::value_type value_type;
   typedef typename Op::result_type result_type;
@@ -28,7 +28,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, bool tota
     
     mgpu::KernelParallelScan<NT, VT, Type><<<1, NT>>>(
     	data_global, count, op, (value_type*)0,
-    	totalAtEnd ? (dest_global + count) : (result_type*)0, dest_global);
+    	(result_type*)0, dest_global);
   }
   else
   {
@@ -56,7 +56,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, bool tota
     mgpu::KernelParallelScan<NT2, VT2, mgpu::MgpuScanTypeExc><<<1, NT2>>>(reductionDevice->get(), numBlocks, mgpu::ScanOpValue<Op>(op), totalDevice, (value_type*)0, reductionDevice->get());
     
     // Run a raking scan as a downsweep.
-    mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, totalAtEnd, op);
+    mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, false, op);
   }
 }
 
@@ -70,7 +70,6 @@ OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, Output
                                 last - first,
                                 thrust::raw_pointer_cast(&*result),
                                 mgpu::ScanOp<mgpu::ScanOpTypeAdd,int>(),
-                                false,
                                 *ctx);
 
   return result + (last - first);
