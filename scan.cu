@@ -39,7 +39,7 @@ void copy_n_with_grainsize(Iterator1 first, Size n, Iterator2 result)
 
 // Scan inputs on a single CTA. Optionally output the total to dest_global at
 // totalIndex.
-template<int NT, int VT, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
+template<int NT, int VT, bool inclusive, typename InputIt, typename OutputIt, typename Op>
 __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, OutputIt dest_global)
 {
   bulk::static_thread_group<NT,VT> this_group;
@@ -75,11 +75,11 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
 
     int local_size = max(0,min(VT, count2 - VT * tid));
 
+    int src_offset = VT * tid;
+
     value_type x = 0;
     if(local_size > 0)
     {
-      int src_offset = VT * tid;
-
       // XXX would be cool simply to call
       // bulk::copy_n(this_group.this_thread, ...) instead
       copy_n_with_grainsize<VT>(shared.inputs + src_offset, local_size, local_inputs);
@@ -95,39 +95,31 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     value_type pass_carry;
     x = S::Scan(tid, x, shared.scan, &pass_carry, mgpu::MgpuScanTypeExc, op);
 
+    // XXX the carry should be incorporated in the small block-wise scan
     x = op.Plus(carry, x);
     carry = op.Plus(carry, pass_carry);
 
-    //// now we do an inplace scan while incorporating the carries
-    //if(local_size > 0)
-    //{
-    //  if(Type == mgpu::MgpuScanTypeInc)
-    //  {
-    //    local_inputs[0] = op.Plus(x, local_inputs[0]);
-    //    thrust::inclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs);
-    //  }
-    //  else
-    //  {
-    //    thrust::exclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs, x);
-    //  }
-
-    //  copy_n_with_grainsize<VT>(local_inputs, local_size, shared.results);
-    //}
-    
-    #pragma unroll
-    for(int i = 0; i < VT; ++i)
+    // now we do an inplace scan while incorporating the carries
+    if(local_size > 0)
     {
-      int index = VT * tid + i;
-      if(index < count2)
+      if(inclusive)
       {
-        value_type x2 = op.Plus(x, local_inputs[i]);
-      
-        // For inclusive scan, set the new value then store.
-        // For exclusive scan, store the old value then set the new one.
-        if(mgpu::MgpuScanTypeInc == Type) x = x2;
-        shared.results[index] = op.Combine(local_inputs[i], x);
-        if(mgpu::MgpuScanTypeExc == Type) x = x2;
+        local_inputs[0] = op.Plus(x, local_inputs[0]);
+
+        // XXX would be cool simply to call
+        // bulk::inclusive_scan(this_group.this_thread, ...) instead
+        thrust::inclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs);
       }
+      else
+      {
+        // XXX would be cool simply to call
+        // bulk::exclusive_scan(this_group.this_thread, ...) instead
+        thrust::exclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs, x);
+      }
+
+      // XXX would be cool simply to call
+      // bulk::copy_n(this_group.this_thread, ...) instead
+      copy_n_with_grainsize<VT>(local_inputs, local_size, shared.results + src_offset);
     }
 
     this_group.wait();
@@ -139,7 +131,7 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
 
 
 template<mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
-void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
+void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
 {
   typedef typename Op::value_type value_type;
   typedef typename Op::result_type result_type;
@@ -151,7 +143,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::Cud
     const int NT = 512;
     const int VT = 3;
     
-    my_KernelParallelScan<NT, VT, Type><<<1, NT>>>(data_global, count, op, dest_global);
+    my_KernelParallelScan<NT, VT, true><<<1, NT>>>(data_global, count, op, dest_global);
   }
   else
   {
@@ -174,7 +166,7 @@ void Scan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::Cud
     // raking reduction.
     const int NT2 = 256;
     const int VT2 = 3;
-    my_KernelParallelScan<NT2, VT2, mgpu::MgpuScanTypeExc><<<1, NT2>>>(reductionDevice->get(), numBlocks, mgpu::ScanOpValue<Op>(op), reductionDevice->get());
+    my_KernelParallelScan<NT2, VT2, false><<<1, NT2>>>(reductionDevice->get(), numBlocks, mgpu::ScanOpValue<Op>(op), reductionDevice->get());
     
     // Run a raking scan as a downsweep.
     mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, false, op);
@@ -187,11 +179,11 @@ OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, Output
 {
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
-  ::Scan<mgpu::MgpuScanTypeInc>(thrust::raw_pointer_cast(&*first),
-                                last - first,
-                                thrust::raw_pointer_cast(&*result),
-                                mgpu::ScanOp<mgpu::ScanOpTypeAdd,int>(),
-                                *ctx);
+  ::IncScan<mgpu::MgpuScanTypeInc>(thrust::raw_pointer_cast(&*first),
+                                   last - first,
+                                   thrust::raw_pointer_cast(&*result),
+                                   mgpu::ScanOp<mgpu::ScanOpTypeAdd,int>(),
+                                   *ctx);
 
   return result + (last - first);
 }
