@@ -18,6 +18,25 @@
 typedef int T;
 
 
+template<unsigned int grainsize, typename Iterator1, typename Size, typename Iterator2>
+__device__
+void copy_n_with_grainsize(Iterator1 first, Size n, Iterator2 result)
+{
+  for(Iterator1 last = first + n;
+      first < last;
+      first += grainsize, result += grainsize)
+  {
+    for(int i = 0; i < grainsize; ++i)
+    {
+      if(i < (last - first))
+      {
+        result[i] = first[i];
+      }
+    }
+  }
+}
+
+
 // Scan inputs on a single CTA. Optionally output the total to dest_global at
 // totalIndex.
 template<int NT, int VT, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
@@ -41,11 +60,10 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
   
   int tid = threadIdx.x;
   
-  // total is the sum of encountered elements. It's undefined on the first 
-  // loop iteration.
-  value_type total = 0;
+  // carry is the sum over all previous iterations
+  value_type carry = 0; // XXX use uninitialized here
 
-  bool totalDefined = false;
+  bool carry_initialized = false;
   for(int start = 0; start < count; start += NV)
   {
     int count2 = min(NV, count - start);
@@ -56,32 +74,36 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     // Transpose data into register in thread order. Reduce terms serially.
     input_type local_inputs[VT];
 
-    for(int i = 0; i < VT; ++i)
-    {
-      int index = VT * tid + i;
-      if(index < count2)
-      {
-        local_inputs[i] = shared.inputs[index];
-      }
-    }
+    int local_size = max(0,min(VT, count2 - VT * tid));
 
-    // XXX this should actually be accumulate because we desire non-commutativity
-    value_type x = thrust::reduce(thrust::seq, local_inputs + 1, local_inputs + VT, local_inputs[0]);
+    value_type x;
+    if(local_size > 0)
+    {
+      int src_offset = VT * tid;
+
+      // XXX would be cool simply to call
+      // bulk::copy_n(this_group.this_thread, ...) instead
+      copy_n_with_grainsize<VT>(shared.inputs + src_offset, local_size, local_inputs);
+
+      // XXX this should actually be accumulate because we desire non-commutativity
+      x = thrust::reduce(thrust::seq, local_inputs + 1, local_inputs + local_size, local_inputs[0]);
+    }
 
     this_group.wait();
     		
     // Scan the reduced terms.
-    value_type passTotal;
-    x = S::Scan(tid, x, shared.scan, &passTotal, mgpu::MgpuScanTypeExc, op);
+    // XXX we should pass in the carry here as the init since this is an exclusive_scan
+    value_type pass_carry;
+    x = S::Scan(tid, x, shared.scan, &pass_carry, mgpu::MgpuScanTypeExc, op);
 
-    if(totalDefined)
+    if(carry_initialized)
     {
-      x = op.Plus(total, x);
-      total = op.Plus(total, passTotal);
+      x = op.Plus(carry, x);
+      carry = op.Plus(carry, pass_carry);
     }
     else
     {
-      total = passTotal;
+      carry = pass_carry;
     }
     
     #pragma unroll
@@ -92,7 +114,7 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
       {
         // If this is not the first element in the scan, add x values[i]
         // into x. Otherwise initialize x to values[i].
-        value_type x2 = (i || tid || totalDefined) ? op.Plus(x, local_inputs[i]) : local_inputs[i];
+        value_type x2 = (i || tid || carry_initialized) ? op.Plus(x, local_inputs[i]) : local_inputs[i];
       
         // For inclusive scan, set the new value then store.
         // For exclusive scan, store the old value then set the new one.
@@ -107,7 +129,7 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     // store results
     bulk::copy_n(this_group, shared.results, count2, dest_global + start);
 
-    totalDefined = true;
+    carry_initialized = true;
   }
 }
 
