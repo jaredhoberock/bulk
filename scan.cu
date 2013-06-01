@@ -1,6 +1,6 @@
 #include <moderngpu.cuh>
 #include <thrust/scan.h>
-#include <thrust/sequence.h>
+#include <thrust/fill.h>
 #include <thrust/device_vector.h>
 #include <thrust/functional.h>
 #include <thrust/random.h>
@@ -36,6 +36,76 @@ void copy_n_with_grainsize(Iterator1 first, Size n, Iterator2 result)
   }
 }
 
+template<typename ThreadGroup, typename T, typename Storage, typename Op>
+__device__ T exclusive_scan(ThreadGroup &g, T x, Storage &storage, T *carry_out, Op op)
+{
+  int tid = g.this_thread.index();
+
+  storage.shared[tid] = x;
+  g.wait();
+
+  int first = 0;
+
+  for(int offset = 1; offset < g.size(); offset += offset)
+  {
+    if(tid >= offset)
+    {
+      x = op.Plus(storage.shared[first + tid - offset], x);
+    }
+
+    first = g.size() - first;
+    storage.shared[first + tid] = x;
+
+    g.wait();
+  }
+
+  *carry_out = storage.shared[first + g.size() - 1];
+
+  x = tid ? storage.shared[first + tid - 1] : op.Extract(op.Identity(), -1);
+
+  g.wait();
+  
+  return x;
+}
+
+
+template<typename ThreadGroup, typename T, typename Storage, typename Op>
+__device__ T exclusive_scan(ThreadGroup &g, T x, T init, Storage &storage, T *carry_out, Op op)
+{
+  int tid = g.this_thread.index();
+
+  if(tid == 0)
+  {
+    x = op.Plus(init, x);
+  }
+
+  storage.shared[tid] = x;
+  g.wait();
+
+  int first = 0;
+
+  for(int offset = 1; offset < g.size(); offset += offset)
+  {
+    if(tid >= offset)
+    {
+      x = op.Plus(storage.shared[first + tid - offset], x);
+    }
+
+    first = g.size() - first;
+    storage.shared[first + tid] = x;
+
+    g.wait();
+  }
+
+  *carry_out = storage.shared[first + g.size() - 1];
+
+  x = tid ? storage.shared[first + tid - 1] : init;
+
+  g.wait();
+  
+  return x;
+}
+
 
 // Scan inputs on a single CTA. Optionally output the total to dest_global at
 // totalIndex.
@@ -62,6 +132,11 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
   
   // carry is the sum over all previous iterations
   value_type carry = cta_global[0];
+
+  if(this_group.this_thread.index() == 0)
+  {
+    dest_global[0] = carry;
+  }
 
   for(int start = 1; start < count; start += NV)
   {
@@ -90,16 +165,10 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
 
     this_group.wait();
     		
-    // Scan the reduced terms.
-    // XXX we should pass in the carry here as the init since this is an exclusive_scan
-    value_type pass_carry;
-    x = S::Scan(tid, x, shared.scan, &pass_carry, mgpu::MgpuScanTypeExc, op);
+    // scan this group's sums
+    x = ::exclusive_scan(this_group, x, carry, shared.scan, &carry, op);
 
-    // XXX the carry should be incorporated in the small block-wise scan
-    x = op.Plus(carry, x);
-    carry = op.Plus(carry, pass_carry);
-
-    // now we do an inplace scan while incorporating the carries
+    // each thread does an inplace scan locally while incorporating the carries
     if(local_size > 0)
     {
       if(inclusive)
@@ -198,7 +267,7 @@ void my_scan(thrust::device_vector<T> *data)
 void do_it(size_t n)
 {
   thrust::host_vector<T> h_input(n);
-  thrust::sequence(h_input.begin(), h_input.end());
+  thrust::fill(h_input.begin(), h_input.end(), 1);
 
   thrust::host_vector<T> h_result(n);
 
@@ -209,7 +278,7 @@ void do_it(size_t n)
 
   my_inclusive_scan(d_input.begin(), d_input.end(), d_result.begin());
 
-  cudaError_t error = cudaGetLastError();
+  cudaError_t error = cudaDeviceSynchronize();
 
   if(error)
   {
@@ -263,10 +332,10 @@ int main()
   thrust::device_vector<T> vec(1 << 24);
 
   sean_scan(&vec);
-  double sean_msecs = time_invocation_cuda(20, sean_scan, &vec);
+  double sean_msecs = time_invocation_cuda(50, sean_scan, &vec);
 
   my_scan(&vec);
-  double my_msecs = time_invocation_cuda(20, my_scan, &vec);
+  double my_msecs = time_invocation_cuda(50, my_scan, &vec);
 
   std::cout << "Sean's time: " << sean_msecs << " ms" << std::endl;
   std::cout << "My time: " << my_msecs << " ms" << std::endl;
