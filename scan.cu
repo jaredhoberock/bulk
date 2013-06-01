@@ -37,41 +37,125 @@ void copy_n_with_grainsize(Iterator1 first, Size n, Iterator2 result)
 }
 
 
-template<typename ThreadGroup, typename T, typename Storage, typename Op>
-__device__ T exclusive_scan(ThreadGroup &g, T x, T init, Storage &storage, T *carry_out, Op op)
+template<typename ThreadGroup, typename Iterator, typename Size, typename T, typename BinaryFunction>
+__device__ T exclusive_scan_n(ThreadGroup &g, Iterator first, Size n, T init, T *carry_out, BinaryFunction binary_op)
 {
+  T x;
+
   int tid = g.this_thread.index();
 
-  if(tid == 0)
+  if(n > 0 && tid == 0)
   {
-    x = op.Plus(init, x);
+    *first = binary_op(init, *first);
   }
 
-  storage.shared[tid] = x;
+  if(tid < n)
+  {
+    x = first[tid];
+  }
+
   g.wait();
 
-  int first = 0;
-
-  for(int offset = 1; offset < g.size(); offset += offset)
+  for(int offset = 1; offset < n; offset += offset)
   {
-    if(tid >= offset)
+    if(tid >= offset && tid < n)
     {
-      x = op.Plus(storage.shared[first + tid - offset], x);
+      x = binary_op(first[tid - offset], x);
     }
 
-    first = g.size() - first;
-    storage.shared[first + tid] = x;
+    g.wait();
+
+    if(tid < n)
+    {
+      first[tid] = x;
+    }
 
     g.wait();
   }
 
-  *carry_out = storage.shared[first + g.size() - 1];
+  *carry_out = n > 0 ? first[n - 1] : init;
 
-  x = tid ? storage.shared[first + tid - 1] : init;
+  if(tid - 1 < n)
+  {
+    x = tid ? first[tid - 1] : init;
+  }
 
   g.wait();
   
   return x;
+}
+
+
+template<typename ThreadGroup, typename Iterator, typename Size, typename BinaryFunction>
+__device__ void inclusive_scan_n(ThreadGroup &g, Iterator first, Size n, BinaryFunction binary_op)
+{
+  T x;
+
+  int tid = g.this_thread.index();
+
+  if(tid < n)
+  {
+    x = first[tid];
+  }
+
+  g.wait();
+
+  for(int offset = 1; offset < n; offset += offset)
+  {
+    if(tid >= offset && tid < n)
+    {
+      x = binary_op(first[tid - offset], x);
+    }
+
+    g.wait();
+
+    if(tid < n)
+    {
+      first[tid] = x;
+    }
+
+    g.wait();
+  }
+}
+
+
+template<typename ThreadGroup, typename Iterator, typename Size, typename T, typename BinaryFunction>
+__device__ T exclusive_scan_n(ThreadGroup &g, Iterator first, Size n, T init, BinaryFunction binary_op)
+{
+  T x;
+
+  int tid = g.this_thread.index();
+
+  if(n > 0 && tid == 0)
+  {
+    *first = binary_op(init, *first);
+  }
+
+  g.wait();
+
+  if(tid < n)
+  {
+    x = first[tid];
+  }
+
+  g.wait();
+
+  inclusive_scan_n(g, first, n, binary_op);
+
+  T result = n > 0 ? first[n - 1] : init;
+
+  x = (tid == 0 || tid - 1 >= n) ? init : first[tid - 1];
+
+  g.wait();
+
+  if(tid < n)
+  {
+    first[tid] = x;
+  }
+
+  g.wait();
+
+  return result;
 }
 
 
@@ -87,14 +171,12 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
   typedef typename Op::result_type result_type;
   const int NV = NT * VT;
   
-  typedef mgpu::CTAScan<NT, Op> S;
   union Shared
   {
-    typename S::Storage scan;
     input_type inputs[NV];
     result_type results[NV];
   };
-  __shared__ Shared shared;
+  __shared__ Shared s_stage;
   
   int tid = threadIdx.x;
   
@@ -110,35 +192,44 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
   {
     int count2 = min(NV, count - start);
 
-    // copy data into shared memory
-    bulk::copy_n(this_group, cta_global + start, count2, shared.inputs);
+    // stage data through shared memory
+    bulk::copy_n(this_group, cta_global + start, count2, s_stage.inputs);
     
     // Transpose data into register in thread order. Reduce terms serially.
     input_type local_inputs[VT];
 
     int local_size = max(0,min(VT, count2 - VT * tid));
 
-    int src_offset = VT * tid;
+    int local_offset = VT * tid;
 
     value_type x = 0;
+
+    __shared__ value_type s_sums[NT];
+
     if(local_size > 0)
     {
       // XXX would be cool simply to call
       // bulk::copy_n(this_group.this_thread, ...) instead
-      copy_n_with_grainsize<VT>(shared.inputs + src_offset, local_size, local_inputs);
+      copy_n_with_grainsize<VT>(s_stage.inputs + local_offset, local_size, local_inputs);
 
       // XXX this should actually be accumulate because we desire non-commutativity
       x = thrust::reduce(thrust::seq, local_inputs + 1, local_inputs + local_size, local_inputs[0]);
+
+      s_sums[tid] = x;
     }
 
     this_group.wait();
-    		
+
     // scan this group's sums
-    x = ::exclusive_scan(this_group, x, carry, shared.scan, &carry, op);
+    // XXX is this really the correct number of sums?
+    //     it should be divide_ri(count2, VT)
+    carry = ::exclusive_scan_n(this_group, s_sums, min(NT,count2), carry, thrust::plus<int>());
 
     // each thread does an inplace scan locally while incorporating the carries
     if(local_size > 0)
     {
+      x = s_sums[tid];
+
       if(inclusive)
       {
         local_inputs[0] = op.Plus(x, local_inputs[0]);
@@ -156,13 +247,13 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
 
       // XXX would be cool simply to call
       // bulk::copy_n(this_group.this_thread, ...) instead
-      copy_n_with_grainsize<VT>(local_inputs, local_size, shared.results + src_offset);
+      copy_n_with_grainsize<VT>(local_inputs, local_size, s_stage.results + local_offset);
     }
 
     this_group.wait();
     
     // store results
-    bulk::copy_n(this_group, shared.results, count2, dest_global + start);
+    bulk::copy_n(this_group, s_stage.results, count2, dest_global + start);
   }
 }
 
