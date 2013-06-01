@@ -61,10 +61,9 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
   int tid = threadIdx.x;
   
   // carry is the sum over all previous iterations
-  value_type carry = 0; // XXX use uninitialized here
+  value_type carry = cta_global[0];
 
-  bool carry_initialized = false;
-  for(int start = 0; start < count; start += NV)
+  for(int start = 1; start < count; start += NV)
   {
     int count2 = min(NV, count - start);
 
@@ -76,7 +75,7 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
 
     int local_size = max(0,min(VT, count2 - VT * tid));
 
-    value_type x;
+    value_type x = 0;
     if(local_size > 0)
     {
       int src_offset = VT * tid;
@@ -96,15 +95,24 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     value_type pass_carry;
     x = S::Scan(tid, x, shared.scan, &pass_carry, mgpu::MgpuScanTypeExc, op);
 
-    if(carry_initialized)
-    {
-      x = op.Plus(carry, x);
-      carry = op.Plus(carry, pass_carry);
-    }
-    else
-    {
-      carry = pass_carry;
-    }
+    x = op.Plus(carry, x);
+    carry = op.Plus(carry, pass_carry);
+
+    //// now we do an inplace scan while incorporating the carries
+    //if(local_size > 0)
+    //{
+    //  if(Type == mgpu::MgpuScanTypeInc)
+    //  {
+    //    local_inputs[0] = op.Plus(x, local_inputs[0]);
+    //    thrust::inclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs);
+    //  }
+    //  else
+    //  {
+    //    thrust::exclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs, x);
+    //  }
+
+    //  copy_n_with_grainsize<VT>(local_inputs, local_size, shared.results);
+    //}
     
     #pragma unroll
     for(int i = 0; i < VT; ++i)
@@ -112,9 +120,7 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
       int index = VT * tid + i;
       if(index < count2)
       {
-        // If this is not the first element in the scan, add x values[i]
-        // into x. Otherwise initialize x to values[i].
-        value_type x2 = (i || tid || carry_initialized) ? op.Plus(x, local_inputs[i]) : local_inputs[i];
+        value_type x2 = op.Plus(x, local_inputs[i]);
       
         // For inclusive scan, set the new value then store.
         // For exclusive scan, store the old value then set the new one.
@@ -128,8 +134,6 @@ __global__ void my_KernelParallelScan(InputIt cta_global, int count, Op op, Outp
     
     // store results
     bulk::copy_n(this_group, shared.results, count2, dest_global + start);
-
-    carry_initialized = true;
   }
 }
 
