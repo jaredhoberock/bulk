@@ -36,38 +36,6 @@ void copy_n_with_grainsize(Iterator1 first, Size n, Iterator2 result)
   }
 }
 
-template<typename ThreadGroup, typename T, typename Storage, typename Op>
-__device__ T exclusive_scan(ThreadGroup &g, T x, Storage &storage, T *carry_out, Op op)
-{
-  int tid = g.this_thread.index();
-
-  storage.shared[tid] = x;
-  g.wait();
-
-  int first = 0;
-
-  for(int offset = 1; offset < g.size(); offset += offset)
-  {
-    if(tid >= offset)
-    {
-      x = op.Plus(storage.shared[first + tid - offset], x);
-    }
-
-    first = g.size() - first;
-    storage.shared[first + tid] = x;
-
-    g.wait();
-  }
-
-  *carry_out = storage.shared[first + g.size() - 1];
-
-  x = tid ? storage.shared[first + tid - 1] : op.Extract(op.Identity(), -1);
-
-  g.wait();
-  
-  return x;
-}
-
 
 template<typename ThreadGroup, typename T, typename Storage, typename Op>
 __device__ T exclusive_scan(ThreadGroup &g, T x, T init, Storage &storage, T *carry_out, Op op)
