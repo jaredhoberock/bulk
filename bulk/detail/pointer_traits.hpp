@@ -25,7 +25,7 @@ __device__ unsigned int __isShared(const void *ptr)
 #endif
 
   return ret;
-}
+} // end __isShared()
 
 
 __device__ bool is_shared(const void *ptr)

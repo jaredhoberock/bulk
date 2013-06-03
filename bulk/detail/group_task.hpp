@@ -29,7 +29,7 @@ class group_task
       // initialize shared storage
       if(threadIdx.x == 0)
       {
-        detail::s_storage.construct(num_dynamic_smem_bytes);
+        bulk::detail::init_on_chip_malloc(num_dynamic_smem_bytes);
       }
       __syncthreads();
 #endif
