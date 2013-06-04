@@ -55,10 +55,15 @@ struct launcher
       uninitialized<task_type> wrapped_task;
       wrapped_task.construct(task);
 
-      cudaEvent_t before_event;
-      throw_on_error(cudaEventCreateWithFlags(&before_event, cudaEventDisableTiming | cudaEventBlockingSync), "cudaEventCreateWithFlags in launcher::go");
-      throw_on_error(cudaStreamWaitEvent(l.stream(), before_event, 0), "cudaStreamWaitEvent in launcher::go");
-      throw_on_error(cudaEventDestroy(before_event), "cudaEventDestroy in launcher::go");
+      // XXX this business is pretty expensive
+      //     try to avoid it or speed it up or something
+      if(l.stream() != 0)
+      {
+        cudaEvent_t before_event;
+        throw_on_error(cudaEventCreateWithFlags(&before_event, cudaEventDisableTiming | cudaEventBlockingSync), "cudaEventCreateWithFlags in launcher::go");
+        throw_on_error(cudaStreamWaitEvent(l.stream(), before_event, 0), "cudaStreamWaitEvent in launcher::go");
+        throw_on_error(cudaEventDestroy(before_event), "cudaEventDestroy in launcher::go");
+      } // end if
 
       launch_by_value<<<
         static_cast<unsigned int>(l.num_groups()),
@@ -70,7 +75,10 @@ struct launcher
       thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
     } // end if
 
-    return future_core_access::create_in_stream(l.stream());
+    // XXX this business is pretty expensive
+    //     try to avoid it or speed it up or something
+    // XXX we need to think more carefully about how the events get created here
+    return (l.stream() != 0) ? future_core_access::create_in_stream(l.stream()) : future<void>();
   } // end go()
 
   static global_function_t get_global_function()
