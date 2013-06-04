@@ -37,132 +37,6 @@ struct exclusive_scan_n
 };
 
 
-template<int NT, int VT, typename T, typename OutputIt>
-__device__ void simple_copy_n(const T *source, int count, OutputIt dest)
-{
-  int tid = threadIdx.x;
-
-  typedef typename std::iterator_traits<OutputIt>::value_type T2;
-
-  #pragma unroll
-  for(int i = 0; i < VT; ++i)
-  {
-    int index = NT * i + tid;
-    if(index < count)
-    {
-      dest[NT * i + tid] = (T2)source[NT * i + tid];
-    }
-  }
-
-  __syncthreads();
-}
-
-
-template<std::size_t size,
-         std::size_t grainsize,
-         typename RandomAccessIterator1,
-         typename RandomAccessIterator2>
-__forceinline__ __device__ void new_simple_copy_n(RandomAccessIterator1 first, int n, RandomAccessIterator2 result)
-{
-  typedef int size_type;
-  size_type chunk_size = size * grainsize;
-
-  int tid = threadIdx.x;
-
-  for(RandomAccessIterator1 last = first + n;
-      first < last;
-      first += chunk_size, result += chunk_size)
-  {
-    // avoid conditional accesses when possible
-    if((last - first) >= chunk_size)
-    {
-      #pragma unroll
-      for(size_type i = 0; i < grainsize; ++i)
-      {
-        size_type idx = size * i + tid;
-        result[idx] = first[idx];
-      }
-    }
-    else
-    {
-      #pragma unroll
-      for(size_type i = 0; i < grainsize; ++i)
-      {
-        size_type idx = size * i + tid;
-        if(idx < (last - first)) result[idx] = first[idx];
-      }
-    }
-  }
-
-  __syncthreads();
-}
-
-
-template<int NT, int VT, typename InputIt, typename T>
-__device__ void my_DeviceGlobalToReg(InputIt data, int count, T* reg)
-{
-  int tid = threadIdx.x;
-
-  if(count >= NT * VT)
-  {
-    #pragma unroll
-    for(int i = 0; i < VT; ++i)
-    {
-      reg[i] = data[NT * i + tid];
-    }
-  } 
-  else
-  {
-    #pragma unroll
-    for(int i = 0; i < VT; ++i) 
-    {
-      int index = NT * i + tid;
-      if(index < count) reg[i] = data[index];
-    }
-  }
-}
-
-
-template<int NT, int VT, typename OutputIt, typename T>
-__device__ void my_DeviceRegToShared(const T* reg, int count, OutputIt dest)
-{
-  int tid = threadIdx.x;
-
-  typedef typename std::iterator_traits<OutputIt>::value_type T2;
-  if(count >= NT * VT)
-  {
-    #pragma unroll
-    for(int i = 0; i < VT; ++i)
-    {
-      dest[NT * i + tid] = (T2)reg[i];
-    }
-  }
-  else
-  {
-    #pragma unroll
-    for(int i = 0; i < VT; ++i)
-    {
-      int index = NT * i + tid;
-      if(index < count) 
-      {
-      	dest[index] = (T2)reg[i];
-      }
-    }
-  }
-}
-
-
-template<int size, int grainsize, typename InputIt, typename T>
-__device__ void my_DeviceGlobalToShared(InputIt source, int count, T* dest)
-{
-  T reg[grainsize];
-  my_DeviceGlobalToReg<size, grainsize>(source, count, reg);
-  my_DeviceRegToShared<size, grainsize>(reg, size * grainsize, dest);
-
-  __syncthreads();
-}
-
-
 template<typename Tuning, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename T, typename Op>
 __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, Op op)
 {
@@ -200,7 +74,7 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
     int count2 = min(elements_per_group, count - range.x);
     
     // Load from global to shared memory.
-    my_DeviceGlobalToShared<groupsize, grainsize>(data_global + range.x, count2, shared.inputs);
+    bulk::copy_n(this_group, data_global + range.x, count2, shared.inputs);
     
     // Transpose out of shared memory.
     input_type inputs[grainsize];
@@ -379,20 +253,20 @@ void sean_scan(thrust::device_vector<T> *data)
 
 int main()
 {
-//  for(size_t n = 1; n <= 1 << 20; n <<= 1)
-//  {
-//    std::cout << "Testing n = " << n << std::endl;
-//    do_it(n);
-//  }
-//
-//  thrust::default_random_engine rng;
-//  for(int i = 0; i < 20; ++i)
-//  {
-//    size_t n = rng() % (1 << 20);
-//   
-//    std::cout << "Testing n = " << n << std::endl;
-//    do_it(n);
-//  }
+  for(size_t n = 1; n <= 1 << 20; n <<= 1)
+  {
+    std::cout << "Testing n = " << n << std::endl;
+    do_it(n);
+  }
+
+  thrust::default_random_engine rng;
+  for(int i = 0; i < 20; ++i)
+  {
+    size_t n = rng() % (1 << 20);
+   
+    std::cout << "Testing n = " << n << std::endl;
+    do_it(n);
+  }
 
   thrust::device_vector<T> vec(1 << 28);
 
