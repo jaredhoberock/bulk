@@ -71,21 +71,21 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
   {
     int count2 = min(elements_per_group, count - range.x);
     
-    // Load from global to shared memory.
+    // stage data through shared memory
     bulk::copy_n(this_group, data_global + range.x, count2, shared.inputs);
     
     // Transpose out of shared memory.
     input_type inputs[grainsize];
     input_type x = op.Extract(op.Identity(), -1);
-    
+
     #pragma unroll
     for(int i = 0; i < grainsize; ++i)
     {
       int index = grainsize * tid + i;
       if(index < count2)
       {
-      	inputs[i] = shared.inputs[index];
-      	x = i ? op.Plus(x, inputs[i]) : inputs[i];
+        inputs[i] = shared.inputs[index];
+        x = i ? op.Plus(x, inputs[i]) : inputs[i];
       }
     }
     __syncthreads();
