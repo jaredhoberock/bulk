@@ -171,16 +171,22 @@ struct scan
     // XXX this needs to be inferred from the iterators and binary_op
     typedef typename thrust::iterator_value<OutputIt>::type intermediate_type;
   
-    const int elements_per_group = size * grainsize;
-    
-    union shared
+    const unsigned int elements_per_group = size * grainsize;
+
+    // we don't need the inputs and the results at the same time
+    // so we can overlay these arrays
+    union stage
     {
-      input_type inputs[elements_per_group];
-      intermediate_type results[elements_per_group];
+      input_type *inputs;
+      intermediate_type *results;
     };
-    __shared__ shared s_stage;
+
+    stage s_stage;
+    s_stage.inputs = reinterpret_cast<input_type*>(bulk::malloc(this_group, elements_per_group * thrust::max<int>(sizeof(input_type), sizeof(intermediate_type))));
+
+    intermediate_type *s_sums = reinterpret_cast<intermediate_type*>(bulk::malloc(this_group, size * sizeof(intermediate_type)));
     
-    int tid = this_group.this_thread.index();
+    unsigned int tid = this_group.this_thread.index();
     
     // carry is the sum over all previous iterations
     intermediate_type carry = cta_global[0];
@@ -205,8 +211,6 @@ struct scan
       int local_offset = grainsize * tid;
   
       intermediate_type x = 0;
-  
-      __shared__ intermediate_type s_sums[size];
   
       if(local_size > 0)
       {
@@ -257,6 +261,9 @@ struct scan
       // store results
       bulk::copy_n(this_group, s_stage.results, count2, dest_global + start);
     }
+
+    bulk::free(this_group, s_stage.inputs);
+    bulk::free(this_group, s_sums);
   }
 };
 
