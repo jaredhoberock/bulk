@@ -158,18 +158,16 @@ __device__ T exclusive_scan_n(ThreadGroup &g, Iterator first, Size n, T init, Bi
 }
 
 
-// Scan inputs on a single CTA. Optionally output the total to dest_global at
-// totalIndex.
 template<unsigned int size, unsigned int grainsize, bool inclusive>
 struct scan
 {
-  template<typename InputIt, typename OutputIt, typename Op>
-  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIt cta_global, int count, Op op, OutputIt dest_global)
+  template<typename InputIterator, typename OutputIterator, typename BinaryFunction>
+  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIterator cta_global, int count, OutputIterator dest_global, BinaryFunction binary_op)
   {
-    typedef typename thrust::iterator_value<InputIt>::type input_type;
+    typedef typename thrust::iterator_value<InputIterator>::type input_type;
 
     // XXX this needs to be inferred from the iterators and binary_op
-    typedef typename thrust::iterator_value<OutputIt>::type intermediate_type;
+    typedef typename thrust::iterator_value<OutputIterator>::type intermediate_type;
   
     const unsigned int elements_per_group = size * grainsize;
 
@@ -219,7 +217,7 @@ struct scan
         copy_n_with_grainsize<grainsize>(s_stage.inputs + local_offset, local_size, local_inputs);
   
         // XXX this should actually be accumulate because we desire non-commutativity
-        x = thrust::reduce(thrust::seq, local_inputs + 1, local_inputs + local_size, local_inputs[0]);
+        x = thrust::reduce(thrust::seq, local_inputs + 1, local_inputs + local_size, local_inputs[0], binary_op);
   
         s_sums[tid] = x;
       }
@@ -229,7 +227,7 @@ struct scan
       // scan this group's sums
       // XXX is this really the correct number of sums?
       //     it should be divide_ri(count2, grainsize)
-      carry = ::exclusive_scan_n(this_group, s_sums, min(size,count2), carry, thrust::plus<int>());
+      carry = ::exclusive_scan_n(this_group, s_sums, min(size,count2), carry, binary_op);
   
       // each thread does an inplace scan locally while incorporating the carries
       if(local_size > 0)
@@ -238,17 +236,17 @@ struct scan
   
         if(inclusive)
         {
-          local_inputs[0] = op.Plus(x, local_inputs[0]);
+          local_inputs[0] = binary_op(x,local_inputs[0]);
   
           // XXX would be cool simply to call
           // bulk::inclusive_scan(this_group.this_thread, ...) instead
-          thrust::inclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs);
+          thrust::inclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs, binary_op);
         }
         else
         {
           // XXX would be cool simply to call
           // bulk::exclusive_scan(this_group.this_thread, ...) instead
-          thrust::exclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs, x);
+          thrust::exclusive_scan(thrust::seq, local_inputs, local_inputs + local_size, local_inputs, x, binary_op);
         }
   
         // XXX would be cool simply to call
@@ -282,7 +280,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     const int VT = 3;
 
     bulk::static_thread_group<NT,VT> group;
-    bulk::async(bulk::par(group, 1), scan<NT,VT,true>(), bulk::there, data_global, count, op, dest_global);
+    bulk::async(bulk::par(group, 1), scan<NT,VT,true>(), bulk::there, data_global, count, dest_global, thrust::plus<int>());
   }
   else
   {
@@ -307,7 +305,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     const int VT2 = 3;
 
     bulk::static_thread_group<NT2,VT2> group;
-    bulk::async(bulk::par(group,1), scan<NT2,VT2,false>(), bulk::there, reductionDevice->get(), numBlocks, mgpu::ScanOpValue<Op>(op), reductionDevice->get());
+    bulk::async(bulk::par(group,1), scan<NT2,VT2,false>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), thrust::plus<int>());
     
     // Run a raking scan as a downsweep.
     mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, false, op);
