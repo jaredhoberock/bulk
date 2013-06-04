@@ -166,23 +166,24 @@ struct scan
   template<typename InputIt, typename OutputIt, typename Op>
   __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIt cta_global, int count, Op op, OutputIt dest_global)
   {
-    typedef typename Op::input_type input_type;
-    typedef typename Op::value_type value_type;
-    typedef typename Op::result_type result_type;
+    typedef typename thrust::iterator_value<InputIt>::type input_type;
+
+    // XXX this needs to be inferred from the iterators and binary_op
+    typedef typename thrust::iterator_value<OutputIt>::type intermediate_type;
   
     const int elements_per_group = size * grainsize;
     
     union shared
     {
       input_type inputs[elements_per_group];
-      result_type results[elements_per_group];
+      intermediate_type results[elements_per_group];
     };
     __shared__ shared s_stage;
     
     int tid = this_group.this_thread.index();
     
     // carry is the sum over all previous iterations
-    value_type carry = cta_global[0];
+    intermediate_type carry = cta_global[0];
   
     if(this_group.this_thread.index() == 0)
     {
@@ -203,9 +204,9 @@ struct scan
   
       int local_offset = grainsize * tid;
   
-      value_type x = 0;
+      intermediate_type x = 0;
   
-      __shared__ value_type s_sums[size];
+      __shared__ intermediate_type s_sums[size];
   
       if(local_size > 0)
       {
