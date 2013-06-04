@@ -55,7 +55,6 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
   union Shared {
     typename S::Storage scan;
     input_type  inputs[elements_per_group];
-    value_type  values[elements_per_group];
     result_type results[elements_per_group];
   };
   __shared__ Shared shared;
@@ -78,7 +77,6 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
     
     // Transpose out of shared memory.
     input_type inputs[grainsize];
-    value_type values[grainsize];
     value_type x = op.Extract(op.Identity(), -1);
     
     #pragma unroll
@@ -88,8 +86,7 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
       if(index < count2)
       {
       	inputs[i] = shared.inputs[index];
-      	values[i] = op.Extract(inputs[i], range.x + index);
-      	x = i ? op.Plus(x, values[i]) : values[i];
+      	x = i ? op.Plus(x, inputs[i]) : inputs[i];
       }
     }
     __syncthreads();
@@ -115,9 +112,9 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
       int index = grainsize * tid + i;
       if(index < count2)
       {
-        // If this is not the first element in the scan, add x values[i]
-        // into x. Otherwise initialize x to values[i].
-        value_type x2 = (i || tid || nextDefined) ? op.Plus(x, values[i]) : values[i];
+        // If this is not the first element in the scan, add x inputs[i]
+        // into x. Otherwise initialize x to inputs[i].
+        value_type x2 = (i || tid || nextDefined) ? op.Plus(x, inputs[i]) : inputs[i];
         
         // For inclusive scan, set the new value then store.
         // For exclusive scan, store the old value then set the new one.
