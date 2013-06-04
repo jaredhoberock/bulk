@@ -60,18 +60,21 @@ RandomAccessIterator2 simple_copy_n(bulk::static_thread_group<size,grainsize> &g
       {
         size_type idx = size * i + tid;
         result[idx] = first[idx];
-      }
-    }
+      } // end for
+    } // end if
     else
     {
       #pragma unroll
       for(size_type i = 0; i < grainsize; ++i)
       {
         size_type idx = size * i + tid;
-        if(idx < (last - first)) result[idx] = first[idx];
-      }
-    }
-  }
+        if(idx < (last - first))
+        {
+          result[idx] = first[idx];
+        } // end if
+      } // end for
+    } // end else
+  } // end for
 
   g.wait();
 
@@ -84,74 +87,70 @@ template<std::size_t size,
          typename RandomAccessIterator1,
          typename Size,
          typename RandomAccessIterator2>
-__device__
-RandomAccessIterator2 staged_copy_n(static_thread_group<size,grainsize> &g,
-                                    RandomAccessIterator1 first,
-                                    Size n,
-                                    RandomAccessIterator2 result)
+__forceinline__ __device__
+void staged_copy_n(static_thread_group<size,grainsize> &g,
+                   RandomAccessIterator1 first,
+                   Size n,
+                   RandomAccessIterator2 result)
 {
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
-  typedef typename static_thread_group<size,grainsize>::size_type size_type;
+
+  // XXX using int is noticeably faster than size_type (which is unsigned int)
+  //typedef typename bulk::static_thread_group<size,grainsize>::size_type size_type;
+  typedef int size_type;
 
   // stage copy through registers
   value_type stage[grainsize];
 
-  size_type chunk_size = g.size() * grainsize;
+  size_type tid = g.this_thread.index();
 
-  #pragma unroll
+  size_type chunk_size = size * grainsize;
+
   for(RandomAccessIterator1 last = first + n;
       first < last;
       first += chunk_size, result += chunk_size)
   {
     // avoid conditional accesses when possible
-    if((last - first) >= chunk_size)
+    if(chunk_size <= (last - first))
     {
+      #pragma unroll
       for(size_type dst_idx = 0; dst_idx < grainsize; ++dst_idx)
       {
-        size_type src_idx = g.size() * dst_idx + g.this_thread.index();
-
+        size_type src_idx = size * dst_idx + tid;
         stage[dst_idx] = first[src_idx];
-      } // end for dst_idx
+      } // end for
+
+      #pragma unroll
+      for(size_type src_idx = 0; src_idx < grainsize; ++src_idx)
+      {
+        result[size * src_idx + tid] = stage[src_idx];
+      } // end for
     } // end if
     else
     {
-      for(size_type dst_idx = 0; dst_idx < grainsize; ++dst_idx)
+      #pragma unroll
+      for(size_type dst_idx = 0; dst_idx < grainsize; ++dst_idx) 
       {
-        size_type src_idx = g.size() * dst_idx + g.this_thread.index();
+        size_type src_idx = size * dst_idx + tid;
+        if(src_idx < (last - first))
+        {
+          stage[dst_idx] = first[src_idx];
+        } // end if
+      } // end for
 
-        // XXX this is wrong
-        //     n never decrements
-        if(src_idx < n) stage[dst_idx] = first[src_idx];
-      } // end for dst_idx
-    } // end else
-
-    // avoid conditional accesses when possible
-    if((last - first) >= chunk_size)
-    {
+      #pragma unroll
       for(size_type src_idx = 0; src_idx < grainsize; ++src_idx)
       {
-        size_type dst_idx = g.size() * src_idx + g.this_thread.index();
-
-        result[dst_idx] = stage[src_idx];
-      } // end for src_idx
-    } // end if
-    else
-    {
-      for(size_type src_idx = 0; src_idx < grainsize; ++src_idx)
-      {
-        size_type dst_idx = g.size() * src_idx + g.this_thread.index();
-
-        // XXX this is wrong
-        //     n never decrements
-        if(dst_idx < n) result[dst_idx] = stage[src_idx];
-      } // end for src_idx
+        size_type dst_idx = size * src_idx + tid;
+        if(dst_idx < (last - first)) 
+        {
+          result[dst_idx] = stage[src_idx];
+        } // end if
+      } // end for
     } // end else
-  } // end for offset
+  } // end for
 
   g.wait();
-
-  // XXX this is wrong
-  return result + n;
 } // end staged_copy_n()
 
 
@@ -166,21 +165,6 @@ RandomAccessIterator2 copy_n(static_thread_group<size,grainsize> &g,
                              Size n,
                              RandomAccessIterator2 result)
 {
-// kepler requires staging
-#if (__CUDA_ARCH__ >= 300) && (__CUDA_ARCH__ < 400)
-  typedef thrust::detail::and_<
-    bulk::detail::is_contiguous_iterator<RandomAccessIterator1>,
-    bulk::detail::is_contiguous_iterator<RandomAccessIterator2>
-  > both_are_contiguous;
-
-  if(both_are_contiguous::value &&
-     is_global(thrust::raw_pointer_cast(&*first)) &&
-     is_shared(thrust::raw_pointer_cast(&*result)))
-  {
-    return staged_copy_n(g, first, n, result);
-  } // end if
-#endif
-
   return detail::simple_copy_n(g, first, n, result);
 } // end copy_n()
 
