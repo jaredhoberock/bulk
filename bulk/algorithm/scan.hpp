@@ -22,7 +22,7 @@ void copy_n_with_grainsize(Iterator1 first, difference_type n, Iterator2 result)
       first < last;
       first += grainsize, result += grainsize)
   {
-    for(int i = 0; i < grainsize; ++i)
+    for(unsigned int i = 0; i < grainsize; ++i)
     {
       if(i < (last - first))
       {
@@ -38,7 +38,7 @@ __device__ void small_inclusive_scan_n(ThreadGroup &g, Iterator first, differenc
 {
   typedef typename ThreadGroup::size_type size_type;
 
-  T x;
+  typename thrust::iterator_value<Iterator>::type x;
 
   size_type tid = g.this_thread.index();
 
@@ -91,7 +91,7 @@ __device__ T small_exclusive_scan_n(ThreadGroup &g, Iterator first, difference_t
 
   g.wait();
 
-  inclusive_scan_n(g, first, n, binary_op);
+  small_inclusive_scan_n(g, first, n, binary_op);
 
   T result = n > 0 ? first[n - 1] : init;
 
@@ -182,7 +182,7 @@ RandomAccessIterator2 inclusive_scan(static_thread_group<size,grainsize> &this_g
     {
       // XXX would be cool simply to call
       // bulk::copy_n(this_group.this_thread, ...) instead
-      copy_n_with_grainsize<grainsize>(s_stage.inputs + local_offset, local_size, local_inputs);
+      detail::scan_detail::copy_n_with_grainsize<grainsize>(s_stage.inputs + local_offset, local_size, local_inputs);
   
       // XXX this should actually be accumulate because we desire non-commutativity
       x = thrust::reduce(thrust::seq, local_inputs + 1, local_inputs + local_size, local_inputs[0], binary_op);
@@ -195,7 +195,7 @@ RandomAccessIterator2 inclusive_scan(static_thread_group<size,grainsize> &this_g
     // scan this group's sums
     // XXX is this really the correct number of sums?
     //     it should be divide_ri(partition_size, grainsize)
-    carry = scan_detail::small_exclusive_scan_n(this_group, s_sums, thrust::min<size_type>(size,partition_size), carry, binary_op);
+    carry = detail::scan_detail::small_exclusive_scan_n(this_group, s_sums, thrust::min<size_type>(size,partition_size), carry, binary_op);
   
     // each thread does an inplace scan locally while incorporating the carries
     if(local_size > 0)
@@ -208,7 +208,7 @@ RandomAccessIterator2 inclusive_scan(static_thread_group<size,grainsize> &this_g
   
       // XXX would be cool simply to call
       // bulk::copy_n(this_group.this_thread, ...) instead
-      copy_n_with_grainsize<grainsize>(local_inputs, local_size, s_stage.results + local_offset);
+      detail::scan_detail::copy_n_with_grainsize<grainsize>(local_inputs, local_size, s_stage.results + local_offset);
     }
   
     this_group.wait();
@@ -243,9 +243,10 @@ RandomAccessIterator2 exclusive_scan(static_thread_group<size,grainsize> &this_g
   // XXX this needs to be inferred from the iterators and binary_op
   typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
   
+  typedef typename thrust::iterator_difference<RandomAccessIterator1>::type difference_type;
   typedef typename bulk::static_thread_group<size,grainsize>::size_type size_type;
   
-  const difference_type n = last - first;
+  difference_type n = last - first;
   const size_type elements_per_group = size * grainsize;
   
   // we don't need the inputs and the results at the same time
@@ -263,15 +264,17 @@ RandomAccessIterator2 exclusive_scan(static_thread_group<size,grainsize> &this_g
   
   size_type tid = this_group.this_thread.index();
   
+  // XXX something's not right here -- we don't use init at all
+  //     it seems like carry should be initialized to init
+  //     and we should shift result one to the right
+  
   // carry is the sum over all previous iterations
-  intermediate_type carry = init;
+  intermediate_type carry = first[0];
   
   if(this_group.this_thread.index() == 0)
   {
     result[0] = carry;
   }
-
-  ++first;
   
   for(difference_type start = 1; start < n; start += elements_per_group)
   {
@@ -295,7 +298,7 @@ RandomAccessIterator2 exclusive_scan(static_thread_group<size,grainsize> &this_g
     {
       // XXX would be cool simply to call
       // bulk::copy_n(this_group.this_thread, ...) instead
-      copy_n_with_grainsize<grainsize>(s_stage.inputs + local_offset, local_size, local_inputs);
+      detail::scan_detail::copy_n_with_grainsize<grainsize>(s_stage.inputs + local_offset, local_size, local_inputs);
   
       // XXX this should actually be accumulate because we desire non-commutativity
       x = thrust::reduce(thrust::seq, local_inputs + 1, local_inputs + local_size, local_inputs[0], binary_op);
@@ -308,7 +311,7 @@ RandomAccessIterator2 exclusive_scan(static_thread_group<size,grainsize> &this_g
     // scan this group's sums
     // XXX is this really the correct number of sums?
     //     it should be divide_ri(partition_size, grainsize)
-    carry = scan_detail::small_exclusive_scan_n(this_group, s_sums, thrust::min<size_type>(size,partition_size), carry, binary_op);
+    carry = detail::scan_detail::small_exclusive_scan_n(this_group, s_sums, thrust::min<size_type>(size,partition_size), carry, binary_op);
   
     // each thread does an inplace scan locally while incorporating the carries
     if(local_size > 0)
@@ -319,7 +322,7 @@ RandomAccessIterator2 exclusive_scan(static_thread_group<size,grainsize> &this_g
   
       // XXX would be cool simply to call
       // bulk::copy_n(this_group.this_thread, ...) instead
-      copy_n_with_grainsize<grainsize>(local_inputs, local_size, s_stage.results + local_offset);
+      detail::scan_detail::copy_n_with_grainsize<grainsize>(local_inputs, local_size, s_stage.results + local_offset);
     }
   
     this_group.wait();
