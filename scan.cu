@@ -48,7 +48,6 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
   bulk::static_thread_group<groupsize,grainsize> this_group;
 
   typedef typename Op::input_type input_type;
-  typedef typename Op::value_type value_type;
   typedef typename Op::result_type result_type;
   
   typedef mgpu::CTAScan<groupsize, Op> S;
@@ -77,7 +76,7 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
     
     // Transpose out of shared memory.
     input_type inputs[grainsize];
-    value_type x = op.Extract(op.Identity(), -1);
+    input_type x = op.Extract(op.Identity(), -1);
     
     #pragma unroll
     for(int i = 0; i < grainsize; ++i)
@@ -114,7 +113,7 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
       {
         // If this is not the first element in the scan, add x inputs[i]
         // into x. Otherwise initialize x to inputs[i].
-        value_type x2 = (i || tid || nextDefined) ? op.Plus(x, inputs[i]) : inputs[i];
+        input_type x2 = (i || tid || nextDefined) ? op.Plus(x, inputs[i]) : inputs[i];
         
         // For inclusive scan, set the new value then store.
         // For exclusive scan, store the old value then set the new one.
