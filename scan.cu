@@ -38,7 +38,7 @@ struct exclusive_scan_n
 
 
 template<typename Tuning, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename T, typename Op>
-MGPU_LAUNCH_BOUNDS void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, bool totalAtEnd, Op op)
+__global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, bool totalAtEnd, Op op)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
   const int NT = Params::NT;
