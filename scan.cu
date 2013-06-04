@@ -37,15 +37,115 @@ struct exclusive_scan_n
 };
 
 
+template<typename Tuning, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename T, typename Op>
+MGPU_LAUNCH_BOUNDS void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, bool totalAtEnd, Op op)
+{
+  typedef MGPU_LAUNCH_PARAMS Params;
+  const int NT = Params::NT;
+  const int VT = Params::VT;
+  const int NV = NT * VT;
+  typedef typename Op::input_type input_type;
+  typedef typename Op::value_type value_type;
+  typedef typename Op::result_type result_type;
+  
+  typedef mgpu::CTAScan<NT, Op> S;
+  union Shared {
+    typename S::Storage scan;
+    input_type inputs[NV];
+    value_type values[NV];
+    result_type results[NV];
+  };
+  __shared__ Shared shared;
+  
+  int tid = threadIdx.x;
+  int block = blockIdx.x;
+  int2 range = mgpu::ComputeTaskRange(block, task, NV, count);
+  
+  // reduction_global holds the exclusive scan of partials. This is undefined
+  // for the first block.
+  T next = reduction_global[block];
+  bool nextDefined = 0 != block;
+  
+  while(range.x < range.y)
+  {
+    int count2 = min(NV, count - range.x);
+    
+    // Load from global to shared memory.
+    mgpu::DeviceGlobalToShared<NT, VT>(count2, data_global + range.x, tid, shared.inputs);
+    
+    // Transpose out of shared memory.
+    input_type inputs[VT];
+    value_type values[VT];
+    value_type x = op.Extract(op.Identity(), -1);
+    
+    #pragma unroll
+    for(int i = 0; i < VT; ++i)
+    {
+      int index = VT * tid + i;
+      if(index < count2)
+      {
+      	inputs[i] = shared.inputs[index];
+      	values[i] = op.Extract(inputs[i], range.x + index);
+      	x = i ? op.Plus(x, values[i]) : values[i];
+      }
+    }
+    __syncthreads();
+    
+    // If nextTotal is defined (i.e. this is not the first frame in the
+    // scan), add next into x, then add passTotal into next. Otherwise 
+    // set total = passTotal.
+    T passTotal;
+    x = S::Scan(tid, x, shared.scan, &passTotal, mgpu::MgpuScanTypeExc, op);
+    if(nextDefined)
+    {
+      x = op.Plus(next, x);
+      next = op.Plus(next, passTotal);
+    }
+    else
+    {
+      next = passTotal;
+    }
+    
+    #pragma unroll
+    for(int i = 0; i < VT; ++i) 
+    {
+      int index = VT * tid + i;
+      if(index < count2)
+      {
+        // If this is not the first element in the scan, add x values[i]
+        // into x. Otherwise initialize x to values[i].
+        value_type x2 = (i || tid || nextDefined) ? op.Plus(x, values[i]) : values[i];
+        
+        // For inclusive scan, set the new value then store.
+        // For exclusive scan, store the old value then set the new one.
+        if(mgpu::MgpuScanTypeInc == Type) x = x2;
+        shared.results[index] = op.Combine(inputs[i], x);
+        if(mgpu::MgpuScanTypeExc == Type) x = x2;
+      }
+    }
+    __syncthreads();
+    
+    mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.results, tid, dest_global + range.x);
+    range.x += NV;
+    nextDefined = true;
+  }
+  
+  if(totalAtEnd && block == gridDim.x - 1 && !tid)
+  {
+    dest_global[count] = op.Combine(op.Identity(), next);
+  }
+}
+
+
 template<mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
 void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
 {
   typedef typename Op::value_type value_type;
   typedef typename Op::result_type result_type;
   
-  const int CutOff = 20000;
+  const int threshold_of_parallelism = 20000;
 
-  if(count < CutOff)
+  if(count < threshold_of_parallelism)
   {
     const int size = 512;
     const int grainsize = 3;
@@ -79,7 +179,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
     // Run a raking scan as a downsweep.
-    mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, false, op);
+    my_KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, false, op);
   }
 }
 
