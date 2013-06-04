@@ -99,7 +99,7 @@ __forceinline__ __device__ void new_simple_copy_n(RandomAccessIterator1 first, i
 
 
 template<typename Tuning, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename T, typename Op>
-__global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, bool totalAtEnd, Op op)
+__global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, Op op)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
   const int groupsize = Params::NT;
@@ -193,11 +193,6 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
     range.x += elements_per_group;
     nextDefined = true;
   }
-  
-  if(totalAtEnd && block == gridDim.x - 1 && !tid)
-  {
-    dest_global[count] = op.Combine(op.Identity(), next);
-  }
 }
 
 
@@ -243,7 +238,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
     // Run a raking scan as a downsweep.
-    my_KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, false, op);
+    my_KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, op);
   }
 }
 
