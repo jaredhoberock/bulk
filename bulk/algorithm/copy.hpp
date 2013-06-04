@@ -15,9 +15,10 @@ template<typename ThreadGroup,
          typename RandomAccessIterator1,
          typename Size,
          typename RandomAccessIterator2>
-__device__
-RandomAccessIterator2 copy_n(ThreadGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
+__forceinline__ __device__
+RandomAccessIterator2 simple_copy_n(ThreadGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
 {
+  #pragma unroll
   for(Size i = g.this_thread.index();
       i < n;
       i += g.size())
@@ -28,7 +29,54 @@ RandomAccessIterator2 copy_n(ThreadGroup &g, RandomAccessIterator1 first, Size n
   g.wait();
 
   return result + n;
-} // end copy_n()
+} // end simple_copy_n()
+
+
+template<std::size_t size,
+         std::size_t grainsize,
+         typename RandomAccessIterator1,
+         typename Size,
+         typename RandomAccessIterator2>
+__forceinline__ __device__
+RandomAccessIterator2 simple_copy_n(bulk::static_thread_group<size,grainsize> &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
+{
+  RandomAccessIterator2 return_me = first + n;
+
+  typedef typename bulk::static_thread_group<size,grainsize>::size_type size_type;
+  size_type chunk_size = size * grainsize;
+
+  size_type tid = g.this_thread.index();
+
+  // XXX i have a feeling the indexing could be rewritten to require less arithmetic
+  for(RandomAccessIterator1 last = first + n;
+      first < last;
+      first += chunk_size, result += chunk_size)
+  {
+    // avoid conditional accesses when possible
+    if((last - first) >= chunk_size)
+    {
+      #pragma unroll
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        size_type idx = size * i + tid;
+        result[idx] = first[idx];
+      }
+    }
+    else
+    {
+      #pragma unroll
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        size_type idx = size * i + tid;
+        if(idx < (last - first)) result[idx] = first[idx];
+      }
+    }
+  }
+
+  g.wait();
+
+  return return_me;
+} // end simple_copy_n()
 
 
 template<std::size_t size,
@@ -50,6 +98,7 @@ RandomAccessIterator2 staged_copy_n(static_thread_group<size,grainsize> &g,
 
   size_type chunk_size = g.size() * grainsize;
 
+  #pragma unroll
   for(RandomAccessIterator1 last = first + n;
       first < last;
       first += chunk_size, result += chunk_size)
@@ -70,6 +119,8 @@ RandomAccessIterator2 staged_copy_n(static_thread_group<size,grainsize> &g,
       {
         size_type src_idx = g.size() * dst_idx + g.this_thread.index();
 
+        // XXX this is wrong
+        //     n never decrements
         if(src_idx < n) stage[dst_idx] = first[src_idx];
       } // end for dst_idx
     } // end else
@@ -90,6 +141,8 @@ RandomAccessIterator2 staged_copy_n(static_thread_group<size,grainsize> &g,
       {
         size_type dst_idx = g.size() * src_idx + g.this_thread.index();
 
+        // XXX this is wrong
+        //     n never decrements
         if(dst_idx < n) result[dst_idx] = stage[src_idx];
       } // end for src_idx
     } // end else
@@ -97,6 +150,7 @@ RandomAccessIterator2 staged_copy_n(static_thread_group<size,grainsize> &g,
 
   g.wait();
 
+  // XXX this is wrong
   return result + n;
 } // end staged_copy_n()
 
@@ -106,7 +160,7 @@ template<std::size_t size,
          typename RandomAccessIterator1,
          typename Size,
          typename RandomAccessIterator2>
-__device__
+__forceinline__ __device__
 RandomAccessIterator2 copy_n(static_thread_group<size,grainsize> &g,
                              RandomAccessIterator1 first,
                              Size n,
@@ -127,7 +181,7 @@ RandomAccessIterator2 copy_n(static_thread_group<size,grainsize> &g,
   } // end if
 #endif
 
-  return detail::copy_n<static_thread_group<size,grainsize> >(g, first, n, result);
+  return detail::simple_copy_n(g, first, n, result);
 } // end copy_n()
 
 
@@ -138,7 +192,7 @@ template<typename ThreadGroup,
          typename RandomAccessIterator1,
          typename Size,
          typename RandomAccessIterator2>
-__device__
+__forceinline__ __device__
 RandomAccessIterator2 copy_n(ThreadGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
 {
   return detail::copy_n(g, first, n, result);
