@@ -41,25 +41,28 @@ template<typename Tuning, mgpu::MgpuScanType Type, typename InputIt, typename Ou
 __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, bool totalAtEnd, Op op)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
-  const int NT = Params::NT;
-  const int VT = Params::VT;
-  const int NV = NT * VT;
+  const int groupsize = Params::NT;
+  const int grainsize = Params::VT;
+  const int elements_per_group = groupsize * grainsize;
+
+  bulk::static_thread_group<groupsize,grainsize> this_group;
+
   typedef typename Op::input_type input_type;
   typedef typename Op::value_type value_type;
   typedef typename Op::result_type result_type;
   
-  typedef mgpu::CTAScan<NT, Op> S;
+  typedef mgpu::CTAScan<groupsize, Op> S;
   union Shared {
     typename S::Storage scan;
-    input_type inputs[NV];
-    value_type values[NV];
-    result_type results[NV];
+    input_type  inputs[elements_per_group];
+    value_type  values[elements_per_group];
+    result_type results[elements_per_group];
   };
   __shared__ Shared shared;
   
   int tid = threadIdx.x;
   int block = blockIdx.x;
-  int2 range = mgpu::ComputeTaskRange(block, task, NV, count);
+  int2 range = mgpu::ComputeTaskRange(block, task, elements_per_group, count);
   
   // reduction_global holds the exclusive scan of partials. This is undefined
   // for the first block.
@@ -68,20 +71,20 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
   
   while(range.x < range.y)
   {
-    int count2 = min(NV, count - range.x);
+    int count2 = min(elements_per_group, count - range.x);
     
     // Load from global to shared memory.
-    mgpu::DeviceGlobalToShared<NT, VT>(count2, data_global + range.x, tid, shared.inputs);
+    mgpu::DeviceGlobalToShared<groupsize, grainsize>(count2, data_global + range.x, tid, shared.inputs);
     
     // Transpose out of shared memory.
-    input_type inputs[VT];
-    value_type values[VT];
+    input_type inputs[grainsize];
+    value_type values[grainsize];
     value_type x = op.Extract(op.Identity(), -1);
     
     #pragma unroll
-    for(int i = 0; i < VT; ++i)
+    for(int i = 0; i < grainsize; ++i)
     {
-      int index = VT * tid + i;
+      int index = grainsize * tid + i;
       if(index < count2)
       {
       	inputs[i] = shared.inputs[index];
@@ -107,9 +110,9 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
     }
     
     #pragma unroll
-    for(int i = 0; i < VT; ++i) 
+    for(int i = 0; i < grainsize; ++i) 
     {
-      int index = VT * tid + i;
+      int index = grainsize * tid + i;
       if(index < count2)
       {
         // If this is not the first element in the scan, add x values[i]
@@ -125,8 +128,8 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
     }
     __syncthreads();
     
-    mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.results, tid, dest_global + range.x);
-    range.x += NV;
+    mgpu::DeviceSharedToGlobal<groupsize, grainsize>(count2, shared.results, tid, dest_global + range.x);
+    range.x += elements_per_group;
     nextDefined = true;
   }
   
