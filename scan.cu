@@ -159,17 +159,19 @@ __device__ T exclusive_scan_n(ThreadGroup &g, Iterator first, Size n, T init, Bi
 
 
 template<unsigned int size, unsigned int grainsize, bool inclusive>
-struct scan
+struct scan_n
 {
-  template<typename InputIterator, typename OutputIterator, typename BinaryFunction>
-  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIterator cta_global, int count, OutputIterator dest_global, BinaryFunction binary_op)
+  template<typename InputIterator, typename Size, typename OutputIterator, typename BinaryFunction>
+  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, BinaryFunction binary_op)
   {
     typedef typename thrust::iterator_value<InputIterator>::type input_type;
 
     // XXX this needs to be inferred from the iterators and binary_op
     typedef typename thrust::iterator_value<OutputIterator>::type intermediate_type;
+
+    typedef typename bulk::static_thread_group<size,grainsize>::size_type size_type;
   
-    const unsigned int elements_per_group = size * grainsize;
+    const size_type elements_per_group = size * grainsize;
 
     // we don't need the inputs and the results at the same time
     // so we can overlay these arrays
@@ -184,31 +186,33 @@ struct scan
 
     intermediate_type *s_sums = reinterpret_cast<intermediate_type*>(bulk::malloc(this_group, size * sizeof(intermediate_type)));
     
-    unsigned int tid = this_group.this_thread.index();
+    size_type tid = this_group.this_thread.index();
     
     // carry is the sum over all previous iterations
-    intermediate_type carry = cta_global[0];
+    intermediate_type carry = first[0];
   
     if(this_group.this_thread.index() == 0)
     {
-      dest_global[0] = carry;
+      result[0] = carry;
     }
   
-    for(int start = 1; start < count; start += elements_per_group)
+    for(Size start = 1; start < n; start += elements_per_group)
     {
-      int count2 = min(elements_per_group, count - start);
+      Size partition_size = thrust::min<Size>(elements_per_group, n - start);
   
       // stage data through shared memory
-      bulk::copy_n(this_group, cta_global + start, count2, s_stage.inputs);
+      bulk::copy_n(this_group, first + start, partition_size, s_stage.inputs);
       
       // Transpose data into register in thread order. Reduce terms serially.
+      // XXX this should probably be uninitialized_array<input_type>
       input_type local_inputs[grainsize];
   
-      int local_size = max(0,min(grainsize, count2 - grainsize * tid));
+      size_type local_size = thrust::max<size_type>(0,thrust::min<size_type>(grainsize, partition_size - grainsize * tid));
   
-      int local_offset = grainsize * tid;
+      size_type local_offset = grainsize * tid;
   
-      intermediate_type x = 0;
+      // XXX this should probably be uninitialized<intermediate_type>
+      intermediate_type x;
   
       if(local_size > 0)
       {
@@ -226,8 +230,8 @@ struct scan
   
       // scan this group's sums
       // XXX is this really the correct number of sums?
-      //     it should be divide_ri(count2, grainsize)
-      carry = ::exclusive_scan_n(this_group, s_sums, min(size,count2), carry, binary_op);
+      //     it should be divide_ri(partition_size, grainsize)
+      carry = ::exclusive_scan_n(this_group, s_sums, thrust::min<size_type>(size,partition_size), carry, binary_op);
   
       // each thread does an inplace scan locally while incorporating the carries
       if(local_size > 0)
@@ -257,7 +261,7 @@ struct scan
       this_group.wait();
       
       // store results
-      bulk::copy_n(this_group, s_stage.results, count2, dest_global + start);
+      bulk::copy_n(this_group, s_stage.results, partition_size, result + start);
     }
 
     bulk::free(this_group, s_stage.inputs);
@@ -276,11 +280,11 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
 
   if(count < CutOff)
   {
-    const int NT = 512;
-    const int VT = 3;
+    const int size = 512;
+    const int grainsize = 3;
 
-    bulk::static_thread_group<NT,VT> group;
-    bulk::async(bulk::par(group, 1), scan<NT,VT,true>(), bulk::there, data_global, count, dest_global, thrust::plus<int>());
+    bulk::static_thread_group<size,grainsize> group;
+    bulk::async(bulk::par(group, 1), scan_n<size,grainsize,true>(), bulk::there, data_global, count, dest_global, thrust::plus<int>());
   }
   else
   {
@@ -301,11 +305,11 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     
     // Run a parallel latency-oriented scan to reduce the spine of the 
     // raking reduction.
-    const int NT2 = 256;
-    const int VT2 = 3;
+    const unsigned int groupsize2 = 256;
+    const unsigned int grainsize2 = 3;
 
-    bulk::static_thread_group<NT2,VT2> group;
-    bulk::async(bulk::par(group,1), scan<NT2,VT2,false>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), thrust::plus<int>());
+    bulk::static_thread_group<groupsize2,grainsize2> group;
+    bulk::async(bulk::par(group,1), scan_n<groupsize2,grainsize2,false>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), thrust::plus<int>());
     
     // Run a raking scan as a downsweep.
     mgpu::KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, false, op);
