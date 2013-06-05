@@ -37,8 +37,8 @@ struct exclusive_scan_n
 };
 
 
-template<typename Tuning, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename T, typename Op>
-__global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, Op op)
+template<typename Tuning, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename T, typename BinaryFunction>
+__global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, BinaryFunction binary_op)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
   const int groupsize = Params::NT;
@@ -47,14 +47,16 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
 
   bulk::static_thread_group<groupsize,grainsize> this_group;
 
-  typedef typename Op::input_type input_type;
-  typedef typename Op::result_type result_type;
+  typedef typename thrust::iterator_value<InputIt>::type  input_type;
+  // XXX this needs to be inferred from the iterators and binary op
+  typedef typename thrust::iterator_value<OutputIt>::type intermediate_type;
   
-  typedef mgpu::CTAScan<groupsize, Op> S;
+  typedef mgpu::CTAScan<groupsize, mgpu::ScanOp<mgpu::ScanOpTypeAdd,int> > S;
+
   union Shared {
     typename S::Storage scan;
-    input_type  inputs[elements_per_group];
-    result_type results[elements_per_group];
+    input_type          inputs[elements_per_group];
+    intermediate_type   results[elements_per_group];
   };
   __shared__ Shared shared;
   
@@ -76,16 +78,23 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
     
     // Transpose out of shared memory.
     input_type inputs[grainsize];
-    input_type x = op.Extract(op.Identity(), -1);
 
+    // XXX this should be uninitialized<input_type>
+    input_type x;
+
+    int local_offset = grainsize * tid;
+
+    int local_size = thrust::max<int>(0,thrust::min<int>(grainsize, count2 - grainsize * tid));
+
+    // this loop is a fused copy and accumulate
     #pragma unroll
     for(int i = 0; i < grainsize; ++i)
     {
-      int index = grainsize * tid + i;
+      int index = local_offset + i;
       if(index < count2)
       {
         inputs[i] = shared.inputs[index];
-        x = i ? op.Plus(x, inputs[i]) : inputs[i];
+        x = i ? binary_op(x, inputs[i]) : inputs[i];
       }
     }
     __syncthreads();
@@ -94,11 +103,11 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
     // scan), add next into x, then add passTotal into next. Otherwise 
     // set total = passTotal.
     T passTotal;
-    x = S::Scan(tid, x, shared.scan, &passTotal, mgpu::MgpuScanTypeExc, op);
+    x = S::Scan(tid, x, shared.scan, &passTotal, mgpu::MgpuScanTypeExc, mgpu::ScanOp<mgpu::ScanOpTypeAdd,input_type>());
     if(nextDefined)
     {
-      x = op.Plus(next, x);
-      next = op.Plus(next, passTotal);
+      x = binary_op(next, x);
+      next = binary_op(next, passTotal);
     }
     else
     {
@@ -113,12 +122,14 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
       {
         // If this is not the first element in the scan, add x inputs[i]
         // into x. Otherwise initialize x to inputs[i].
-        input_type x2 = (i || tid || nextDefined) ? op.Plus(x, inputs[i]) : inputs[i];
+        input_type x2 = (i || tid || nextDefined) ? binary_op(x, inputs[i]) : inputs[i];
         
         // For inclusive scan, set the new value then store.
         // For exclusive scan, store the old value then set the new one.
         if(mgpu::MgpuScanTypeInc == Type) x = x2;
-        shared.results[index] = op.Combine(inputs[i], x);
+
+        shared.results[index] = x;
+
         if(mgpu::MgpuScanTypeExc == Type) x = x2;
       }
     }
@@ -173,7 +184,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
     // Run a raking scan as a downsweep.
-    my_KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, op);
+    my_KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
 }
 
