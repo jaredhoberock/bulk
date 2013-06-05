@@ -66,8 +66,8 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
   
   // reduction_global holds the exclusive scan of partials. This is undefined
   // for the first block.
-  T next = reduction_global[block];
-  bool nextDefined = 0 != block;
+  T carry = reduction_global[block];
+  bool carry_defined = 0 != block;
   
   while(range.x < range.y)
   {
@@ -99,19 +99,20 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     }
     __syncthreads();
     
-    // If nextTotal is defined (i.e. this is not the first frame in the
-    // scan), add next into x, then add passTotal into next. Otherwise 
+    T pass_carry;
+    x = S::Scan(tid, x, shared.scan, &pass_carry, mgpu::MgpuScanTypeExc, mgpu::ScanOp<mgpu::ScanOpTypeAdd,input_type>());
+
+    // If carry is defined (i.e. this is not the first frame in the
+    // scan), add carry into x, then add passTotal into next. Otherwise 
     // set total = passTotal.
-    T passTotal;
-    x = S::Scan(tid, x, shared.scan, &passTotal, mgpu::MgpuScanTypeExc, mgpu::ScanOp<mgpu::ScanOpTypeAdd,input_type>());
-    if(nextDefined)
+    if(carry_defined)
     {
-      x = binary_op(next, x);
-      next = binary_op(next, passTotal);
+      x = binary_op(carry, x);
+      carry = binary_op(carry, pass_carry);
     }
     else
     {
-      next = passTotal;
+      carry = pass_carry;
     }
     
     // this loop is an inclusive_scan
@@ -123,7 +124,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
       {
         // If this is not the first element in the scan, add x local_inputs[i]
         // into x. Otherwise initialize x to local_inputs[i].
-        x = (i || tid || nextDefined) ? binary_op(x, local_inputs[i]) : local_inputs[i];
+        x = (i || tid || carry_defined) ? binary_op(x, local_inputs[i]) : local_inputs[i];
 
         shared.results[index] = x;
       }
@@ -132,7 +133,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     
     bulk::copy_n(this_group, shared.results, count2, dest_global + range.x);
     range.x += elements_per_group;
-    nextDefined = true;
+    carry_defined = true;
   }
 }
 
