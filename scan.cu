@@ -88,6 +88,98 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ThreadGroup &g, T *first, 
 }
 
 
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
+__device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,grainsize> &g,
+                                          RandomAccessIterator1 first, RandomAccessIterator1 last,
+                                          RandomAccessIterator2 result,
+                                          T carry_in,
+                                          BinaryFunction binary_op)
+{
+  typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
+  // XXX this needs to be inferred from the iterators and binary op
+  typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
+
+  // XXX int is noticeably faster than ThreadGroup::size_type
+  //typedef typename bulk::static_thread_group<groupsize,grainsize>::size_type size_type;
+  typedef int size_type;
+
+  const size_type elements_per_group = groupsize * grainsize;
+  
+  union Shared {
+    input_type          inputs[elements_per_group];
+    intermediate_type   results[elements_per_group];
+  };
+  __shared__ Shared shared;
+
+  __shared__ intermediate_type s_sums[groupsize];
+  __shared__ intermediate_type s_scan_buffer[groupsize];
+
+  size_type tid = g.this_thread.index();
+
+  for(; first < last; first += elements_per_group, result += elements_per_group)
+  {
+    size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
+    
+    // stage data through shared memory
+    bulk::copy_n(g, first, partition_size, shared.inputs);
+    
+    // Transpose out of shared memory.
+    input_type local_inputs[grainsize];
+
+    size_type local_offset = grainsize * tid;
+
+    size_type local_size = thrust::max<size_type>(0,thrust::min<size_type>(grainsize, partition_size - grainsize * tid));
+
+    // XXX this should be uninitialized<input_type>
+    input_type x;
+
+    // this loop is a fused copy and accumulate
+    #pragma unroll
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type index = local_offset + i;
+      if(index < partition_size)
+      {
+        local_inputs[i] = shared.inputs[index];
+        x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
+      } // end if
+    } // end for
+
+    if(local_size)
+    {
+      s_sums[tid] = x;
+    } // end if
+
+    g.wait();
+    
+    carry_in = small_inplace_exclusive_scan_with_buffer<groupsize>(g, s_sums, carry_in, s_scan_buffer, binary_op);
+
+    if(local_size)
+    {
+      x = s_sums[tid];
+    } // end if
+    
+    // this loop is an inclusive_scan
+    // XXX this loop should be one of the things to modify when porting to exclusive_scan
+    #pragma unroll
+    for(size_type i = 0; i < grainsize; ++i) 
+    {
+      size_type index = local_offset + i;
+      if(index < partition_size)
+      {
+        x = binary_op(x, local_inputs[i]);
+
+        shared.results[index] = x;
+      } // end if
+    } // end for
+
+    g.wait();
+    
+    bulk::copy_n(g, shared.results, partition_size, result);
+  } // end for
+} // end inclusive_scan_with_carry()
+
+
 template<typename Tuning, typename InputIt, typename OutputIt, typename T, typename BinaryFunction>
 __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, BinaryFunction binary_op)
 {
@@ -98,31 +190,14 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
 
   bulk::static_thread_group<groupsize,grainsize> this_group;
 
-  typedef typename thrust::iterator_value<InputIt>::type  input_type;
-  // XXX this needs to be inferred from the iterators and binary op
-  typedef typename thrust::iterator_value<OutputIt>::type intermediate_type;
+  int2 range = mgpu::ComputeTaskRange(this_group.index(), task, elements_per_group, count);
   
-  typedef mgpu::CTAScan<groupsize, mgpu::ScanOp<mgpu::ScanOpTypeAdd,int> > S;
-
-  union Shared {
-    input_type          inputs[elements_per_group];
-    intermediate_type   results[elements_per_group];
-  };
-  __shared__ Shared shared;
-
-  __shared__ intermediate_type s_sums[groupsize];
-  __shared__ intermediate_type s_scan_buffer[groupsize];
-  
-  int tid = threadIdx.x;
-  int block = blockIdx.x;
-  int2 range = mgpu::ComputeTaskRange(block, task, elements_per_group, count);
-  
-  // give block 0 a carry by taking the first input element
+  // give group 0 a carry by taking the first input element
   // and adjusting its range
-  T carry = (block != 0) ? reduction_global[block] : data_global[0];
-  if(block == 0)
+  T carry = (this_group.index() != 0) ? reduction_global[this_group.index()] : data_global[0];
+  if(this_group.index() == 0)
   {
-    if(tid == 0)
+    if(this_group.this_thread.index() == 0)
     {
       *dest_global = carry;
     }
@@ -130,64 +205,11 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     ++range.x;
   }
 
-  for(; range.x < range.y; range.x += elements_per_group)
-  {
-    int partition_size = thrust::min<int>(elements_per_group, range.y - range.x);
-    
-    // stage data through shared memory
-    bulk::copy_n(this_group, data_global + range.x, partition_size, shared.inputs);
-    
-    // Transpose out of shared memory.
-    input_type local_inputs[grainsize];
+  InputIt first   = data_global + range.x;
+  InputIt last    = data_global + range.y;
+  OutputIt result = dest_global + range.x;
 
-    int local_offset = grainsize * tid;
-
-    int local_size = thrust::max<int>(0,thrust::min<int>(grainsize, partition_size - grainsize * tid));
-
-    // XXX this should be uninitialized<input_type>
-    input_type x;
-
-    // this loop is a fused copy and accumulate
-    #pragma unroll
-    for(int i = 0; i < grainsize; ++i)
-    {
-      int index = local_offset + i;
-      if(index < partition_size)
-      {
-        local_inputs[i] = shared.inputs[index];
-        x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
-      }
-    }
-    if(local_size)
-    {
-      s_sums[tid] = x;
-    }
-    this_group.wait();
-    
-    carry = small_inplace_exclusive_scan_with_buffer<groupsize>(this_group, s_sums, carry, s_scan_buffer, binary_op);
-
-    if(local_size)
-    {
-      x = s_sums[tid];
-    }
-    
-    // this loop is an inclusive_scan
-    // XXX this loop should be one of the things to modify when porting to exclusive_scan
-    #pragma unroll
-    for(int i = 0; i < grainsize; ++i) 
-    {
-      int index = local_offset + i;
-      if(index < partition_size)
-      {
-        x = binary_op(x, local_inputs[i]);
-
-        shared.results[index] = x;
-      }
-    }
-    this_group.wait();
-    
-    bulk::copy_n(this_group, shared.results, partition_size, dest_global + range.x);
-  }
+  inclusive_scan_with_carry(this_group, first, last, result, carry, binary_op);
 }
 
 
