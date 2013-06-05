@@ -180,12 +180,9 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
 } // end inclusive_scan_with_carry()
 
 
-template<typename Tuning, typename InputIt, typename OutputIt, typename T, typename BinaryFunction>
+template<std::size_t groupsize, std::size_t grainsize, typename InputIt, typename OutputIt, typename T, typename BinaryFunction>
 __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, BinaryFunction binary_op)
 {
-  typedef MGPU_LAUNCH_PARAMS Params;
-  const int groupsize = Params::NT;
-  const int grainsize = Params::VT;
   const int elements_per_group = groupsize * grainsize;
 
   bulk::static_thread_group<groupsize,grainsize> this_group;
@@ -232,9 +229,9 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
   else
   {
     // Run the parallel raking reduce as an upsweep.
-    const int NT = 128;
-    const int VT = 7;
-    typedef mgpu::LaunchBoxVT<NT, VT> Tuning;
+    const int groupsize1 = 128;
+    const int grainsize1 = 7;
+    typedef mgpu::LaunchBoxVT<groupsize1, grainsize1> Tuning;
     int2 launch = Tuning::GetLaunchParams(context);
     const int NV = launch.x * launch.y;
     
@@ -255,7 +252,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
     // Run a raking scan as a downsweep.
-    inclusive_scan_kernel<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
+    inclusive_scan_kernel<groupsize1,grainsize1><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
 }
 
