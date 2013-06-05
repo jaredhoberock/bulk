@@ -37,6 +37,53 @@ struct exclusive_scan_n
 };
 
 
+template<unsigned int size, typename ThreadGroup, typename T, typename BinaryFunction>
+__device__ T small_inplace_exclusive_scan_with_buffer(ThreadGroup &g, T *first, T init, T *buffer, BinaryFunction binary_op)
+{
+  // ping points to the most current data
+  T *ping = first;
+  T *pong = buffer;
+
+  int tid = g.this_thread.index();
+
+  if(tid == 0)
+  {
+    first[0] = binary_op(init, first[0]);
+  }
+
+  T x = first[tid];
+
+  g.wait();
+
+  #pragma unroll
+  for(int offset = 1; offset < size; offset += offset)
+  {
+    if(tid >= offset)
+    {
+      x = binary_op(ping[tid - offset], x);
+    }
+
+    thrust::swap(ping, pong);
+
+    ping[tid] = x;
+
+    g.wait();
+  }
+
+  T result = ping[size - 1];
+
+  x = (tid == 0) ? init : ping[tid - 1];
+
+  g.wait();
+
+  first[tid] = x;
+
+  g.wait();
+
+  return result;
+}
+
+
 template<typename Tuning, typename InputIt, typename OutputIt, typename T, typename BinaryFunction>
 __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, BinaryFunction binary_op)
 {
@@ -54,11 +101,13 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
   typedef mgpu::CTAScan<groupsize, mgpu::ScanOp<mgpu::ScanOpTypeAdd,int> > S;
 
   union Shared {
-    typename S::Storage scan;
     input_type          inputs[elements_per_group];
     intermediate_type   results[elements_per_group];
   };
   __shared__ Shared shared;
+
+  __shared__ intermediate_type s_sums[groupsize];
+  __shared__ intermediate_type s_scan_buffer[groupsize];
   
   int tid = threadIdx.x;
   int block = blockIdx.x;
@@ -79,7 +128,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
 
   for(; range.x < range.y; range.x += elements_per_group)
   {
-    int count2 = min(elements_per_group, count - range.x);
+    int count2 = thrust::min<int>(elements_per_group, count - range.x);
     
     // stage data through shared memory
     bulk::copy_n(this_group, data_global + range.x, count2, shared.inputs);
@@ -87,12 +136,12 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     // Transpose out of shared memory.
     input_type local_inputs[grainsize];
 
-    // XXX this should be uninitialized<input_type>
-    input_type x;
-
     int local_offset = grainsize * tid;
 
     int local_size = thrust::max<int>(0,thrust::min<int>(grainsize, count2 - grainsize * tid));
+
+    // XXX this should be uninitialized<input_type>
+    input_type x;
 
     // this loop is a fused copy and accumulate
     #pragma unroll
@@ -105,14 +154,18 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
         x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
       }
     }
+    if(local_size)
+    {
+      s_sums[tid] = x;
+    }
     this_group.wait();
     
-    T pass_carry;
-    x = S::Scan(tid, x, shared.scan, &pass_carry, mgpu::MgpuScanTypeExc, mgpu::ScanOp<mgpu::ScanOpTypeAdd,input_type>());
+    carry = small_inplace_exclusive_scan_with_buffer<groupsize>(this_group, s_sums, carry, s_scan_buffer, binary_op);
 
-    // XXX we should pass the carry into the scan as the init so we don't have to deal with this here
-    x = binary_op(carry, x);
-    carry = binary_op(carry, pass_carry);
+    if(local_size)
+    {
+      x = s_sums[tid];
+    }
     
     // this loop is an inclusive_scan
     // XXX this loop should be one of the things to modify when porting to exclusive_scan
