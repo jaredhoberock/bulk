@@ -77,7 +77,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     ++range.x;
   }
 
-  while(range.x < range.y)
+  for(; range.x < range.y; range.x += elements_per_group)
   {
     int count2 = min(elements_per_group, count - range.x);
     
@@ -105,7 +105,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
         x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
       }
     }
-    __syncthreads();
+    this_group.wait();
     
     T pass_carry;
     x = S::Scan(tid, x, shared.scan, &pass_carry, mgpu::MgpuScanTypeExc, mgpu::ScanOp<mgpu::ScanOpTypeAdd,input_type>());
@@ -126,10 +126,9 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
         shared.results[index] = x;
       }
     }
-    __syncthreads();
+    this_group.wait();
     
     bulk::copy_n(this_group, shared.results, count2, dest_global + range.x);
-    range.x += elements_per_group;
   }
 }
 
