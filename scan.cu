@@ -64,11 +64,19 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
   int block = blockIdx.x;
   int2 range = mgpu::ComputeTaskRange(block, task, elements_per_group, count);
   
-  // reduction_global holds the exclusive scan of partials. This is undefined
-  // for the first block.
-  T carry = reduction_global[block];
-  bool carry_defined = 0 != block;
-  
+  // give block 0 a carry by taking the first input element
+  // and adjusting its range
+  T carry = (block != 0) ? reduction_global[block] : data_global[0];
+  if(block == 0)
+  {
+    if(tid == 0)
+    {
+      *dest_global = carry;
+    }
+
+    ++range.x;
+  }
+
   while(range.x < range.y)
   {
     int count2 = min(elements_per_group, count - range.x);
@@ -102,18 +110,9 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     T pass_carry;
     x = S::Scan(tid, x, shared.scan, &pass_carry, mgpu::MgpuScanTypeExc, mgpu::ScanOp<mgpu::ScanOpTypeAdd,input_type>());
 
-    // If carry is defined (i.e. this is not the first frame in the
-    // scan), add carry into x, then add passTotal into next. Otherwise 
-    // set total = passTotal.
-    if(carry_defined)
-    {
-      x = binary_op(carry, x);
-      carry = binary_op(carry, pass_carry);
-    }
-    else
-    {
-      carry = pass_carry;
-    }
+    // XXX we should pass the carry into the scan as the init so we don't have to deal with this here
+    x = binary_op(carry, x);
+    carry = binary_op(carry, pass_carry);
     
     // this loop is an inclusive_scan
     #pragma unroll
@@ -122,9 +121,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
       int index = local_offset + i;
       if(index < count2)
       {
-        // If this is not the first element in the scan, add x local_inputs[i]
-        // into x. Otherwise initialize x to local_inputs[i].
-        x = (i || tid || carry_defined) ? binary_op(x, local_inputs[i]) : local_inputs[i];
+        x = binary_op(x, local_inputs[i]);
 
         shared.results[index] = x;
       }
@@ -133,7 +130,6 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     
     bulk::copy_n(this_group, shared.results, count2, dest_global + range.x);
     range.x += elements_per_group;
-    carry_defined = true;
   }
 }
 
