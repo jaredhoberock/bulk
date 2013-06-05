@@ -40,11 +40,15 @@ struct exclusive_scan_n
 template<unsigned int size, typename ThreadGroup, typename T, typename BinaryFunction>
 __device__ T small_inplace_exclusive_scan_with_buffer(ThreadGroup &g, T *first, T init, T *buffer, BinaryFunction binary_op)
 {
+  // XXX int is noticeably faster than ThreadGroup::size_type
+  typedef int size_type;
+  //typedef typename ThreadGroup::size_type size_type;
+
   // ping points to the most current data
   T *ping = first;
   T *pong = buffer;
 
-  int tid = g.this_thread.index();
+  size_type tid = g.this_thread.index();
 
   if(tid == 0)
   {
@@ -56,7 +60,7 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ThreadGroup &g, T *first, 
   g.wait();
 
   #pragma unroll
-  for(int offset = 1; offset < size; offset += offset)
+  for(size_type offset = 1; offset < size; offset += offset)
   {
     if(tid >= offset)
     {
@@ -128,17 +132,17 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
 
   for(; range.x < range.y; range.x += elements_per_group)
   {
-    int count2 = thrust::min<int>(elements_per_group, count - range.x);
+    int partition_size = thrust::min<int>(elements_per_group, range.y - range.x);
     
     // stage data through shared memory
-    bulk::copy_n(this_group, data_global + range.x, count2, shared.inputs);
+    bulk::copy_n(this_group, data_global + range.x, partition_size, shared.inputs);
     
     // Transpose out of shared memory.
     input_type local_inputs[grainsize];
 
     int local_offset = grainsize * tid;
 
-    int local_size = thrust::max<int>(0,thrust::min<int>(grainsize, count2 - grainsize * tid));
+    int local_size = thrust::max<int>(0,thrust::min<int>(grainsize, partition_size - grainsize * tid));
 
     // XXX this should be uninitialized<input_type>
     input_type x;
@@ -148,7 +152,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     for(int i = 0; i < grainsize; ++i)
     {
       int index = local_offset + i;
-      if(index < count2)
+      if(index < partition_size)
       {
         local_inputs[i] = shared.inputs[index];
         x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
@@ -173,7 +177,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     for(int i = 0; i < grainsize; ++i) 
     {
       int index = local_offset + i;
-      if(index < count2)
+      if(index < partition_size)
       {
         x = binary_op(x, local_inputs[i]);
 
@@ -182,7 +186,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     }
     this_group.wait();
     
-    bulk::copy_n(this_group, shared.results, count2, dest_global + range.x);
+    bulk::copy_n(this_group, shared.results, partition_size, dest_global + range.x);
   }
 }
 
