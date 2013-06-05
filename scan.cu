@@ -37,8 +37,8 @@ struct exclusive_scan_n
 };
 
 
-template<typename Tuning, mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename T, typename BinaryFunction>
-__global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, BinaryFunction binary_op)
+template<typename Tuning, typename InputIt, typename OutputIt, typename T, typename BinaryFunction>
+__global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, BinaryFunction binary_op)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
   const int groupsize = Params::NT;
@@ -114,6 +114,7 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
       next = passTotal;
     }
     
+    // this loop is an inclusive_scan
     #pragma unroll
     for(int i = 0; i < grainsize; ++i) 
     {
@@ -122,15 +123,9 @@ __global__ void my_KernelScanDownsweep(InputIt data_global, int count, int2 task
       {
         // If this is not the first element in the scan, add x inputs[i]
         // into x. Otherwise initialize x to inputs[i].
-        input_type x2 = (i || tid || nextDefined) ? binary_op(x, inputs[i]) : inputs[i];
-        
-        // For inclusive scan, set the new value then store.
-        // For exclusive scan, store the old value then set the new one.
-        if(mgpu::MgpuScanTypeInc == Type) x = x2;
+        x = (i || tid || nextDefined) ? binary_op(x, inputs[i]) : inputs[i];
 
         shared.results[index] = x;
-
-        if(mgpu::MgpuScanTypeExc == Type) x = x2;
       }
     }
     __syncthreads();
@@ -184,7 +179,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
     // Run a raking scan as a downsweep.
-    my_KernelScanDownsweep<Tuning, Type><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
+    inclusive_scan_kernel<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
 }
 
