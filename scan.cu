@@ -181,7 +181,7 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
 
 
 template<std::size_t groupsize, std::size_t grainsize, typename InputIt, typename OutputIt, typename T, typename BinaryFunction>
-__global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task, const T* reduction_global, OutputIt dest_global, BinaryFunction binary_op)
+__global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task, const T* carries, OutputIt dest_global, BinaryFunction binary_op)
 {
   const int elements_per_group = groupsize * grainsize;
 
@@ -191,7 +191,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
   
   // give group 0 a carry by taking the first input element
   // and adjusting its range
-  T carry = (this_group.index() != 0) ? reduction_global[this_group.index()] : data_global[0];
+  T carry = (this_group.index() != 0) ? carries[this_group.index()] : data_global[0];
   if(this_group.index() == 0)
   {
     if(this_group.this_thread.index() == 0)
