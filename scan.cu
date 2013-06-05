@@ -180,8 +180,8 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
 } // end inclusive_scan_with_carry()
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename InputIt, typename OutputIt, typename T, typename BinaryFunction>
-__global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task, const T* carries, OutputIt dest_global, BinaryFunction binary_op)
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
+__global__ void inclusive_downsweep_kernel(RandomAccessIterator1 first, int count, int2 task, const T* carries, RandomAccessIterator2 result, BinaryFunction binary_op)
 {
   const int elements_per_group = groupsize * grainsize;
 
@@ -191,20 +191,20 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
   
   // give group 0 a carry by taking the first input element
   // and adjusting its range
-  T carry = (this_group.index() != 0) ? carries[this_group.index()] : data_global[0];
+  T carry = (this_group.index() != 0) ? carries[this_group.index()] : first[0];
   if(this_group.index() == 0)
   {
     if(this_group.this_thread.index() == 0)
     {
-      *dest_global = carry;
+      *result = carry;
     }
 
     ++range.x;
   }
 
-  InputIt first   = data_global + range.x;
-  InputIt last    = data_global + range.y;
-  OutputIt result = dest_global + range.x;
+  RandomAccessIterator1 last = first + range.y;
+  first += range.x;
+  result += range.x;
 
   inclusive_scan_with_carry(this_group, first, last, result, carry, binary_op);
 }
@@ -252,7 +252,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
     // Run a raking scan as a downsweep.
-    inclusive_scan_kernel<groupsize1,grainsize1><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
+    inclusive_downsweep_kernel<groupsize1,grainsize1><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
 }
 
