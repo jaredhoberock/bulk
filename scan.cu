@@ -115,6 +115,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     carry = binary_op(carry, pass_carry);
     
     // this loop is an inclusive_scan
+    // XXX this loop should be one of the things to modify when porting to exclusive_scan
     #pragma unroll
     for(int i = 0; i < grainsize; ++i) 
     {
