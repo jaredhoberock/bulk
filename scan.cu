@@ -77,7 +77,7 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     bulk::copy_n(this_group, data_global + range.x, count2, shared.inputs);
     
     // Transpose out of shared memory.
-    input_type inputs[grainsize];
+    input_type local_inputs[grainsize];
 
     // XXX this should be uninitialized<input_type>
     input_type x;
@@ -93,8 +93,8 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
       int index = local_offset + i;
       if(index < count2)
       {
-        inputs[i] = shared.inputs[index];
-        x = i ? binary_op(x, inputs[i]) : inputs[i];
+        local_inputs[i] = shared.inputs[index];
+        x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
       }
     }
     __syncthreads();
@@ -118,12 +118,12 @@ __global__ void inclusive_scan_kernel(InputIt data_global, int count, int2 task,
     #pragma unroll
     for(int i = 0; i < grainsize; ++i) 
     {
-      int index = grainsize * tid + i;
+      int index = local_offset + i;
       if(index < count2)
       {
-        // If this is not the first element in the scan, add x inputs[i]
-        // into x. Otherwise initialize x to inputs[i].
-        x = (i || tid || nextDefined) ? binary_op(x, inputs[i]) : inputs[i];
+        // If this is not the first element in the scan, add x local_inputs[i]
+        // into x. Otherwise initialize x to local_inputs[i].
+        x = (i || tid || nextDefined) ? binary_op(x, local_inputs[i]) : local_inputs[i];
 
         shared.results[index] = x;
       }
