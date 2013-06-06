@@ -200,10 +200,7 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
 
   if(bulk::detail::is_shared(buffer))
   {
-    // convince the compiler that the pointer is indeed __shared__ so we don't get generic loads & stores
-    extern __shared__ char s_begin[];
-    void *shared_buffer = (reinterpret_cast<char*>(buffer) - s_begin) + s_begin;
-    inclusive_scan_with_carry_with_buffer(g, first, last, result, carry_in, binary_op, shared_buffer);
+    inclusive_scan_with_carry_with_buffer(g, first, last, result, carry_in, binary_op, bulk::detail::assert_on_chip(buffer));
   }
   else
   {

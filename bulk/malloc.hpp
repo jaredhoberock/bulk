@@ -376,6 +376,14 @@ inline __device__ void on_chip_free(void *ptr)
 } // end on_chip_free()
 
 
+template<typename T>
+inline __device__ T *assert_on_chip(T *ptr)
+{
+  extern __shared__ char s_begin[];
+  return reinterpret_cast<T*>((reinterpret_cast<char*>(ptr) - s_begin) + s_begin);
+} // end assert_on_chip()
+
+
 } // end detail
 
 
