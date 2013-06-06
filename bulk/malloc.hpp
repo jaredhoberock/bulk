@@ -377,11 +377,11 @@ inline __device__ void on_chip_free(void *ptr)
 
 
 template<typename T>
-inline __device__ T *assert_on_chip(T *ptr)
+inline __device__ T *on_chip_cast(T *ptr)
 {
   extern __shared__ char s_begin[];
   return reinterpret_cast<T*>((reinterpret_cast<char*>(ptr) - s_begin) + s_begin);
-} // end assert_on_chip()
+} // end on_chip_cast()
 
 
 } // end detail

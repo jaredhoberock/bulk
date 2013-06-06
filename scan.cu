@@ -200,7 +200,7 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
 
   if(bulk::detail::is_shared(buffer))
   {
-    inclusive_scan_with_carry_with_buffer(g, first, last, result, carry_in, binary_op, bulk::detail::assert_on_chip(buffer));
+    inclusive_scan_with_carry_with_buffer(g, first, last, result, carry_in, binary_op, bulk::detail::on_chip_cast(buffer));
   }
   else
   {
@@ -280,6 +280,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     
     MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(numBlocks + 1);
     	
+    // N loads
     mgpu::KernelReduce<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), op);
     
     // scan the sums to get the carries
@@ -291,7 +292,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::static_thread_group<groupsize2,grainsize2> group2;
     bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
-    // do the downsweep
+    // do the downsweep - N loads, N stores
     bulk::static_thread_group<groupsize1,grainsize1> group1;
     bulk::async(bulk::par(group1,numBlocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
