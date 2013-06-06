@@ -89,32 +89,33 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ThreadGroup &g, T *first, 
 
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-__device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,grainsize> &g,
-                                          RandomAccessIterator1 first, RandomAccessIterator1 last,
-                                          RandomAccessIterator2 result,
-                                          T carry_in,
-                                          BinaryFunction binary_op)
+__device__ void inclusive_scan_with_carry_with_buffer(bulk::static_thread_group<groupsize,grainsize> &g,
+                                                      RandomAccessIterator1 first, RandomAccessIterator1 last,
+                                                      RandomAccessIterator2 result,
+                                                      T carry_in,
+                                                      BinaryFunction binary_op,
+                                                      void *buffer)
 {
-
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
   // XXX this needs to be inferred from the iterators and binary op
   typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
+
+  intermediate_type *s_sums = reinterpret_cast<intermediate_type*>(buffer);
+
+  union {
+    input_type        *inputs;
+    intermediate_type *results;
+  } shared;
+
+  shared.inputs = reinterpret_cast<intermediate_type*>(reinterpret_cast<char*>(buffer) + 2*groupsize*sizeof(intermediate_type));
 
   // XXX int is noticeably faster than ThreadGroup::size_type
   //typedef typename bulk::static_thread_group<groupsize,grainsize>::size_type size_type;
   typedef int size_type;
 
-  const size_type elements_per_group = groupsize * grainsize;
-  
-  union Shared {
-    input_type          inputs[elements_per_group];
-    intermediate_type   results[elements_per_group];
-  };
-  __shared__ Shared shared;
-
-  __shared__ intermediate_type s_sums[2 * groupsize];
-
   size_type tid = g.this_thread.index();
+
+  size_type elements_per_group = groupsize * grainsize;
 
   for(; first < last; first += elements_per_group, result += elements_per_group)
   {
@@ -153,7 +154,6 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
     g.wait();
     
     // exclusive scan the array of per-thread sums
-    //carry_in = small_inplace_exclusive_scan_with_buffer<groupsize>(g, s_sums, carry_in, s_scan_buffer, binary_op);
     carry_in = small_inplace_exclusive_scan_with_buffer<groupsize>(g, s_sums, carry_in, s_sums + groupsize, binary_op);
 
     if(local_size)
@@ -179,6 +179,38 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
     
     bulk::copy_n(g, shared.results, partition_size, result);
   } // end for
+}
+
+
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
+__device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,grainsize> &g,
+                                          RandomAccessIterator1 first, RandomAccessIterator1 last,
+                                          RandomAccessIterator2 result,
+                                          T carry_in,
+                                          BinaryFunction binary_op)
+{
+  typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
+  // XXX this needs to be inferred from the iterators and binary op
+  typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
+
+  int num_stage_bytes = groupsize * grainsize * thrust::max<int>(sizeof(input_type),sizeof(intermediate_type));
+  int num_sums_bytes = 2 * groupsize * sizeof(intermediate_type);
+
+  void *buffer = bulk::malloc(g, num_stage_bytes + num_sums_bytes);
+
+  if(bulk::detail::is_shared(buffer))
+  {
+    // convince the compiler that the pointer is indeed __shared__ so we don't get generic loads & stores
+    extern __shared__ char s_begin[];
+    void *shared_buffer = (reinterpret_cast<char*>(buffer) - s_begin) + s_begin;
+    inclusive_scan_with_carry_with_buffer(g, first, last, result, carry_in, binary_op, shared_buffer);
+  }
+  else
+  {
+    inclusive_scan_with_carry_with_buffer(g, first, last, result, carry_in, binary_op, buffer);
+  }
+
+  bulk::free(g, buffer);
 } // end inclusive_scan_with_carry()
 
 
@@ -263,8 +295,9 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
     // do the downsweep
+    //unsigned int heapsize = (2 * groupsize1 * grainsize1 * sizeof(int)) + 64;
     bulk::static_thread_group<groupsize1,grainsize1> group1;
-    bulk::async(bulk::par(group1,numBlocks,0), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
+    bulk::async(bulk::par(group1,numBlocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
 }
 
