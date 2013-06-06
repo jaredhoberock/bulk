@@ -90,7 +90,7 @@ __global__ void my_KernelReduce(InputIt data_global, int count, int2 task, typen
   
   // total is the sum of encountered elements. It's undefined on the first 
   // loop iteration.
-  value_type total = op.Extract(op.Identity(), -1);
+  value_type total;
   bool totalDefined = false;
   
   // Loop through all tiles returned by ComputeTaskRange.
@@ -111,7 +111,7 @@ __global__ void my_KernelReduce(InputIt data_global, int count, int2 task, typen
         int index = groupsize * i + tid;
         if(index < count2)
         {
-          value_type x = op.Extract(inputs[i], range.x + index);
+          value_type x = inputs[i];
           total = (i || totalDefined) ? op.Plus(total, x) : x;
         }
       }
