@@ -75,6 +75,99 @@ struct inclusive_downsweep
 };
 
 
+template<typename Tuning, typename InputIt, typename Op>
+__global__ void my_KernelReduce(InputIt data_global, int count, int2 task, typename Op::value_type* reduction_global, Op op)
+{
+  typedef MGPU_LAUNCH_PARAMS Params;
+  const int NT = Params::NT;
+  const int VT = Params::VT;
+  const int NV = NT * VT;
+  typedef typename Op::input_type input_type;
+  typedef typename Op::value_type value_type;
+  typedef mgpu::CTAReduce<NT, Op> R;
+  
+  union Shared
+  {
+    typename R::Storage reduce;
+    input_type inputs[NV];
+  };
+  __shared__ Shared shared;
+  
+  int tid = threadIdx.x;
+  int block = blockIdx.x;
+  int first = VT * tid;
+  
+  int2 range = mgpu::ComputeTaskRange(block, task, NV, count);
+  
+  // total is the sum of encountered elements. It's undefined on the first 
+  // loop iteration.
+  value_type total = op.Extract(op.Identity(), -1);
+  bool totalDefined = false;
+  
+  // Loop through all tiles returned by ComputeTaskRange.
+  while(range.x < range.y)
+  {
+    int count2 = min(NV, count - range.x);
+    
+    // Read tile data into register.
+    input_type inputs[VT];
+    mgpu::DeviceGlobalToReg<NT, VT>(count2, data_global + range.x, tid, inputs);
+    
+    if(Op::Commutative)
+    {
+      // This path exploits the commutative property of the operator.
+      #pragma unroll
+      for(int i = 0; i < VT; ++i)
+      {
+        int index = NT * i + tid;
+        if(index < count2)
+        {
+          value_type x = op.Extract(inputs[i], range.x + index);
+          total = (i || totalDefined) ? op.Plus(total, x) : x;
+        }
+      }
+    }
+    else
+    {
+      // Store the inputs to shared memory and read them back out in
+      // thread order.
+      mgpu::DeviceRegToShared<NT, VT>(NV, inputs, tid, shared.inputs);
+      
+      value_type x = op.Extract(op.Identity(), -1);			
+      #pragma unroll
+      for(int i = 0; i < VT; ++i)
+      {
+      	int index = first + i;
+      	if(index < count2)
+        {
+      	  value_type y = op.Extract(shared.inputs[index], range.x + index);
+      	  x = i ? op.Plus(x, y) : y;
+      	}
+      }
+      __syncthreads();
+      
+      // Run a CTA-wide reduction
+      x = R::Reduce(tid, x, shared.reduce, op);
+      total = totalDefined ? op.Plus(total, x) : x;
+    }
+    
+    range.x += NV;
+    totalDefined = true;
+  }  
+  
+  if(Op::Commutative)
+  {
+    // Run a CTA-wide reduction to sum the partials for each thread.
+    total = R::Reduce(tid, total, shared.reduce, op);
+  }
+  
+  if(!tid)
+  {
+    reduction_global[block] = total;
+  }
+}
+
+
 template<typename InputIt, typename OutputIt, typename Op>
 void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
 {
@@ -107,7 +200,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(numBlocks + 1);
     	
     // N loads
-    mgpu::KernelReduce<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), op);
+    my_KernelReduce<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), op);
     
     // scan the sums to get the carries
     const unsigned int groupsize2 = 256;
