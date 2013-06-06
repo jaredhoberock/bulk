@@ -26,17 +26,6 @@ struct inclusive_scan_n
 };
 
 
-template<unsigned int size, unsigned int grainsize>
-struct exclusive_scan_n
-{
-  template<typename InputIterator, typename Size, typename OutputIterator, typename T, typename BinaryFunction>
-  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
-  {
-    bulk::exclusive_scan(this_group, first, first + n, result, init, binary_op);
-  }
-};
-
-
 template<std::size_t groupsize, std::size_t grainsize>
 struct inclusive_downsweep
 {
@@ -55,7 +44,7 @@ struct inclusive_downsweep
     
     // give group 0 a carry by taking the first input element
     // and adjusting its range
-    T carry = (this_group.index() != 0) ? carries[this_group.index()] : first[0];
+    T carry = (this_group.index() != 0) ? carries[this_group.index()-1] : first[0];
     if(this_group.index() == 0)
     {
       if(this_group.this_thread.index() == 0)
@@ -197,7 +186,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     int numBlocks = std::min(context.NumSMs() * 25, numTiles);
     int2 task = mgpu::DivideTaskRange(numTiles, numBlocks);
     
-    MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(numBlocks + 1);
+    MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(numBlocks);
     	
     // N loads
     my_KernelReduce<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), op);
@@ -209,7 +198,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     // XXX we could scatter the carries to the output instead of scanning in place
     //     this might simplify the next kernel
     bulk::static_thread_group<groupsize2,grainsize2> group2;
-    bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
+    bulk::async(bulk::par(group2,1), inclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), thrust::plus<int>());
     
     // do the downsweep - N loads, N stores
     bulk::static_thread_group<groupsize1,grainsize1> group1;
