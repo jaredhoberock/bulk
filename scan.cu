@@ -95,6 +95,7 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
                                           T carry_in,
                                           BinaryFunction binary_op)
 {
+
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
   // XXX this needs to be inferred from the iterators and binary op
   typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
@@ -111,8 +112,7 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
   };
   __shared__ Shared shared;
 
-  __shared__ intermediate_type s_sums[groupsize];
-  __shared__ intermediate_type s_scan_buffer[groupsize];
+  __shared__ intermediate_type s_sums[2 * groupsize];
 
   size_type tid = g.this_thread.index();
 
@@ -152,14 +152,16 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
 
     g.wait();
     
-    carry_in = small_inplace_exclusive_scan_with_buffer<groupsize>(g, s_sums, carry_in, s_scan_buffer, binary_op);
+    // exclusive scan the array of per-thread sums
+    //carry_in = small_inplace_exclusive_scan_with_buffer<groupsize>(g, s_sums, carry_in, s_scan_buffer, binary_op);
+    carry_in = small_inplace_exclusive_scan_with_buffer<groupsize>(g, s_sums, carry_in, s_sums + groupsize, binary_op);
 
     if(local_size)
     {
       x = s_sums[tid];
     } // end if
     
-    // this loop is an inclusive_scan
+    // this loop is an inclusive_scan_with_carry (x begins as the carry)
     // XXX this loop should be one of the things to modify when porting to exclusive_scan
     #pragma unroll
     for(size_type i = 0; i < grainsize; ++i) 
@@ -180,34 +182,42 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
 } // end inclusive_scan_with_carry()
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-__global__ void inclusive_downsweep_kernel(RandomAccessIterator1 first, int count, int2 task, const T* carries, RandomAccessIterator2 result, BinaryFunction binary_op)
+template<std::size_t groupsize, std::size_t grainsize>
+struct inclusive_downsweep
 {
-  const int elements_per_group = groupsize * grainsize;
-
-  bulk::static_thread_group<groupsize,grainsize> this_group;
-
-  int2 range = mgpu::ComputeTaskRange(this_group.index(), task, elements_per_group, count);
-  
-  // give group 0 a carry by taking the first input element
-  // and adjusting its range
-  T carry = (this_group.index() != 0) ? carries[this_group.index()] : first[0];
-  if(this_group.index() == 0)
+  template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
+  __device__ void operator()(bulk::static_thread_group<groupsize,grainsize> &this_group,
+                             RandomAccessIterator1 first,
+                             int count,
+                             int2 task,
+                             const T *carries,
+                             RandomAccessIterator2 result,
+                             BinaryFunction binary_op)
   {
-    if(this_group.this_thread.index() == 0)
+    const int elements_per_group = groupsize * grainsize;
+  
+    int2 range = mgpu::ComputeTaskRange(this_group.index(), task, elements_per_group, count);
+    
+    // give group 0 a carry by taking the first input element
+    // and adjusting its range
+    T carry = (this_group.index() != 0) ? carries[this_group.index()] : first[0];
+    if(this_group.index() == 0)
     {
-      *result = carry;
+      if(this_group.this_thread.index() == 0)
+      {
+        *result = carry;
+      }
+  
+      ++range.x;
     }
-
-    ++range.x;
+  
+    RandomAccessIterator1 last = first + range.y;
+    first += range.x;
+    result += range.x;
+  
+    inclusive_scan_with_carry(this_group, first, last, result, carry, binary_op);
   }
-
-  RandomAccessIterator1 last = first + range.y;
-  first += range.x;
-  result += range.x;
-
-  inclusive_scan_with_carry(this_group, first, last, result, carry, binary_op);
-}
+};
 
 
 template<mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
@@ -243,16 +253,18 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     	
     mgpu::KernelReduce<Tuning><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), op);
     
-    // Run a parallel latency-oriented scan to reduce the spine of the 
-    // raking reduction.
+    // scan the sums to get the carries
     const unsigned int groupsize2 = 256;
     const unsigned int grainsize2 = 3;
 
-    bulk::static_thread_group<groupsize2,grainsize2> group;
-    bulk::async(bulk::par(group,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
+    // XXX we could scatter the carries to the output instead of scanning in place
+    //     this might simplify the next kernel
+    bulk::static_thread_group<groupsize2,grainsize2> group2;
+    bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
-    // Run a raking scan as a downsweep.
-    inclusive_downsweep_kernel<groupsize1,grainsize1><<<numBlocks, launch.x>>>(data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
+    // do the downsweep
+    bulk::static_thread_group<groupsize1,grainsize1> group1;
+    bulk::async(bulk::par(group1,numBlocks,0), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
 }
 
