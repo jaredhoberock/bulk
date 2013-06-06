@@ -84,7 +84,6 @@ __global__ void my_KernelReduce(InputIt data_global, int count, int2 task, typen
   
   int tid = threadIdx.x;
   int block = blockIdx.x;
-  int first = grainsize * tid;
   
   int2 range = mgpu::ComputeTaskRange(block, task, elements_per_group, count);
   
@@ -126,7 +125,7 @@ __global__ void my_KernelReduce(InputIt data_global, int count, int2 task, typen
       #pragma unroll
       for(int i = 0; i < grainsize; ++i)
       {
-      	int index = first + i;
+      	int index = grainsize * tid + i;
       	if(index < count2)
         {
       	  value_type y = op.Extract(shared.inputs[index], range.x + index);
