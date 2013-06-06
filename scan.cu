@@ -295,7 +295,6 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), 0, thrust::plus<int>());
     
     // do the downsweep
-    //unsigned int heapsize = (2 * groupsize1 * grainsize1 * sizeof(int)) + 64;
     bulk::static_thread_group<groupsize1,grainsize1> group1;
     bulk::async(bulk::par(group1,numBlocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
