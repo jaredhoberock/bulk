@@ -68,25 +68,25 @@ template<typename Tuning, typename InputIt, typename Op>
 __global__ void my_KernelReduce(InputIt data_global, int count, int2 task, typename Op::value_type* reduction_global, Op op)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
-  const int NT = Params::NT;
-  const int VT = Params::VT;
-  const int NV = NT * VT;
+  const int groupsize = Params::NT;
+  const int grainsize = Params::VT;
+  const int elements_per_group = groupsize * grainsize;
   typedef typename Op::input_type input_type;
   typedef typename Op::value_type value_type;
-  typedef mgpu::CTAReduce<NT, Op> R;
+  typedef mgpu::CTAReduce<groupsize, Op> R;
   
   union Shared
   {
     typename R::Storage reduce;
-    input_type inputs[NV];
+    input_type inputs[elements_per_group];
   };
   __shared__ Shared shared;
   
   int tid = threadIdx.x;
   int block = blockIdx.x;
-  int first = VT * tid;
+  int first = grainsize * tid;
   
-  int2 range = mgpu::ComputeTaskRange(block, task, NV, count);
+  int2 range = mgpu::ComputeTaskRange(block, task, elements_per_group, count);
   
   // total is the sum of encountered elements. It's undefined on the first 
   // loop iteration.
@@ -96,19 +96,19 @@ __global__ void my_KernelReduce(InputIt data_global, int count, int2 task, typen
   // Loop through all tiles returned by ComputeTaskRange.
   while(range.x < range.y)
   {
-    int count2 = min(NV, count - range.x);
+    int count2 = min(elements_per_group, count - range.x);
     
     // Read tile data into register.
-    input_type inputs[VT];
-    mgpu::DeviceGlobalToReg<NT, VT>(count2, data_global + range.x, tid, inputs);
+    input_type inputs[grainsize];
+    mgpu::DeviceGlobalToReg<groupsize, grainsize>(count2, data_global + range.x, tid, inputs);
     
     if(Op::Commutative)
     {
       // This path exploits the commutative property of the operator.
       #pragma unroll
-      for(int i = 0; i < VT; ++i)
+      for(int i = 0; i < grainsize; ++i)
       {
-        int index = NT * i + tid;
+        int index = groupsize * i + tid;
         if(index < count2)
         {
           value_type x = op.Extract(inputs[i], range.x + index);
@@ -120,11 +120,11 @@ __global__ void my_KernelReduce(InputIt data_global, int count, int2 task, typen
     {
       // Store the inputs to shared memory and read them back out in
       // thread order.
-      mgpu::DeviceRegToShared<NT, VT>(NV, inputs, tid, shared.inputs);
+      mgpu::DeviceRegToShared<groupsize, grainsize>(elements_per_group, inputs, tid, shared.inputs);
       
       value_type x = op.Extract(op.Identity(), -1);			
       #pragma unroll
-      for(int i = 0; i < VT; ++i)
+      for(int i = 0; i < grainsize; ++i)
       {
       	int index = first + i;
       	if(index < count2)
@@ -140,7 +140,7 @@ __global__ void my_KernelReduce(InputIt data_global, int count, int2 task, typen
       total = totalDefined ? op.Plus(total, x) : x;
     }
     
-    range.x += NV;
+    range.x += elements_per_group;
     totalDefined = true;
   }  
   
