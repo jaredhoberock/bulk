@@ -18,11 +18,21 @@ namespace detail
 using thrust::system::cuda::detail::detail::uninitialized;
 
 
+// XXX uninitialized is a performance hazard
+//     disable it for the moment
+//template<typename Function>
+//__global__
+//void launch_by_value(uninitialized<Function> f)
+//{
+//  f.get()();
+//}
+
+
 template<typename Function>
 __global__
-void launch_by_value(uninitialized<Function> f)
+void launch_by_value(Function f)
 {
-  f.get()();
+  f();
 }
 
 
@@ -41,7 +51,8 @@ struct launcher
 {
   typedef group_task<ThreadGroup, Closure> task_type;
 
-  typedef void (*global_function_t)(uninitialized<task_type>);
+  //typedef void (*global_function_t)(uninitialized<task_type>);
+  typedef void (*global_function_t)(task_type);
 
   template<typename LaunchConfig>
   future<void> go(LaunchConfig l, Closure c)
@@ -52,8 +63,8 @@ struct launcher
     {
       task_type task(c, l.num_smem_bytes_per_group());
 
-      uninitialized<task_type> wrapped_task;
-      wrapped_task.construct(task);
+      //uninitialized<task_type> wrapped_task;
+      //wrapped_task.construct(task);
 
       // XXX this business is pretty expensive
       //     try to avoid it or speed it up or something
@@ -70,7 +81,8 @@ struct launcher
         static_cast<unsigned int>(l.num_threads_per_group()),
         static_cast<size_t>(l.num_smem_bytes_per_group()),
         l.stream()
-      >>>(wrapped_task);
+      >>>(task);
+      //>>>(wrapped_task);
 
       thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
     } // end if
@@ -101,6 +113,20 @@ typename disable_if_static_thread_group<
 
   return ns::block_size_with_maximum_potential_occupancy(attr, ns::device_properties());
 } // end choose_block_size()
+
+
+template<typename Function>
+size_t maximum_potential_occupancy(Function kernel, size_t num_threads)
+{
+  namespace ns = thrust::system::cuda::detail;
+
+  ns::function_attributes_t attr = ns::function_attributes(kernel);
+
+  return ns::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(ns::device_properties(),
+                                                                             attr,
+                                                                             num_threads,
+                                                                             0);
+}
 
 
 template<typename ThreadGroup, typename Function>
@@ -145,6 +171,7 @@ template<typename ThreadGroup>
   {
     m_num_smem_bytes_per_group = detail::choose_smem_size(m_example_group, f);
   } // end if
+
 } // end launch::configure()
 
 
@@ -225,6 +252,13 @@ template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2,
 future<void> async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6)
 {
   return detail::async(l, detail::make_closure(f,arg1,arg2,arg3,arg4,arg5,arg6));
+} // end async()
+
+
+template<typename LaunchConfig, typename Function, typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
+future<void> async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, Arg4 arg4, Arg5 arg5, Arg6 arg6, Arg7 arg7)
+{
+  return detail::async(l, detail::make_closure(f,arg1,arg2,arg3,arg4,arg5,arg6,arg7));
 } // end async()
 
 
