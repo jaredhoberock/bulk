@@ -249,7 +249,7 @@ struct inclusive_downsweep
 };
 
 
-template<mgpu::MgpuScanType Type, typename InputIt, typename OutputIt, typename Op>
+template<typename InputIt, typename OutputIt, typename Op>
 void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
 {
   typedef typename Op::value_type value_type;
@@ -304,11 +304,11 @@ OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, Output
 {
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
-  ::IncScan<mgpu::MgpuScanTypeInc>(thrust::raw_pointer_cast(&*first),
-                                   last - first,
-                                   thrust::raw_pointer_cast(&*result),
-                                   mgpu::ScanOp<mgpu::ScanOpTypeAdd,int>(),
-                                   *ctx);
+  ::IncScan(thrust::raw_pointer_cast(&*first),
+            last - first,
+            thrust::raw_pointer_cast(&*result),
+            mgpu::ScanOp<mgpu::ScanOpTypeAdd,int>(),
+            *ctx);
 
   return result + (last - first);
 }
