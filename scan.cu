@@ -88,22 +88,23 @@ struct reduce_tiles
 }; // end reduce_tiles
 
 
-template<typename InputIt, typename OutputIt, typename Op>
-void IncScan(InputIt first, size_t n, OutputIt dest_global, Op op, mgpu::CudaContext& context)
+template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename BinaryFunction>
+void IncScan(RandomAccessIterator1 first, size_t n, RandomAccessIterator2 result, BinaryFunction binary_op, mgpu::CudaContext& context)
 {
   // XXX TODO pass explicit heap sizes
-  typedef typename Op::value_type value_type;
-  typedef typename Op::result_type result_type;
+
+  // XXX TODO infer intermediate type from iterators and BinaryFunction
+  typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
   
   const int threshold_of_parallelism = 20000;
 
   if(n < threshold_of_parallelism)
   {
-    const int size = 512;
+    const int groupsize = 512;
     const int grainsize = 3;
 
-    bulk::static_thread_group<size,grainsize> group;
-    bulk::async(bulk::par(group, 1), inclusive_scan_n<size,grainsize>(), bulk::there, first, n, dest_global, thrust::plus<int>());
+    bulk::static_thread_group<groupsize,grainsize> group;
+    bulk::async(bulk::par(group, 1), inclusive_scan_n<groupsize,grainsize>(), bulk::there, first, n, result, binary_op);
   } // end if
   else
   {
@@ -118,12 +119,12 @@ void IncScan(InputIt first, size_t n, OutputIt dest_global, Op op, mgpu::CudaCon
     int num_blocks = std::min(context.NumSMs() * 25, numTiles);
     int2 task = mgpu::DivideTaskRange(numTiles, num_blocks);
     
-    MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(num_blocks);
+    MGPU_MEM(intermediate_type) reductionDevice = context.Malloc<intermediate_type>(num_blocks);
     	
     // n loads + num_blocks stores
     // XXX implement noncommutative_reduce_tiles
     bulk::static_thread_group<groupsize1,grainsize1> group1;
-    bulk::async(bulk::par(group1,num_blocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), thrust::plus<int>());
+    bulk::async(bulk::par(group1,num_blocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), binary_op);
     
     // scan the sums to get the carries
     const int groupsize2 = 256;
@@ -134,10 +135,10 @@ void IncScan(InputIt first, size_t n, OutputIt dest_global, Op op, mgpu::CudaCon
 
     // num_blocks loads + num_blocks stores
     bulk::static_thread_group<groupsize2,grainsize2> group2;
-    bulk::async(bulk::par(group2,1), inclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), num_blocks, reductionDevice->get(), thrust::plus<int>());
+    bulk::async(bulk::par(group2,1), inclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), num_blocks, reductionDevice->get(), binary_op);
     
     // do the downsweep - n loads, n stores
-    bulk::async(bulk::par(group1,num_blocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), dest_global, thrust::plus<int>());
+    bulk::async(bulk::par(group1,num_blocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), result, binary_op);
   }
 }
 
@@ -150,7 +151,7 @@ OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, Output
   ::IncScan(thrust::raw_pointer_cast(&*first),
             last - first,
             thrust::raw_pointer_cast(&*result),
-            mgpu::ScanOp<mgpu::ScanOpTypeAdd,int>(),
+            thrust::plus<typename thrust::iterator_value<InputIterator>::type>(),
             *ctx);
 
   return result + (last - first);
