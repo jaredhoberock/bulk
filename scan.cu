@@ -12,9 +12,6 @@
 #include <bulk/bulk.hpp>
 
 
-typedef int T;
-
-
 template<unsigned int size, unsigned int grainsize>
 struct inclusive_scan_n
 {
@@ -124,6 +121,7 @@ void IncScan(InputIt first, size_t n, OutputIt dest_global, Op op, mgpu::CudaCon
     MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(num_blocks);
     	
     // n loads + num_blocks stores
+    // XXX implement noncommutative_reduce_tiles
     bulk::static_thread_group<groupsize1,grainsize1> group1;
     bulk::async(bulk::par(group1,num_blocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), thrust::plus<int>());
     
@@ -157,6 +155,9 @@ OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, Output
 
   return result + (last - first);
 }
+
+
+typedef int T;
 
 
 void my_scan(thrust::device_vector<T> *data)
