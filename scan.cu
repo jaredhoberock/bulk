@@ -91,20 +91,21 @@ struct reduce_tiles
 
 
 template<typename InputIt, typename OutputIt, typename Op>
-void IncScan(InputIt data_global, size_t count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
+void IncScan(InputIt data_global, size_t n, OutputIt dest_global, Op op, mgpu::CudaContext& context)
 {
+  // XXX TODO pass explicit heap sizes
   typedef typename Op::value_type value_type;
   typedef typename Op::result_type result_type;
   
   const int threshold_of_parallelism = 20000;
 
-  if(count < threshold_of_parallelism)
+  if(n < threshold_of_parallelism)
   {
     const int size = 512;
     const int grainsize = 3;
 
     bulk::static_thread_group<size,grainsize> group;
-    bulk::async(bulk::par(group, 1), inclusive_scan_n<size,grainsize>(), bulk::there, data_global, count, dest_global, thrust::plus<int>());
+    bulk::async(bulk::par(group, 1), inclusive_scan_n<size,grainsize>(), bulk::there, data_global, n, dest_global, thrust::plus<int>());
   }
   else
   {
@@ -115,7 +116,7 @@ void IncScan(InputIt data_global, size_t count, OutputIt dest_global, Op op, mgp
     int2 launch = Tuning::GetLaunchParams(context);
     const int NV = launch.x * launch.y;
     
-    int numTiles = MGPU_DIV_UP(count, NV);
+    int numTiles = MGPU_DIV_UP(n, NV);
     int numBlocks = std::min(context.NumSMs() * 25, numTiles);
     int2 task = mgpu::DivideTaskRange(numTiles, numBlocks);
     
@@ -123,7 +124,7 @@ void IncScan(InputIt data_global, size_t count, OutputIt dest_global, Op op, mgp
     	
     // N loads
     bulk::static_thread_group<groupsize1,grainsize1> group1;
-    bulk::async(bulk::par(group1,numBlocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), thrust::plus<int>());
+    bulk::async(bulk::par(group1,numBlocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, data_global, n, task, reductionDevice->get(), thrust::plus<int>());
     
     // scan the sums to get the carries
     const int groupsize2 = 256;
@@ -135,7 +136,7 @@ void IncScan(InputIt data_global, size_t count, OutputIt dest_global, Op op, mgp
     bulk::async(bulk::par(group2,1), inclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), thrust::plus<int>());
     
     // do the downsweep - N loads, N stores
-    bulk::async(bulk::par(group1,numBlocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
+    bulk::async(bulk::par(group1,numBlocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, n, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
 }
 
