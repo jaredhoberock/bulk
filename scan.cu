@@ -122,8 +122,8 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(numBlocks);
     	
     // N loads
-    bulk::static_thread_group<groupsize1,grainsize1> reduce_group;
-    bulk::async(bulk::par(reduce_group,numBlocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), thrust::plus<int>());
+    bulk::static_thread_group<groupsize1,grainsize1> group1;
+    bulk::async(bulk::par(group1,numBlocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), thrust::plus<int>());
     
     // scan the sums to get the carries
     const unsigned int groupsize2 = 256;
@@ -135,8 +135,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group2,1), inclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), thrust::plus<int>());
     
     // do the downsweep - N loads, N stores
-    bulk::static_thread_group<groupsize1,grainsize1> downsweep_group;
-    bulk::async(bulk::par(downsweep_group,numBlocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
+    bulk::async(bulk::par(group1,numBlocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
 }
 
