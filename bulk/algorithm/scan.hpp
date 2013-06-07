@@ -158,16 +158,16 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ThreadGroup &g, T *first, 
   g.wait();
 
   return result;
-}
+} // end small_inplace_exclusive_scan_with_buffer()
 
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-__device__ void inclusive_scan_with_carry_with_buffer(bulk::static_thread_group<groupsize,grainsize> &g,
-                                                      RandomAccessIterator1 first, RandomAccessIterator1 last,
-                                                      RandomAccessIterator2 result,
-                                                      T carry_in,
-                                                      BinaryFunction binary_op,
-                                                      void *buffer)
+__device__ void inclusive_scan_with_buffer(bulk::static_thread_group<groupsize,grainsize> &g,
+                                           RandomAccessIterator1 first, RandomAccessIterator1 last,
+                                           RandomAccessIterator2 result,
+                                           T carry_in,
+                                           BinaryFunction binary_op,
+                                           void *buffer)
 {
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
   // XXX this needs to be inferred from the iterators and binary op
@@ -252,15 +252,24 @@ __device__ void inclusive_scan_with_carry_with_buffer(bulk::static_thread_group<
     
     bulk::copy_n(g, shared.results, partition_size, result);
   } // end for
-}
+} // end inclusive_scan_with_buffer()
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-__device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,grainsize> &g,
-                                          RandomAccessIterator1 first, RandomAccessIterator1 last,
-                                          RandomAccessIterator2 result,
-                                          T carry_in,
-                                          BinaryFunction binary_op)
+} // end scan_detail
+} // end detail
+
+
+template<std::size_t groupsize,
+         std::size_t grainsize,
+         typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename T,
+         typename BinaryFunction>
+__device__ void inclusive_scan(bulk::static_thread_group<groupsize,grainsize> &g,
+                               RandomAccessIterator1 first, RandomAccessIterator1 last,
+                               RandomAccessIterator2 result,
+                               T init,
+                               BinaryFunction binary_op)
 {
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
   // XXX this needs to be inferred from the iterators and binary op
@@ -273,19 +282,15 @@ __device__ void inclusive_scan_with_carry(bulk::static_thread_group<groupsize,gr
 
   if(bulk::detail::is_shared(buffer))
   {
-    inclusive_scan_with_carry_with_buffer(g, first, last, result, carry_in, binary_op, bulk::detail::on_chip_cast(buffer));
-  }
+    detail::scan_detail::inclusive_scan_with_buffer(g, first, last, result, init, binary_op, bulk::detail::on_chip_cast(buffer));
+  } // end if
   else
   {
-    inclusive_scan_with_carry_with_buffer(g, first, last, result, carry_in, binary_op, buffer);
-  }
+    detail::scan_detail::inclusive_scan_with_buffer(g, first, last, result, init, binary_op, buffer);
+  } // end else
 
   bulk::free(g, buffer);
-} // end inclusive_scan_with_carry()
-
-
-} // end scan_detail
-} // end detail
+} // end inclusive_scan()
 
 
 template<std::size_t size,
@@ -302,12 +307,16 @@ RandomAccessIterator2 inclusive_scan(static_thread_group<size,grainsize> &this_g
 {
   if(first < last)
   {
-    typename thrust::iterator_value<RandomAccessIterator1>::type carry = *first;
+    // the first input becomes the init
+    typename thrust::iterator_value<RandomAccessIterator1>::type init = *first;
 
-    *result = carry;
+    if(this_group.this_thread.index() == 0)
+    {
+      *result = init;
+    } // end if
 
-    detail::scan_detail::inclusive_scan_with_carry(this_group, first + 1, last, result + 1, carry, binary_op);
-  }
+    bulk::inclusive_scan(this_group, first + 1, last, result + 1, init, binary_op);
+  } // end if
 
   return result + (last - first);
 } // end inclusive_scan()

@@ -44,6 +44,7 @@ struct inclusive_downsweep
     
     // give group 0 a carry by taking the first input element
     // and adjusting its range
+    // XXX this problem goes away if inclusive_downsweep takes an init parameter
     T carry = (this_group.index() != 0) ? carries[this_group.index()-1] : first[0];
     if(this_group.index() == 0)
     {
@@ -59,7 +60,7 @@ struct inclusive_downsweep
     first += range.x;
     result += range.x;
   
-    bulk::detail::scan_detail::inclusive_scan_with_carry(this_group, first, last, result, carry, binary_op);
+    bulk::inclusive_scan(this_group, first, last, result, carry, binary_op);
   }
 };
 
@@ -91,7 +92,7 @@ struct reduce_tiles
 
 
 template<typename InputIt, typename OutputIt, typename Op>
-void IncScan(InputIt data_global, size_t n, OutputIt dest_global, Op op, mgpu::CudaContext& context)
+void IncScan(InputIt first, size_t n, OutputIt dest_global, Op op, mgpu::CudaContext& context)
 {
   // XXX TODO pass explicit heap sizes
   typedef typename Op::value_type value_type;
@@ -105,8 +106,8 @@ void IncScan(InputIt data_global, size_t n, OutputIt dest_global, Op op, mgpu::C
     const int grainsize = 3;
 
     bulk::static_thread_group<size,grainsize> group;
-    bulk::async(bulk::par(group, 1), inclusive_scan_n<size,grainsize>(), bulk::there, data_global, n, dest_global, thrust::plus<int>());
-  }
+    bulk::async(bulk::par(group, 1), inclusive_scan_n<size,grainsize>(), bulk::there, first, n, dest_global, thrust::plus<int>());
+  } // end if
   else
   {
     // Run the parallel raking reduce as an upsweep.
@@ -117,26 +118,28 @@ void IncScan(InputIt data_global, size_t n, OutputIt dest_global, Op op, mgpu::C
     const int NV = launch.x * launch.y;
     
     int numTiles = MGPU_DIV_UP(n, NV);
-    int numBlocks = std::min(context.NumSMs() * 25, numTiles);
-    int2 task = mgpu::DivideTaskRange(numTiles, numBlocks);
+    int num_blocks = std::min(context.NumSMs() * 25, numTiles);
+    int2 task = mgpu::DivideTaskRange(numTiles, num_blocks);
     
-    MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(numBlocks);
+    MGPU_MEM(value_type) reductionDevice = context.Malloc<value_type>(num_blocks);
     	
-    // N loads
+    // n loads + num_blocks stores
     bulk::static_thread_group<groupsize1,grainsize1> group1;
-    bulk::async(bulk::par(group1,numBlocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, data_global, n, task, reductionDevice->get(), thrust::plus<int>());
+    bulk::async(bulk::par(group1,num_blocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), thrust::plus<int>());
     
     // scan the sums to get the carries
     const int groupsize2 = 256;
     const int grainsize2 = 3;
 
-    // XXX we could scatter the carries to the output instead of scanning in place
-    //     this might simplify the next kernel
+    // XXX if IncScan took an init parameter, we would
+    //     incorporate it into this scan -- use exclusive_scan_n with init instead
+
+    // num_blocks loads + num_blocks stores
     bulk::static_thread_group<groupsize2,grainsize2> group2;
-    bulk::async(bulk::par(group2,1), inclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), numBlocks, reductionDevice->get(), thrust::plus<int>());
+    bulk::async(bulk::par(group2,1), inclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), num_blocks, reductionDevice->get(), thrust::plus<int>());
     
-    // do the downsweep - N loads, N stores
-    bulk::async(bulk::par(group1,numBlocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, data_global, n, task, reductionDevice->get(), dest_global, thrust::plus<int>());
+    // do the downsweep - n loads, n stores
+    bulk::async(bulk::par(group1,num_blocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), dest_global, thrust::plus<int>());
   }
 }
 
