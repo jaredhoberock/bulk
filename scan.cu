@@ -15,10 +15,21 @@
 template<unsigned int size, unsigned int grainsize>
 struct inclusive_scan_n
 {
-  template<typename InputIterator, typename Size, typename OutputIterator, typename BinaryFunction>
-  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, BinaryFunction binary_op)
+  template<typename InputIterator, typename Size, typename OutputIterator, typename T, typename BinaryFunction>
+  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
   {
-    bulk::inclusive_scan(this_group, first, first + n, result, binary_op);
+    bulk::inclusive_scan(this_group, first, first + n, result, init, binary_op);
+  }
+};
+
+
+template<unsigned int size, unsigned int grainsize>
+struct exclusive_scan_n
+{
+  template<typename InputIterator, typename Size, typename OutputIterator, typename T, typename BinaryFunction>
+  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
+  {
+    bulk::exclusive_scan(this_group, first, first + n, result, init, binary_op);
   }
 };
 
@@ -38,26 +49,12 @@ struct inclusive_downsweep
     const int elements_per_group = groupsize * grainsize;
   
     int2 range = mgpu::ComputeTaskRange(this_group.index(), task, elements_per_group, count);
-    
-    // give group 0 a carry by taking the first input element
-    // and adjusting its range
-    // XXX this problem goes away if inclusive_downsweep takes an init parameter
-    T carry = (this_group.index() != 0) ? carries[this_group.index()-1] : first[0];
-    if(this_group.index() == 0)
-    {
-      if(this_group.this_thread.index() == 0)
-      {
-        *result = carry;
-      }
-  
-      ++range.x;
-    }
   
     RandomAccessIterator1 last = first + range.y;
     first += range.x;
     result += range.x;
   
-    bulk::inclusive_scan(this_group, first, last, result, carry, binary_op);
+    bulk::inclusive_scan(this_group, first, last, result, carries[this_group.index()], binary_op);
   }
 };
 
@@ -88,8 +85,8 @@ struct reduce_tiles
 }; // end reduce_tiles
 
 
-template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename BinaryFunction>
-void IncScan(RandomAccessIterator1 first, size_t n, RandomAccessIterator2 result, BinaryFunction binary_op, mgpu::CudaContext& context)
+template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
+RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, size_t n, RandomAccessIterator2 result, T init, BinaryFunction binary_op, mgpu::CudaContext& context)
 {
   // XXX TODO pass explicit heap sizes
 
@@ -104,7 +101,7 @@ void IncScan(RandomAccessIterator1 first, size_t n, RandomAccessIterator2 result
     const int grainsize = 3;
 
     bulk::static_thread_group<groupsize,grainsize> group;
-    bulk::async(bulk::par(group, 1), inclusive_scan_n<groupsize,grainsize>(), bulk::there, first, n, result, binary_op);
+    bulk::async(bulk::par(group, 1), inclusive_scan_n<groupsize,grainsize>(), bulk::there, first, n, result, init, binary_op);
   } // end if
   else
   {
@@ -130,40 +127,38 @@ void IncScan(RandomAccessIterator1 first, size_t n, RandomAccessIterator2 result
     const int groupsize2 = 256;
     const int grainsize2 = 3;
 
-    // XXX if IncScan took an init parameter, we would
-    //     incorporate it into this scan -- use exclusive_scan_n with init instead
-
     // num_blocks loads + num_blocks stores
     bulk::static_thread_group<groupsize2,grainsize2> group2;
-    bulk::async(bulk::par(group2,1), inclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), num_blocks, reductionDevice->get(), binary_op);
+    bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), num_blocks, reductionDevice->get(), init, binary_op);
     
     // do the downsweep - n loads, n stores
     bulk::async(bulk::par(group1,num_blocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), result, binary_op);
   }
+
+  return result + n;
 }
 
 
-template<typename InputIterator, typename OutputIterator>
-OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, OutputIterator result)
+template<typename InputIterator, typename T, typename OutputIterator>
+OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, T init, OutputIterator result)
 {
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
-  ::IncScan(thrust::raw_pointer_cast(&*first),
-            last - first,
-            thrust::raw_pointer_cast(&*result),
-            thrust::plus<typename thrust::iterator_value<InputIterator>::type>(),
-            *ctx);
-
-  return result + (last - first);
+  return inclusive_scan(thrust::raw_pointer_cast(&*first),
+                        last - first,
+                        thrust::raw_pointer_cast(&*result),
+                        init,
+                        thrust::plus<typename thrust::iterator_value<InputIterator>::type>(),
+                        *ctx);
 }
 
 
 typedef int T;
 
 
-void my_scan(thrust::device_vector<T> *data)
+void my_scan(thrust::device_vector<T> *data, T init)
 {
-  my_inclusive_scan(data->begin(), data->end(), data->begin());
+  my_inclusive_scan(data->begin(), data->end(), init, data->begin());
 }
 
 
@@ -174,12 +169,15 @@ void do_it(size_t n)
 
   thrust::host_vector<T> h_result(n);
 
+  T init = 13;
+
   thrust::inclusive_scan(h_input.begin(), h_input.end(), h_result.begin());
+  thrust::for_each(h_result.begin(), h_result.end(), thrust::placeholders::_1 += init);
 
   thrust::device_vector<T> d_input = h_input;
   thrust::device_vector<T> d_result(d_input.size());
 
-  my_inclusive_scan(d_input.begin(), d_input.end(), d_result.begin());
+  my_inclusive_scan(d_input.begin(), d_input.end(), init, d_result.begin());
 
   cudaError_t error = cudaDeviceSynchronize();
 
@@ -237,8 +235,8 @@ int main()
   sean_scan(&vec);
   double sean_msecs = time_invocation_cuda(50, sean_scan, &vec);
 
-  my_scan(&vec);
-  double my_msecs = time_invocation_cuda(50, my_scan, &vec);
+  my_scan(&vec, 13);
+  double my_msecs = time_invocation_cuda(50, my_scan, &vec, 13);
 
   std::cout << "Sean's time: " << sean_msecs << " ms" << std::endl;
   std::cout << "My time: " << my_msecs << " ms" << std::endl;
