@@ -91,7 +91,7 @@ struct reduce_tiles
 
 
 template<typename InputIt, typename OutputIt, typename Op>
-void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
+void IncScan(InputIt data_global, size_t count, OutputIt dest_global, Op op, mgpu::CudaContext& context)
 {
   typedef typename Op::value_type value_type;
   typedef typename Op::result_type result_type;
@@ -126,8 +126,8 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     bulk::async(bulk::par(group1,numBlocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), thrust::plus<int>());
     
     // scan the sums to get the carries
-    const unsigned int groupsize2 = 256;
-    const unsigned int grainsize2 = 3;
+    const int groupsize2 = 256;
+    const int grainsize2 = 3;
 
     // XXX we could scatter the carries to the output instead of scanning in place
     //     this might simplify the next kernel
