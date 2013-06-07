@@ -34,27 +34,62 @@ struct exclusive_scan_n
 };
 
 
+// compute the indices of the first and last (exclusive) partitions the group will consume
+template<typename Size>
+__device__
+thrust::pair<Size,Size> tile_range_in_partitions(Size tile_index,
+                                                 Size num_partitions_per_tile,
+                                                 Size last_partial_partition_size)
+{
+  thrust::pair<Size,Size> result;
+
+  result.first = num_partitions_per_tile * tile_index;
+  result.first += thrust::min<Size>(tile_index, last_partial_partition_size);
+
+  result.second = result.first + num_partitions_per_tile + (tile_index < last_partial_partition_size);
+
+  return result;
+} // end tile_range_in_partitions()
+
+
+// compute the indices of the first and last (exclusive) elements the group will consume
+template<typename Size>
+__device__
+thrust::pair<Size,Size> tile_range(Size tile_index,
+                                   Size num_partitions_per_group,
+                                   Size last_partial_partition_size,
+                                   Size partition_size,
+                                   Size n)
+{
+  thrust::pair<Size,Size> result = tile_range_in_partitions(tile_index, num_partitions_per_group, last_partial_partition_size);
+  result.first *= partition_size;
+  result.second = thrust::min<Size>(n, result.second * partition_size);
+  return result;
+} // end tile_range()
+
+
 template<std::size_t groupsize, std::size_t grainsize>
 struct inclusive_downsweep
 {
-  template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
+  template<typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename RandomAccessIterator3, typename BinaryFunction>
   __device__ void operator()(bulk::static_thread_group<groupsize,grainsize> &this_group,
                              RandomAccessIterator1 first,
-                             int count,
-                             int2 task,
-                             const T *carries,
-                             RandomAccessIterator2 result,
+                             Size n,
+                             Size num_partitions_per_tile,
+                             Size last_partial_partition_size,
+                             RandomAccessIterator2 carries_first,
+                             RandomAccessIterator3 result,
                              BinaryFunction binary_op)
   {
-    const int elements_per_group = groupsize * grainsize;
+    const Size partition_size = groupsize * grainsize;
   
-    int2 range = mgpu::ComputeTaskRange(this_group.index(), task, elements_per_group, count);
+    thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), num_partitions_per_tile, last_partial_partition_size, partition_size, n);
   
-    RandomAccessIterator1 last = first + range.y;
-    first += range.x;
-    result += range.x;
+    RandomAccessIterator1 last = first + range.second;
+    first += range.first;
+    result += range.first;
   
-    bulk::inclusive_scan(this_group, first, last, result, carries[this_group.index()], binary_op);
+    bulk::inclusive_scan(this_group, first, last, result, carries_first[this_group.index()], binary_op);
   }
 };
 
@@ -62,20 +97,21 @@ struct inclusive_downsweep
 template<std::size_t groupsize, std::size_t grainsize>
 struct reduce_tiles
 {
-  template<typename InputIterator, typename BinaryFunction>
+  template<typename InputIterator, typename Size, typename BinaryFunction>
   __device__ void operator()(bulk::static_thread_group<groupsize,grainsize> &this_group,
                              InputIterator first,
-                             int n,
-                             int2 task,
+                             Size n,
+                             Size partition_size,
+                             Size last_partial_partition_size,
                              typename thrust::iterator_value<InputIterator>::type *reduction_global,
                              BinaryFunction binary_op)
   {
     typedef typename thrust::iterator_value<InputIterator>::type value_type;
     
-    int2 range = mgpu::ComputeTaskRange(this_group.index(), task, groupsize * grainsize, n);
+    thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), partition_size, last_partial_partition_size, groupsize * grainsize, n);
 
     // it's much faster to pass the last value as the init for some reason
-    value_type total = bulk::reduce(this_group, first + range.x, first + range.y - 1, first[range.y-1], binary_op);
+    value_type total = bulk::reduce(this_group, first + range.first, first + range.second - 1, first[range.second-1], binary_op);
 
     if(this_group.this_thread.index() == 0)
     {
@@ -85,15 +121,15 @@ struct reduce_tiles
 }; // end reduce_tiles
 
 
-template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, size_t n, RandomAccessIterator2 result, T init, BinaryFunction binary_op, mgpu::CudaContext& context)
+template<typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename T, typename BinaryFunction>
+RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, Size n, RandomAccessIterator2 result, T init, BinaryFunction binary_op, mgpu::CudaContext& context)
 {
   // XXX TODO pass explicit heap sizes
 
   // XXX TODO infer intermediate type from iterators and BinaryFunction
   typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
   
-  const int threshold_of_parallelism = 20000;
+  const Size threshold_of_parallelism = 20000;
 
   if(n < threshold_of_parallelism)
   {
@@ -108,31 +144,33 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, size_t n, Rand
     // Run the parallel raking reduce as an upsweep.
     const int groupsize1 = 128;
     const int grainsize1 = 7;
-    typedef mgpu::LaunchBoxVT<groupsize1, grainsize1> Tuning;
-    int2 launch = Tuning::GetLaunchParams(context);
-    const int NV = launch.x * launch.y;
+
+    const Size partition_size = groupsize1 * grainsize1;
     
-    int numTiles = MGPU_DIV_UP(n, NV);
-    int num_blocks = std::min(context.NumSMs() * 25, numTiles);
-    int2 task = mgpu::DivideTaskRange(numTiles, num_blocks);
+    Size num_partitions = MGPU_DIV_UP(n, partition_size);
+    Size num_groups = thrust::min<Size>(context.NumSMs() * 25, num_partitions);
+
+    // each group consumes one tile of data
+    Size num_partitions_per_tile = num_partitions / num_groups;
+    Size last_partial_partition_size = num_partitions % num_groups;
     
-    MGPU_MEM(intermediate_type) reductionDevice = context.Malloc<intermediate_type>(num_blocks);
+    MGPU_MEM(intermediate_type) reductionDevice = context.Malloc<intermediate_type>(num_groups);
     	
-    // n loads + num_blocks stores
+    // n loads + num_groups stores
     // XXX implement noncommutative_reduce_tiles
     bulk::static_thread_group<groupsize1,grainsize1> group1;
-    bulk::async(bulk::par(group1,num_blocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), binary_op);
+    bulk::async(bulk::par(group1,num_groups), reduce_tiles<groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, reductionDevice->get(), binary_op);
     
     // scan the sums to get the carries
     const int groupsize2 = 256;
     const int grainsize2 = 3;
 
-    // num_blocks loads + num_blocks stores
+    // num_groups loads + num_groups stores
     bulk::static_thread_group<groupsize2,grainsize2> group2;
-    bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), num_blocks, reductionDevice->get(), init, binary_op);
+    bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), num_groups, reductionDevice->get(), init, binary_op);
     
     // do the downsweep - n loads, n stores
-    bulk::async(bulk::par(group1,num_blocks), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, first, n, task, reductionDevice->get(), result, binary_op);
+    bulk::async(bulk::par(group1,num_groups), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, reductionDevice->get(), result, binary_op);
   }
 
   return result + n;
@@ -144,12 +182,14 @@ OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, T init
 {
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
-  return inclusive_scan(thrust::raw_pointer_cast(&*first),
-                        last - first,
-                        thrust::raw_pointer_cast(&*result),
-                        init,
-                        thrust::plus<typename thrust::iterator_value<InputIterator>::type>(),
-                        *ctx);
+  ::inclusive_scan(thrust::raw_pointer_cast(&*first),
+                   last - first,
+                   thrust::raw_pointer_cast(&*result),
+                   init,
+                   thrust::plus<typename thrust::iterator_value<InputIterator>::type>(),
+                   *ctx);
+
+  return result + (last - first);
 }
 
 
