@@ -64,146 +64,150 @@ struct inclusive_downsweep
 };
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename Op>
-struct buffer
+template<typename ThreadGroup, typename RandomAccessIterator, typename Size, typename T, typename BinaryFunction>
+__device__ T destructive_reduce_n(ThreadGroup &g, RandomAccessIterator s_sums, Size n, T init, BinaryFunction binary_op)
 {
-  typedef union
+  typedef int size_type;
+
+  size_type tid = g.this_thread.index();
+
+  Size m = n;
+
+  while(m > 1)
   {
-    typename mgpu::CTAReduce<groupsize,Op>::Storage             reduce;
-    typename thrust::iterator_value<RandomAccessIterator>::type inputs[groupsize * grainsize];
-  } type;
-};
+    Size half_m = m >> 1;
 
-
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename Op>
-__device__
-typename thrust::iterator_value<RandomAccessIterator>::type
-  my_reduce_with_buffer(bulk::static_thread_group<groupsize,grainsize> &g,
-                        RandomAccessIterator first,
-                        RandomAccessIterator last,
-                        Op op,
-                        typename buffer<
-                          groupsize, grainsize, RandomAccessIterator, Op
-                        >::type *buffer)
-{
-  typedef mgpu::CTAReduce<groupsize, Op> R;
-  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
-  const int elements_per_group = groupsize * grainsize;
-
-  // total is the sum of encountered elements. It's undefined on the first 
-  // loop iteration.
-  T total;
-  bool totalDefined = false;
-  
-  // Loop through all tiles returned by ComputeTaskRange.
-  for(; first < last; first += elements_per_group)
-  {
-    int count2 = thrust::min<int>(elements_per_group, last - first);
-    
-    // Read tile data into register.
-    value_type inputs[grainsize];
-    mgpu::DeviceGlobalToReg<groupsize, grainsize>(count2, first, g.this_thread.index(), inputs);
-    
-    if(Op::Commutative)
+    if(tid < half_m)
     {
-      // This path exploits the commutative property of the operator.
-      #pragma unroll
-      for(int i = 0; i < grainsize; ++i)
-      {
-        int index = groupsize * i + g.this_thread.index();
-        if(index < count2)
-        {
-          T x = inputs[i];
-          total = (i || totalDefined) ? op.Plus(total, x) : x;
-        }
-      }
-    }
-    else
-    {
-      // Store the inputs to shared memory and read them back out in
-      // thread order.
-      mgpu::DeviceRegToShared<groupsize, grainsize>(elements_per_group, inputs, g.this_thread.index(), buffer->inputs);
-      
-      T x = op.Extract(op.Identity(), -1);			
-      #pragma unroll
-      for(int i = 0; i < grainsize; ++i)
-      {
-        int index = grainsize * g.this_thread.index() + i;
-        if(index < count2)
-        {
-          T y = buffer->inputs[index];
-          x = i ? op.Plus(x, y) : y;
-        }
-      }
-      __syncthreads();
-      
-      // Run a CTA-wide reduction
-      x = R::Reduce(g.this_thread.index(), x, buffer->reduce, op);
-      total = totalDefined ? op.Plus(total, x) : x;
-    }
-    
-    totalDefined = true;
-  }  
-  
-  if(Op::Commutative)
-  {
-    // Run a CTA-wide reduction to sum the partials for each thread.
-    total = R::Reduce(g.this_thread.index(), total, buffer->reduce, op);
-  }
+      T old_val = s_sums[tid];
 
-  return total;
+      s_sums[tid] = binary_op(old_val, s_sums[m - tid - 1]);
+    } // end if
+
+    g.wait();
+
+    m -= half_m;
+  } // end while
+
+  g.wait();
+
+  T result = (n > 0) ? binary_op(init,s_sums[0]) : init;
+
+  g.wait();
+
+  return result;
 }
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename Op>
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-typename thrust::iterator_value<RandomAccessIterator>::type
-  my_reduce(bulk::static_thread_group<groupsize,grainsize> &this_group,
+T my_reduce(bulk::static_thread_group<groupsize,grainsize> &g,
             RandomAccessIterator first,
             RandomAccessIterator last,
-            Op op)
+            T init,
+            BinaryFunction binary_op)
 {
-  typedef typename buffer<
-    groupsize,
-    grainsize,
-    RandomAccessIterator,
-    Op
-  >::type buffer_type;
+  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
+
+  typedef int size_type;
+
+  const size_type elements_per_group = groupsize * grainsize;
+
+  size_type tid = g.this_thread.index();
+
+  value_type this_sum;
+
+  bool this_sum_defined = false;
+
+  typename thrust::iterator_difference<RandomAccessIterator>::type n = last - first;
+
+  T *buffer = reinterpret_cast<value_type*>(bulk::malloc(g, groupsize * sizeof(T)));
   
-  buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(this_group, sizeof(buffer_type)));
+  for(; first < last; first += elements_per_group)
+  {
+    size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
+    
+    // load input into register
+    value_type inputs[grainsize];
 
-  typename thrust::iterator_value<RandomAccessIterator>::type total
-    = my_reduce_with_buffer(this_group, first, last, op, buffer);
+    if(partition_size >= elements_per_group)
+    {
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        inputs[i] = first[groupsize * i + tid];
+      } // end for
+    } // end if
+    else
+    {
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        size_type index = groupsize * i + tid;
+        if(index < partition_size)
+        {
+          inputs[i] = first[index];
+        } // end if
+      } // end for
+    } // end else
+    
+    // sum sequentially
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type index = groupsize * i + g.this_thread.index();
+      if(index < partition_size)
+      {
+        value_type x = inputs[i];
+        this_sum = (i || this_sum_defined) ? binary_op(this_sum, x) : x;
+      } // end if
+    } // end for
 
-  bulk::free(this_group,buffer);
+    this_sum_defined = true;
+  } // end for
 
-  return total;
-}
+  if(this_sum_defined)
+  {
+    buffer[tid] = this_sum;
+  } // end if
+
+  g.wait();
+
+  // reduce across the block
+  T result = destructive_reduce_n(g, buffer, thrust::min<size_type>(groupsize,n), init, binary_op);
+
+  bulk::free(g,buffer);
+
+  g.wait();
+
+  return result;
+} // end my_reduce
+
+
+
 
 
 template<std::size_t groupsize, std::size_t grainsize>
 struct reduce_tiles
 {
-  template<typename InputIterator, typename Op>
+  template<typename InputIterator, typename BinaryFunction>
   __device__ void operator()(bulk::static_thread_group<groupsize,grainsize> &this_group,
                              InputIterator data_global,
                              int count,
                              int2 task,
-                             typename Op::value_type *reduction_global,
-                             Op op)
+                             typename thrust::iterator_value<InputIterator>::type *reduction_global,
+                             BinaryFunction binary_op)
   {
-    typedef typename Op::value_type value_type;
+    typedef typename thrust::iterator_value<InputIterator>::type value_type;
     
     int2 range = mgpu::ComputeTaskRange(this_group.index(), task, groupsize * grainsize, count);
 
-    value_type total = my_reduce(this_group, data_global + range.x, data_global + range.y, op);
+    // it's much faster to pass the last value as the init for some reason
+    value_type total = my_reduce(this_group, data_global + range.x, data_global + range.y - 1, data_global[range.y-1], binary_op);
 
     if(this_group.this_thread.index() == 0)
     {
       reduction_global[this_group.index()] = total;
-    }
-  }
-};
+    } // end if
+  } // end operator()
+}; // end reduce_tiles
 
 
 template<typename InputIt, typename OutputIt, typename Op>
@@ -239,7 +243,7 @@ void IncScan(InputIt data_global, int count, OutputIt dest_global, Op op, mgpu::
     	
     // N loads
     bulk::static_thread_group<groupsize1,grainsize1> reduce_group;
-    bulk::async(bulk::par(reduce_group,numBlocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), op);
+    bulk::async(bulk::par(reduce_group,numBlocks), reduce_tiles<groupsize1,grainsize1>(), bulk::there, data_global, count, task, reductionDevice->get(), thrust::plus<int>());
     
     // scan the sums to get the carries
     const unsigned int groupsize2 = 256;
