@@ -69,18 +69,18 @@ struct reduce_tiles
 {
   template<typename InputIterator, typename BinaryFunction>
   __device__ void operator()(bulk::static_thread_group<groupsize,grainsize> &this_group,
-                             InputIterator data_global,
-                             int count,
+                             InputIterator first,
+                             int n,
                              int2 task,
                              typename thrust::iterator_value<InputIterator>::type *reduction_global,
                              BinaryFunction binary_op)
   {
     typedef typename thrust::iterator_value<InputIterator>::type value_type;
     
-    int2 range = mgpu::ComputeTaskRange(this_group.index(), task, groupsize * grainsize, count);
+    int2 range = mgpu::ComputeTaskRange(this_group.index(), task, groupsize * grainsize, n);
 
     // it's much faster to pass the last value as the init for some reason
-    value_type total = bulk::reduce(this_group, data_global + range.x, data_global + range.y - 1, data_global[range.y-1], binary_op);
+    value_type total = bulk::reduce(this_group, first + range.x, first + range.y - 1, first[range.y-1], binary_op);
 
     if(this_group.this_thread.index() == 0)
     {
