@@ -40,7 +40,7 @@ template<std::size_t size,
 __forceinline__ __device__
 RandomAccessIterator2 simple_copy_n(bulk::static_thread_group<size,grainsize> &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
 {
-  RandomAccessIterator2 return_me = first + n;
+  RandomAccessIterator2 return_me = result + n;
 
   typedef typename bulk::static_thread_group<size,grainsize>::size_type size_type;
   size_type chunk_size = size * grainsize;
