@@ -124,13 +124,19 @@ struct reduce_tiles
 }; // end reduce_tiles
 
 
-template<typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, Size n, RandomAccessIterator2 result, T init, BinaryFunction binary_op, mgpu::CudaContext& context)
+template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
+RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIterator1 last, RandomAccessIterator2 result, T init, BinaryFunction binary_op)
 {
+  mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
+
   // XXX TODO pass explicit heap sizes
 
   // XXX TODO infer intermediate type from iterators and BinaryFunction
   typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
+
+  typedef typename thrust::iterator_difference<RandomAccessIterator1>::type Size;
+
+  Size n = last - first;
   
   const Size threshold_of_parallelism = 20000;
 
@@ -151,12 +157,13 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, Size n, Random
     const Size partition_size = groupsize1 * grainsize1;
     
     Size num_partitions = (n + partition_size - 1) / partition_size;
-    Size num_groups = thrust::min<Size>(context.NumSMs() * 25, num_partitions);
+    Size num_groups = thrust::min<Size>(ctx->NumSMs() * 25, num_partitions);
 
     // each group consumes one tile of data
     Size num_partitions_per_tile = num_partitions / num_groups;
     Size last_partial_partition_size = num_partitions % num_groups;
     
+    // XXX use temporary_array
     thrust::device_vector<intermediate_type> carries(num_groups);
     	
     // n loads + num_groups stores
@@ -180,28 +187,12 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, Size n, Random
 }
 
 
-template<typename InputIterator, typename T, typename OutputIterator>
-OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, T init, OutputIterator result)
-{
-  mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
-
-  ::inclusive_scan(first,
-                   last - first,
-                   result,
-                   init,
-                   thrust::plus<typename thrust::iterator_value<InputIterator>::type>(),
-                   *ctx);
-
-  return result + (last - first);
-}
-
-
 typedef int T;
 
 
 void my_scan(thrust::device_vector<T> *data, T init)
 {
-  my_inclusive_scan(data->begin(), data->end(), init, data->begin());
+  ::inclusive_scan(data->begin(), data->end(), data->begin(), init, thrust::plus<int>());
 }
 
 
@@ -220,7 +211,7 @@ void do_it(size_t n)
   thrust::device_vector<T> d_input = h_input;
   thrust::device_vector<T> d_result(d_input.size());
 
-  my_inclusive_scan(d_input.begin(), d_input.end(), init, d_result.begin());
+  ::inclusive_scan(d_input.begin(), d_input.end(), d_result.begin(), init, thrust::plus<int>());
 
   cudaError_t error = cudaDeviceSynchronize();
 
