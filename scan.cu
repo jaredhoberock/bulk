@@ -147,7 +147,7 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, Size n, Random
 
     const Size partition_size = groupsize1 * grainsize1;
     
-    Size num_partitions = MGPU_DIV_UP(n, partition_size);
+    Size num_partitions = (n + partition_size - 1) / partition_size;
     Size num_groups = thrust::min<Size>(context.NumSMs() * 25, num_partitions);
 
     // each group consumes one tile of data
