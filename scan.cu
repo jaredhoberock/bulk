@@ -89,7 +89,9 @@ struct inclusive_downsweep
     first += range.first;
     result += range.first;
   
-    bulk::inclusive_scan(this_group, first, last, result, carries_first[this_group.index()], binary_op);
+    typename thrust::iterator_value<RandomAccessIterator2>::type carry = carries_first[this_group.index()];
+
+    bulk::inclusive_scan(this_group, first, last, result, carry, binary_op);
   }
 };
 
@@ -97,25 +99,26 @@ struct inclusive_downsweep
 template<std::size_t groupsize, std::size_t grainsize>
 struct reduce_tiles
 {
-  template<typename InputIterator, typename Size, typename BinaryFunction>
+  template<typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename BinaryFunction>
   __device__ void operator()(bulk::static_thread_group<groupsize,grainsize> &this_group,
-                             InputIterator first,
+                             RandomAccessIterator1 first,
                              Size n,
                              Size partition_size,
                              Size last_partial_partition_size,
-                             typename thrust::iterator_value<InputIterator>::type *reduction_global,
+                             RandomAccessIterator2 result,
                              BinaryFunction binary_op)
   {
-    typedef typename thrust::iterator_value<InputIterator>::type value_type;
+    typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
     
     thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), partition_size, last_partial_partition_size, groupsize * grainsize, n);
 
     // it's much faster to pass the last value as the init for some reason
-    value_type total = bulk::reduce(this_group, first + range.first, first + range.second - 1, first[range.second-1], binary_op);
+    value_type init = first[range.second-1];
+    value_type total = bulk::reduce(this_group, first + range.first, first + range.second - 1, init, binary_op);
 
     if(this_group.this_thread.index() == 0)
     {
-      reduction_global[this_group.index()] = total;
+      result[this_group.index()] = total;
     } // end if
   } // end operator()
 }; // end reduce_tiles
@@ -154,12 +157,12 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, Size n, Random
     Size num_partitions_per_tile = num_partitions / num_groups;
     Size last_partial_partition_size = num_partitions % num_groups;
     
-    MGPU_MEM(intermediate_type) reductionDevice = context.Malloc<intermediate_type>(num_groups);
+    thrust::device_vector<intermediate_type> carries(num_groups);
     	
     // n loads + num_groups stores
     // XXX implement noncommutative_reduce_tiles
     bulk::static_thread_group<groupsize1,grainsize1> group1;
-    bulk::async(bulk::par(group1,num_groups), reduce_tiles<groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, reductionDevice->get(), binary_op);
+    bulk::async(bulk::par(group1,num_groups), reduce_tiles<groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), binary_op);
     
     // scan the sums to get the carries
     const int groupsize2 = 256;
@@ -167,10 +170,10 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, Size n, Random
 
     // num_groups loads + num_groups stores
     bulk::static_thread_group<groupsize2,grainsize2> group2;
-    bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, reductionDevice->get(), num_groups, reductionDevice->get(), init, binary_op);
+    bulk::async(bulk::par(group2,1), exclusive_scan_n<groupsize2,grainsize2>(), bulk::there, carries.begin(), num_groups, carries.begin(), init, binary_op);
     
     // do the downsweep - n loads, n stores
-    bulk::async(bulk::par(group1,num_groups), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, reductionDevice->get(), result, binary_op);
+    bulk::async(bulk::par(group1,num_groups), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), result, binary_op);
   }
 
   return result + n;
@@ -182,9 +185,9 @@ OutputIterator my_inclusive_scan(InputIterator first, InputIterator last, T init
 {
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
-  ::inclusive_scan(thrust::raw_pointer_cast(&*first),
+  ::inclusive_scan(first,
                    last - first,
-                   thrust::raw_pointer_cast(&*result),
+                   result,
                    init,
                    thrust::plus<typename thrust::iterator_value<InputIterator>::type>(),
                    *ctx);
