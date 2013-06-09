@@ -2,7 +2,7 @@
 
 #include <thrust/detail/config.h>
 #include <thrust/detail/type_traits.h>
-#include <bulk/thread.hpp>
+#include <bulk/sequential_executor.hpp>
 #include <thrust/execution_policy.h>
 #include <thrust/system/cuda/detail/runtime_introspection.h>
 
@@ -15,12 +15,12 @@ namespace execution_group_detail
 
 // "group" instead of "array"
 // this thing is nothing like std::array or a C array
-template<typename Derived, typename Thread = bulk::thread>
+template<typename Derived, typename Executor = bulk::sequential_executor>
 class execution_group_base
   : public thrust::execution_policy<Derived>
 {
   public:
-    typedef Thread thread_type;
+    typedef Executor executor_type;
 
     typedef unsigned int size_type;
 
@@ -49,7 +49,7 @@ class execution_group_base
       return blockIdx.x;
     }
 
-    thread_type this_thread;
+    executor_type this_thread;
 
     inline static size_type hardware_concurrency()
     {
