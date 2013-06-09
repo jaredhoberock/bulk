@@ -8,7 +8,7 @@
 
 namespace bulk
 {
-namespace thread_group_detail
+namespace execution_group_detail
 {
 
 
@@ -16,7 +16,7 @@ namespace thread_group_detail
 // "group" instead of "array"
 // this thing is nothing like std::array or a C array
 template<typename Derived, typename Thread = bulk::thread>
-class thread_group_base
+class execution_group_base
   : public thrust::execution_policy<Derived>
 {
   public:
@@ -25,7 +25,7 @@ class thread_group_base
     typedef unsigned int size_type;
 
     __host__ __device__
-    thread_group_base()
+    execution_group_base()
       : this_thread()
     {}
 
@@ -71,24 +71,24 @@ class thread_group_base
 };
 
 
-} // end thread_group_detail
+} // end execution_group_detail
 
 
-static const std::size_t default_thread_group_size = 256;
+static const std::size_t default_execution_group_size = 256;
 
-static const std::size_t default_thread_group_grainsize = 1;
+static const std::size_t default_execution_group_grainsize = 1;
 
 
-template<std::size_t size_      = default_thread_group_size,
-         std::size_t grainsize_ = default_thread_group_grainsize>
-class static_thread_group
-  : public thread_group_detail::thread_group_base<
-      static_thread_group<size_,grainsize_>
+template<std::size_t size_      = default_execution_group_size,
+         std::size_t grainsize_ = default_execution_group_grainsize>
+class static_execution_group
+  : public execution_group_detail::execution_group_base<
+      static_execution_group<size_,grainsize_>
     >
 {
   private:
-    typedef thread_group_detail::thread_group_base<
-      static_thread_group<size_,grainsize_>
+    typedef execution_group_detail::execution_group_base<
+      static_execution_group<size_,grainsize_>
     > super_t;
 
   public:
@@ -115,20 +115,20 @@ class static_thread_group
 
 
 
-class thread_group
-  : public thread_group_detail::thread_group_base<thread_group>
+class execution_group
+  : public execution_group_detail::execution_group_base<execution_group>
 {
   private:
-    typedef thread_group_detail::thread_group_base<thread_group> super_t;
+    typedef execution_group_detail::execution_group_base<execution_group> super_t;
 
   public:
     typedef typename super_t::size_type size_type;
 
     __device__
-    thread_group()
+    execution_group()
     {}
 
-    explicit thread_group(size_type size)
+    explicit execution_group(size_type size)
       : m_size(size)
     {}
 
@@ -154,47 +154,47 @@ class thread_group
 
 
 template<typename T>
-struct is_thread_group : thrust::detail::false_type {};
+struct is_execution_group : thrust::detail::false_type {};
 
 
 template<std::size_t size, std::size_t grainsize>
-struct is_thread_group<static_thread_group<size,grainsize> > : thrust::detail::true_type {};
+struct is_execution_group<static_execution_group<size,grainsize> > : thrust::detail::true_type {};
 
 
 template<>
-struct is_thread_group<thread_group> : thrust::detail::true_type {};
+struct is_execution_group<execution_group> : thrust::detail::true_type {};
 
 
 template<typename T>
-struct is_static_thread_group : thrust::detail::false_type {};
+struct is_static_execution_group : thrust::detail::false_type {};
 
 
 template<std::size_t size, std::size_t grainsize>
-struct is_static_thread_group<static_thread_group<size,grainsize> > : thrust::detail::true_type {};
+struct is_static_execution_group<static_execution_group<size,grainsize> > : thrust::detail::true_type {};
 
 
 template<typename T, typename U = void>
-struct enable_if_thread_group
+struct enable_if_execution_group
   : thrust::detail::enable_if<
-      is_thread_group<T>::value,
+      is_execution_group<T>::value,
       U
     >
 {};
 
 
 template<typename T, typename U = void>
-struct enable_if_static_thread_group
+struct enable_if_static_execution_group
   : thrust::detail::enable_if<
-      is_static_thread_group<T>::value,
+      is_static_execution_group<T>::value,
       U
     >
 {};
 
 
 template<typename T, typename U = void>
-struct disable_if_static_thread_group
+struct disable_if_static_execution_group
   : thrust::detail::disable_if<
-      is_static_thread_group<T>::value,
+      is_static_execution_group<T>::value,
       U
     >
 {};

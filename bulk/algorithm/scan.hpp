@@ -1,6 +1,6 @@
 #pragma once
 
-#include <bulk/thread_group.hpp>
+#include <bulk/execution_group.hpp>
 #include <bulk/malloc.hpp>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
@@ -50,10 +50,10 @@ void copy_n_with_grainsize(Iterator1 first, difference_type n, Iterator2 result)
 }
 
 
-template<typename ThreadGroup, typename Iterator, typename difference_type, typename BinaryFunction>
-__device__ void small_inclusive_scan_n(ThreadGroup &g, Iterator first, difference_type n, BinaryFunction binary_op)
+template<typename ExecutionGroup, typename Iterator, typename difference_type, typename BinaryFunction>
+__device__ void small_inclusive_scan_n(ExecutionGroup &g, Iterator first, difference_type n, BinaryFunction binary_op)
 {
-  typedef typename ThreadGroup::size_type size_type;
+  typedef typename ExecutionGroup::size_type size_type;
 
   typename thrust::iterator_value<Iterator>::type x;
 
@@ -85,10 +85,10 @@ __device__ void small_inclusive_scan_n(ThreadGroup &g, Iterator first, differenc
 }
 
 
-template<typename ThreadGroup, typename Iterator, typename difference_type, typename T, typename BinaryFunction>
-__device__ T small_exclusive_scan_n(ThreadGroup &g, Iterator first, difference_type n, T init, BinaryFunction binary_op)
+template<typename ExecutionGroup, typename Iterator, typename difference_type, typename T, typename BinaryFunction>
+__device__ T small_exclusive_scan_n(ExecutionGroup &g, Iterator first, difference_type n, T init, BinaryFunction binary_op)
 {
-  typedef typename ThreadGroup::size_type size_type;
+  typedef typename ExecutionGroup::size_type size_type;
 
   T x;
 
@@ -127,12 +127,12 @@ __device__ T small_exclusive_scan_n(ThreadGroup &g, Iterator first, difference_t
 }
 
 
-template<unsigned int size, typename ThreadGroup, typename T, typename BinaryFunction>
-__device__ T small_inplace_exclusive_scan_with_buffer(ThreadGroup &g, T *first, T init, T *buffer, BinaryFunction binary_op)
+template<unsigned int size, typename ExecutionGroup, typename T, typename BinaryFunction>
+__device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *first, T init, T *buffer, BinaryFunction binary_op)
 {
-  // XXX int is noticeably faster than ThreadGroup::size_type
+  // XXX int is noticeably faster than ExecutionGroup::size_type
   typedef int size_type;
-  //typedef typename ThreadGroup::size_type size_type;
+  //typedef typename ExecutionGroup::size_type size_type;
 
   // ping points to the most current data
   T *ping = first;
@@ -179,7 +179,7 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ThreadGroup &g, T *first, 
 
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-__device__ void inclusive_scan_with_buffer(bulk::static_thread_group<groupsize,grainsize> &g,
+__device__ void inclusive_scan_with_buffer(bulk::static_execution_group<groupsize,grainsize> &g,
                                            RandomAccessIterator1 first, RandomAccessIterator1 last,
                                            RandomAccessIterator2 result,
                                            T carry_in,
@@ -202,8 +202,8 @@ __device__ void inclusive_scan_with_buffer(bulk::static_thread_group<groupsize,g
 
   shared.inputs = reinterpret_cast<intermediate_type*>(reinterpret_cast<char*>(buffer) + 2*groupsize*sizeof(intermediate_type));
 
-  // XXX int is noticeably faster than ThreadGroup::size_type
-  //typedef typename bulk::static_thread_group<groupsize,grainsize>::size_type size_type;
+  // XXX int is noticeably faster than ExecutionGroup::size_type
+  //typedef typename bulk::static_execution_group<groupsize,grainsize>::size_type size_type;
   typedef int size_type;
 
   size_type tid = g.this_thread.index();
@@ -276,7 +276,7 @@ __device__ void inclusive_scan_with_buffer(bulk::static_thread_group<groupsize,g
 
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-__device__ void exclusive_scan_with_buffer(bulk::static_thread_group<groupsize,grainsize> &g,
+__device__ void exclusive_scan_with_buffer(bulk::static_execution_group<groupsize,grainsize> &g,
                                            RandomAccessIterator1 first, RandomAccessIterator1 last,
                                            RandomAccessIterator2 result,
                                            T carry_in,
@@ -299,8 +299,8 @@ __device__ void exclusive_scan_with_buffer(bulk::static_thread_group<groupsize,g
 
   shared.inputs = reinterpret_cast<intermediate_type*>(reinterpret_cast<char*>(buffer) + 2*groupsize*sizeof(intermediate_type));
 
-  // XXX int is noticeably faster than ThreadGroup::size_type
-  //typedef typename bulk::static_thread_group<groupsize,grainsize>::size_type size_type;
+  // XXX int is noticeably faster than ExecutionGroup::size_type
+  //typedef typename bulk::static_execution_group<groupsize,grainsize>::size_type size_type;
   typedef int size_type;
 
   size_type tid = g.this_thread.index();
@@ -381,7 +381,7 @@ template<std::size_t groupsize,
          typename RandomAccessIterator2,
          typename T,
          typename BinaryFunction>
-__device__ void inclusive_scan(bulk::static_thread_group<groupsize,grainsize> &g,
+__device__ void inclusive_scan(bulk::static_execution_group<groupsize,grainsize> &g,
                                RandomAccessIterator1 first, RandomAccessIterator1 last,
                                RandomAccessIterator2 result,
                                T init,
@@ -419,7 +419,7 @@ template<std::size_t size,
          typename RandomAccessIterator2,
          typename BinaryFunction>
 __device__
-RandomAccessIterator2 inclusive_scan(static_thread_group<size,grainsize> &this_group,
+RandomAccessIterator2 inclusive_scan(static_execution_group<size,grainsize> &this_group,
                                      RandomAccessIterator1 first,
                                      RandomAccessIterator1 last,
                                      RandomAccessIterator2 result,
@@ -448,7 +448,7 @@ template<std::size_t groupsize,
          typename RandomAccessIterator2,
          typename T,
          typename BinaryFunction>
-__device__ void exclusive_scan(bulk::static_thread_group<groupsize,grainsize> &g,
+__device__ void exclusive_scan(bulk::static_execution_group<groupsize,grainsize> &g,
                                RandomAccessIterator1 first, RandomAccessIterator1 last,
                                RandomAccessIterator2 result,
                                T init,

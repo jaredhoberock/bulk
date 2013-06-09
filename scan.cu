@@ -15,7 +15,7 @@
 struct inclusive_scan_n
 {
   template<std::size_t size, std::size_t grainsize, typename InputIterator, typename Size, typename OutputIterator, typename T, typename BinaryFunction>
-  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
+  __device__ void operator()(bulk::static_execution_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
   {
     bulk::inclusive_scan(this_group, first, first + n, result, init, binary_op);
   }
@@ -24,7 +24,7 @@ struct inclusive_scan_n
 struct exclusive_scan_n
 {
   template<std::size_t size, std::size_t grainsize, typename InputIterator, typename Size, typename OutputIterator, typename T, typename BinaryFunction>
-  __device__ void operator()(bulk::static_thread_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
+  __device__ void operator()(bulk::static_execution_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
   {
     bulk::exclusive_scan(this_group, first, first + n, result, init, binary_op);
   }
@@ -68,7 +68,7 @@ thrust::pair<Size,Size> tile_range(Size tile_index,
 struct inclusive_downsweep
 {
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename RandomAccessIterator3, typename BinaryFunction>
-  __device__ void operator()(bulk::static_thread_group<groupsize,grainsize> &this_group,
+  __device__ void operator()(bulk::static_execution_group<groupsize,grainsize> &this_group,
                              RandomAccessIterator1 first,
                              Size n,
                              Size num_partitions_per_tile,
@@ -96,7 +96,7 @@ template<bool commutative>
 struct reduce_tiles
 {
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename BinaryFunction>
-  __device__ void operator()(bulk::static_thread_group<groupsize,grainsize> &this_group,
+  __device__ void operator()(bulk::static_execution_group<groupsize,grainsize> &this_group,
                              RandomAccessIterator1 first,
                              Size n,
                              Size partition_size,
@@ -142,13 +142,13 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
 
   if(n < threshold_of_parallelism)
   {
-    bulk::static_thread_group<512,3> group;
+    bulk::static_execution_group<512,3> group;
     bulk::async(bulk::par(group, 1), inclusive_scan_n(), bulk::there, first, n, result, init, binary_op);
   } // end if
   else
   {
     // Run the parallel raking reduce as an upsweep.
-    bulk::static_thread_group<128,7> group1;
+    bulk::static_execution_group<128,7> group1;
 
     const Size partition_size = group1.size() * group1.grainsize();
     
@@ -168,7 +168,7 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     
     // scan the sums to get the carries
     // num_groups loads + num_groups stores
-    bulk::static_thread_group<256,3> group2;
+    bulk::static_execution_group<256,3> group2;
     bulk::async(bulk::par(group2,1), exclusive_scan_n(), bulk::there, carries.begin(), num_groups, carries.begin(), init, binary_op);
     
     // do the downsweep - n loads, n stores

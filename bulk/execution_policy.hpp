@@ -1,29 +1,29 @@
 #pragma once
 
-#include <bulk/thread_group.hpp>
+#include <bulk/execution_group.hpp>
 
 namespace bulk
 {
 
 
-inline thread_group con(size_t num_threads)
+inline execution_group con(size_t num_threads)
 {
-  return thread_group(num_threads);
+  return execution_group(num_threads);
 }
 
 
-template<typename ThreadGroup>
+template<typename ExecutionGroup>
 class group_launch_config
 {
   public:
     static const size_t use_default = UINT_MAX;
 
 
-    typedef ThreadGroup thread_group_type;
+    typedef ExecutionGroup execution_group_type;
 
 
     group_launch_config(cudaStream_t stream,
-                        thread_group_type group,
+                        execution_group_type group,
                         size_t num_groups,
                         size_t num_smem_bytes_per_group = use_default)
       : m_stream(stream),
@@ -46,16 +46,16 @@ class group_launch_config
 
     template<typename Function>
     void configure(Function f,
-                   typename enable_if_static_thread_group<
-                     ThreadGroup,
+                   typename enable_if_static_execution_group<
+                     ExecutionGroup,
                      Function
                    >::type * = 0);
 
 
     template<typename Function>
     void configure(Function f,
-                   typename disable_if_static_thread_group<
-                     ThreadGroup,
+                   typename disable_if_static_execution_group<
+                     ExecutionGroup,
                      Function
                    >::type * = 0);
 
@@ -92,33 +92,33 @@ class group_launch_config
 
   private:
     cudaStream_t m_stream;
-    thread_group_type m_example_group;
+    execution_group_type m_example_group;
     size_t m_num_groups;
     size_t m_num_smem_bytes_per_group;
     size_t m_num_threads;
 };
 
 
-typedef group_launch_config<thread_group> launch_config;
+typedef group_launch_config<execution_group> launch_config;
 
 
-template<typename ThreadGroup>
-  typename enable_if_thread_group<
-    ThreadGroup,
-    group_launch_config<ThreadGroup>
+template<typename ExecutionGroup>
+  typename enable_if_execution_group<
+    ExecutionGroup,
+    group_launch_config<ExecutionGroup>
   >::type
-    par_async(cudaStream_t s, ThreadGroup g, size_t num_groups, size_t num_smem_bytes_per_group = launch_config::use_default)
+    par_async(cudaStream_t s, ExecutionGroup g, size_t num_groups, size_t num_smem_bytes_per_group = launch_config::use_default)
 {
-  return group_launch_config<ThreadGroup>(s, g, num_groups, num_smem_bytes_per_group);
+  return group_launch_config<ExecutionGroup>(s, g, num_groups, num_smem_bytes_per_group);
 }
 
 
-template<typename ThreadGroup>
-  typename enable_if_thread_group<
-    ThreadGroup,
-    group_launch_config<ThreadGroup>
+template<typename ExecutionGroup>
+  typename enable_if_execution_group<
+    ExecutionGroup,
+    group_launch_config<ExecutionGroup>
   >::type
-    par(ThreadGroup g, size_t num_groups, size_t num_smem_bytes_per_group = launch_config::use_default)
+    par(ExecutionGroup g, size_t num_groups, size_t num_smem_bytes_per_group = launch_config::use_default)
 {
   return par_async(0, g, num_groups, num_smem_bytes_per_group);
 }

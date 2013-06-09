@@ -101,7 +101,7 @@ struct launcher
 
 
 template<typename ThreadGroup, typename Function>
-typename disable_if_static_thread_group<
+typename disable_if_static_execution_group<
   ThreadGroup,
   size_t
 >::type
@@ -153,7 +153,7 @@ template<typename ThreadGroup>
   template<typename Function>
     void group_launch_config<ThreadGroup>
       ::configure(Function f,
-                  typename disable_if_static_thread_group<
+                  typename disable_if_static_execution_group<
                     ThreadGroup,
                     Function
                   >::type *)
@@ -179,7 +179,7 @@ template<typename ThreadGroup>
   template<typename Function>
     void group_launch_config<ThreadGroup>
       ::configure(Function f,
-                  typename enable_if_static_thread_group<
+                  typename enable_if_static_execution_group<
                     ThreadGroup,
                     Function
                   >::type *)
@@ -198,7 +198,7 @@ namespace detail
 template<typename LaunchConfig, typename Closure>
 future<void> async(LaunchConfig l, Closure c)
 {
-  detail::launcher<typename LaunchConfig::thread_group_type, Closure> launcher;
+  detail::launcher<typename LaunchConfig::execution_group_type, Closure> launcher;
   return launcher.go(l, c);
 } // end async()
 

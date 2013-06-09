@@ -2,7 +2,7 @@
 
 #include <bulk/malloc.hpp>
 #include <thrust/detail/type_traits.h>
-#include <bulk/thread_group.hpp>
+#include <bulk/execution_group.hpp>
 #include <bulk/detail/tuple_transform.hpp>
 
 
@@ -12,7 +12,7 @@ namespace detail
 {
 
 
-template<typename ThreadGroup, typename Closure>
+template<typename ExecutionGroup, typename Closure>
 class group_task
 {
   public:
@@ -34,8 +34,8 @@ class group_task
       __syncthreads();
 #endif
 
-      // instantiate a view of this thread group
-      ThreadGroup this_group;
+      // instantiate a view of this exec group
+      ExecutionGroup this_group;
 
       // substitute placeholders with this_group
       substituted_arguments_type new_args = substitute_placeholders(this_group, c.arguments());
@@ -52,7 +52,7 @@ class group_task
     struct substitutor_result
       : thrust::detail::eval_if<
           thrust::detail::is_same<T, placeholder>::value,
-          thrust::detail::identity_<ThreadGroup &>,
+          thrust::detail::identity_<ExecutionGroup &>,
           thrust::detail::identity_<T>
         >
     {};
@@ -64,15 +64,15 @@ class group_task
 
     struct substitutor
     {
-      ThreadGroup &g;
+      ExecutionGroup &g;
 
       __device__
-      substitutor(ThreadGroup &g)
+      substitutor(ExecutionGroup &g)
         : g(g)
       {}
 
       __device__
-      ThreadGroup &operator()(placeholder) const
+      ExecutionGroup &operator()(placeholder) const
       {
         return g;
       }
@@ -86,7 +86,7 @@ class group_task
     };
 
     __host__ __device__
-    static substituted_arguments_type substitute_placeholders(ThreadGroup &g, typename Closure::arguments_type args)
+    static substituted_arguments_type substitute_placeholders(ExecutionGroup &g, typename Closure::arguments_type args)
     {
       return bulk::detail::tuple_host_device_transform<substitutor_result>(args, substitutor(g));
     }

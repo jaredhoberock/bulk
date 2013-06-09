@@ -13,8 +13,8 @@ namespace reduce_detail
 {
 
 
-template<typename ThreadGroup, typename RandomAccessIterator, typename Size, typename T, typename BinaryFunction>
-__device__ T destructive_reduce_n(ThreadGroup &g, RandomAccessIterator s_sums, Size n, T init, BinaryFunction binary_op)
+template<typename ExecutionGroup, typename RandomAccessIterator, typename Size, typename T, typename BinaryFunction>
+__device__ T destructive_reduce_n(ExecutionGroup &g, RandomAccessIterator s_sums, Size n, T init, BinaryFunction binary_op)
 {
   typedef int size_type;
 
@@ -54,7 +54,7 @@ __device__ T destructive_reduce_n(ThreadGroup &g, RandomAccessIterator s_sums, S
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-T reduce(bulk::static_thread_group<groupsize,grainsize> &g,
+T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
          RandomAccessIterator first,
          RandomAccessIterator last,
          T init,
@@ -136,7 +136,7 @@ T reduce(bulk::static_thread_group<groupsize,grainsize> &g,
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-T noncommutative_reduce(bulk::static_thread_group<groupsize,grainsize> &g,
+T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
                         RandomAccessIterator first,
                         RandomAccessIterator last,
                         T init,

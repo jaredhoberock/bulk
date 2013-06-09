@@ -8,9 +8,9 @@
 
 struct reduce_partitions
 {
-  template<typename ThreadGroup, typename Iterator1, typename Size, typename Iterator2>
+  template<typename ExecutionGroup, typename Iterator1, typename Size, typename Iterator2>
   __device__
-  void operator()(ThreadGroup &this_group, Iterator1 first, Iterator1 last, Size partition_size, Iterator2 result)
+  void operator()(ExecutionGroup &this_group, Iterator1 first, Iterator1 last, Size partition_size, Iterator2 result)
   {
     typedef typename thrust::iterator_value<Iterator1>::type value_type;
 
@@ -55,7 +55,7 @@ T my_reduce(Iterator first, Iterator last, T init, BinaryOperation binary_op)
 
   thrust::device_vector<T> partial_sums(num_partial_sums);
 
-  bulk::static_thread_group<group_size> g;
+  bulk::static_execution_group<group_size> g;
 
   bulk::async(bulk::par(g, partial_sums.size()), reduce_partitions(), bulk::there, first, last, partition_size, partial_sums.begin());
 
