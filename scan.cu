@@ -131,8 +131,6 @@ struct reduce_tiles
 template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
 RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIterator1 last, RandomAccessIterator2 result, T init, BinaryFunction binary_op)
 {
-  mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
-
   // XXX TODO pass explicit heap sizes
 
   typedef typename bulk::detail::scan_detail::scan_intermediate<
@@ -160,11 +158,12 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     // Run the parallel raking reduce as an upsweep.
     const int groupsize1 = 128;
     const int grainsize1 = 7;
+    bulk::static_thread_group<groupsize1,grainsize1> group1;
 
     const Size partition_size = groupsize1 * grainsize1;
     
     Size num_partitions = (n + partition_size - 1) / partition_size;
-    Size num_groups = thrust::min<Size>(ctx->NumSMs() * 25, num_partitions);
+    Size num_groups = thrust::min<Size>(group1.hardware_concurrency() * 25, num_partitions);
 
     // each group consumes one tile of data
     Size num_partitions_per_tile = num_partitions / num_groups;
@@ -175,7 +174,6 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     	
     // n loads + num_groups stores
     const bool commutative = thrust::detail::is_commutative<BinaryFunction>::value;
-    bulk::static_thread_group<groupsize1,grainsize1> group1;
     bulk::async(bulk::par(group1,num_groups), reduce_tiles<commutative,groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), binary_op);
     
     // scan the sums to get the carries
