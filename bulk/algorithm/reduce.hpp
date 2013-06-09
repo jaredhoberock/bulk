@@ -2,6 +2,7 @@
 
 #include <thrust/iterator/iterator_traits.h>
 #include <thrust/detail/minmax.h>
+#include <bulk/algorithm/copy.hpp>
 #include <bulk/malloc.hpp>
 
 namespace bulk
@@ -131,6 +132,73 @@ T reduce(bulk::static_thread_group<groupsize,grainsize> &g,
 
   return result;
 } // end reduce
+
+
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
+__device__
+T noncommutative_reduce(bulk::static_thread_group<groupsize,grainsize> &g,
+                        RandomAccessIterator first,
+                        RandomAccessIterator last,
+                        T init,
+                        BinaryFunction binary_op)
+{
+  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
+
+  typedef int size_type;
+
+  const size_type elements_per_group = groupsize * grainsize;
+
+  size_type tid = g.this_thread.index();
+
+  T sum = init;
+
+  typename thrust::iterator_difference<RandomAccessIterator>::type n = last - first;
+
+  union buffer_type
+  {
+    value_type inputs[elements_per_group];
+    T sums[groupsize];
+  } *buffer;
+
+  buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
+  
+  for(; first < last; first += elements_per_group)
+  {
+    size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
+    
+    // copy partition into smem
+    bulk::copy_n(g, first, partition_size, buffer->inputs);
+    
+    T this_sum;
+    size_type local_offset = grainsize * g.this_thread.index();
+
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type index = local_offset + i;
+      if(index < partition_size)
+      {
+        T x = buffer->inputs[index];
+        this_sum = i ? binary_op(this_sum, x) : x;
+      } // end if
+    } // end for
+
+    g.wait();
+
+    if(local_offset < partition_size)
+    {
+      buffer->sums[tid] = this_sum;
+    } // end if
+
+    g.wait();
+    
+    // sum over the group
+    sum = detail::reduce_detail::destructive_reduce_n(g, buffer->sums, thrust::min<size_type>(groupsize,n), sum, binary_op);
+  } // end for
+
+  bulk::free(g, buffer);
+
+  return sum;
+} // end noncommutative_reduce
 
 
 } // end bulk
