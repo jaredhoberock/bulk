@@ -4,6 +4,7 @@
 #include <thrust/detail/type_traits.h>
 #include <bulk/thread.hpp>
 #include <thrust/execution_policy.h>
+#include <thrust/system/cuda/detail/runtime_introspection.h>
 
 namespace bulk
 {
@@ -49,6 +50,11 @@ class thread_group_base
     }
 
     thread_type this_thread;
+
+    inline static size_type hardware_concurrency()
+    {
+      return static_cast<size_type>(thrust::system::cuda::detail::device_properties().multiProcessorCount);
+    } // end hardware_concurrency()
 
   private:
     __host__ __device__
