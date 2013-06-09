@@ -106,7 +106,7 @@ class static_thread_group
 
     // "grainsize" inspired by TBB
     // this is the size of the quantum of sequential work
-    __device__
+    __host__ __device__
     size_type grainsize() const
     {
       return static_grainsize;
