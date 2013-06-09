@@ -167,8 +167,8 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     Size num_partitions_per_tile = num_partitions / num_groups;
     Size last_partial_partition_size = num_partitions % num_groups;
     
-    // XXX use temporary_array
-    thrust::device_vector<intermediate_type> carries(num_groups);
+    thrust::cuda::tag t;
+    thrust::detail::temporary_array<intermediate_type,thrust::cuda::tag> carries(t, num_groups);
     	
     // n loads + num_groups stores
     const bool commutative = thrust::detail::is_commutative<BinaryFunction>::value;
