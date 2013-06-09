@@ -19,7 +19,7 @@ __forceinline__ __device__
 RandomAccessIterator2 simple_copy_n(ExecutionGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
 {
   #pragma unroll
-  for(Size i = g.this_thread.index();
+  for(Size i = g.this_exec.index();
       i < n;
       i += g.size())
   {
@@ -45,7 +45,7 @@ RandomAccessIterator2 simple_copy_n(bulk::static_execution_group<size,grainsize>
   typedef typename bulk::static_execution_group<size,grainsize>::size_type size_type;
   size_type chunk_size = size * grainsize;
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   // XXX i have a feeling the indexing could be rewritten to require less arithmetic
   for(RandomAccessIterator1 last = first + n;
@@ -102,7 +102,7 @@ void staged_copy_n(static_execution_group<size,grainsize> &g,
   // stage copy through registers
   value_type stage[grainsize];
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   size_type chunk_size = size * grainsize;
 

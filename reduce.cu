@@ -20,7 +20,7 @@ struct reduce_partitions
 
     value_type sum = bulk::reduce(this_group, partition_first, partition_last, value_type(0), thrust::plus<value_type>());
 
-    if(this_group.this_thread.index() == 0)
+    if(this_group.this_exec.index() == 0)
     {
       result[this_group.index()] = sum;
     }

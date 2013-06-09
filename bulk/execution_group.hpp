@@ -26,7 +26,7 @@ class execution_group_base
 
     __host__ __device__
     execution_group_base()
-      : this_thread()
+      : this_exec()
     {}
 
     // "wait" instead of "barrier"
@@ -40,7 +40,7 @@ class execution_group_base
     __device__ 
     size_type global_index() const
     {
-      return derived().index() * derived().size() + this_thread.index();
+      return derived().index() * derived().size() + this_exec.index();
     }
 
     __device__
@@ -49,7 +49,7 @@ class execution_group_base
       return blockIdx.x;
     }
 
-    executor_type this_thread;
+    executor_type this_exec;
 
     inline static size_type hardware_concurrency()
     {

@@ -420,7 +420,7 @@ inline void *malloc(ThreadGroup &g, size_t num_bytes)
 {
   __shared__ void *s_result;
 
-  if(g.this_thread.index() == 0)
+  if(g.this_exec.index() == 0)
   {
     s_result = bulk::shmalloc(num_bytes);
   } // end if
@@ -435,7 +435,7 @@ template<typename ThreadGroup>
 __device__
 inline void free(ThreadGroup &g, void *ptr)
 {
-  if(g.this_thread.index() == 0)
+  if(g.this_exec.index() == 0)
   {
     bulk::shfree(ptr);
   } // end if

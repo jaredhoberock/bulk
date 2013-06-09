@@ -115,7 +115,7 @@ struct reduce_tiles
       bulk::reduce(this_group, first + range.first, first + range.second - 1, init, binary_op) :
       bulk::noncommutative_reduce(this_group, first + range.first, first + range.second - 1, init, binary_op);
 
-    if(this_group.this_thread.index() == 0)
+    if(this_group.this_exec.index() == 0)
     {
       result[this_group.index()] = total;
     } // end if

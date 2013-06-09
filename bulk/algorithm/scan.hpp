@@ -57,7 +57,7 @@ __device__ void small_inclusive_scan_n(ExecutionGroup &g, Iterator first, differ
 
   typename thrust::iterator_value<Iterator>::type x;
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   if(tid < n)
   {
@@ -92,7 +92,7 @@ __device__ T small_exclusive_scan_n(ExecutionGroup &g, Iterator first, differenc
 
   T x;
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   if(n > 0 && tid == 0)
   {
@@ -138,7 +138,7 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *firs
   T *ping = first;
   T *pong = buffer;
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   if(tid == 0)
   {
@@ -206,7 +206,7 @@ __device__ void inclusive_scan_with_buffer(bulk::static_execution_group<groupsiz
   //typedef typename bulk::static_execution_group<groupsize,grainsize>::size_type size_type;
   typedef int size_type;
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   size_type elements_per_group = groupsize * grainsize;
 
@@ -303,7 +303,7 @@ __device__ void exclusive_scan_with_buffer(bulk::static_execution_group<groupsiz
   //typedef typename bulk::static_execution_group<groupsize,grainsize>::size_type size_type;
   typedef int size_type;
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   size_type elements_per_group = groupsize * grainsize;
 
@@ -430,7 +430,7 @@ RandomAccessIterator2 inclusive_scan(static_execution_group<size,grainsize> &thi
     // the first input becomes the init
     typename thrust::iterator_value<RandomAccessIterator1>::type init = *first;
 
-    if(this_group.this_thread.index() == 0)
+    if(this_group.this_exec.index() == 0)
     {
       *result = init;
     } // end if

@@ -18,7 +18,7 @@ __device__ T destructive_reduce_n(ExecutionGroup &g, RandomAccessIterator s_sums
 {
   typedef int size_type;
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   Size m = n;
 
@@ -66,7 +66,7 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 
   const size_type elements_per_group = groupsize * grainsize;
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   value_type this_sum;
 
@@ -105,7 +105,7 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
     // sum sequentially
     for(size_type i = 0; i < grainsize; ++i)
     {
-      size_type index = groupsize * i + g.this_thread.index();
+      size_type index = groupsize * i + g.this_exec.index();
       if(index < partition_size)
       {
         value_type x = inputs[i];
@@ -148,7 +148,7 @@ T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 
   const size_type elements_per_group = groupsize * grainsize;
 
-  size_type tid = g.this_thread.index();
+  size_type tid = g.this_exec.index();
 
   T sum = init;
 
@@ -170,7 +170,7 @@ T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
     bulk::copy_n(g, first, partition_size, buffer->inputs);
     
     T this_sum;
-    size_type local_offset = grainsize * g.this_thread.index();
+    size_type local_offset = grainsize * g.this_exec.index();
 
     for(size_type i = 0; i < grainsize; ++i)
     {
