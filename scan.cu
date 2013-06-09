@@ -135,8 +135,11 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
 
   // XXX TODO pass explicit heap sizes
 
-  // XXX TODO infer intermediate type from iterators and BinaryFunction
-  typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
+  typedef typename bulk::detail::scan_detail::scan_intermediate<
+    RandomAccessIterator1,
+    RandomAccessIterator2,
+    BinaryFunction
+  >::type intermediate_type;
 
   typedef typename thrust::iterator_difference<RandomAccessIterator1>::type Size;
 
@@ -185,10 +188,10 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     
     // do the downsweep - n loads, n stores
     bulk::async(bulk::par(group1,num_groups), inclusive_downsweep<groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), result, binary_op);
-  }
+  } // end else
 
   return result + n;
-}
+} // end inclusive_scan()
 
 
 typedef int T;
