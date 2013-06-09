@@ -83,20 +83,24 @@ template<std::size_t size_      = default_execution_group_size,
          std::size_t grainsize_ = default_execution_group_grainsize>
 class static_execution_group
   : public execution_group_detail::execution_group_base<
-      static_execution_group<size_,grainsize_>
+      static_execution_group<size_,grainsize_>,
+      grain_executor<grainsize_>
     >
 {
   private:
     typedef execution_group_detail::execution_group_base<
-      static_execution_group<size_,grainsize_>
+      static_execution_group<size_,grainsize_>,
+      grain_executor<grainsize_>
     > super_t;
+
+    typedef typename super_t::executor_type executor_type;
 
   public:
     typedef typename super_t::size_type size_type;
 
     static const size_type static_size = size_;
 
-    static const size_type static_grainsize = grainsize_;
+    static const size_type static_grainsize = executor_type::static_grainsize;
 
     __host__ __device__
     size_type size() const
@@ -109,7 +113,7 @@ class static_execution_group
     __host__ __device__
     size_type grainsize() const
     {
-      return static_grainsize;
+      return super_t::this_exec.grainsize();
     }
 };
 
