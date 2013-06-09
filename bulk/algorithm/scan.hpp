@@ -5,6 +5,9 @@
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/execution_policy.h>
+#include <thrust/detail/type_traits.h>
+#include <thrust/detail/type_traits/function_traits.h>
+#include <thrust/detail/type_traits/iterator/is_output_iterator.h>
 
 namespace bulk
 {
@@ -12,6 +15,20 @@ namespace detail
 {
 namespace scan_detail
 {
+
+
+template<typename InputIterator, typename OutputIterator, typename BinaryFunction>
+struct scan_intermediate
+  : thrust::detail::eval_if<
+      thrust::detail::has_result_type<BinaryFunction>::value,
+      thrust::detail::result_type<BinaryFunction>,
+      thrust::detail::eval_if<
+        thrust::detail::is_output_iterator<OutputIterator>::value,
+        thrust::iterator_value<InputIterator>,
+        thrust::iterator_value<OutputIterator>
+      >
+    >
+{};
 
 
 template<unsigned int grainsize, typename Iterator1, typename difference_type, typename Iterator2>
@@ -170,8 +187,11 @@ __device__ void inclusive_scan_with_buffer(bulk::static_thread_group<groupsize,g
                                            void *buffer)
 {
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
-  // XXX this needs to be inferred from the iterators and binary op
-  typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
+  typedef typename scan_intermediate<
+    RandomAccessIterator1,
+    RandomAccessIterator2,
+    BinaryFunction
+  >::type intermediate_type;
 
   intermediate_type *s_sums = reinterpret_cast<intermediate_type*>(buffer);
 
@@ -264,8 +284,11 @@ __device__ void exclusive_scan_with_buffer(bulk::static_thread_group<groupsize,g
                                            void *buffer)
 {
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
-  // XXX this needs to be inferred from the iterators and binary op
-  typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
+  typedef typename scan_intermediate<
+    RandomAccessIterator1,
+    RandomAccessIterator2,
+    BinaryFunction
+  >::type intermediate_type;
 
   intermediate_type *s_sums = reinterpret_cast<intermediate_type*>(buffer);
 
@@ -365,8 +388,12 @@ __device__ void inclusive_scan(bulk::static_thread_group<groupsize,grainsize> &g
                                BinaryFunction binary_op)
 {
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
-  // XXX this needs to be inferred from the iterators and binary op
-  typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
+
+  typedef typename detail::scan_detail::scan_intermediate<
+    RandomAccessIterator1,
+    RandomAccessIterator2,
+    BinaryFunction
+  >::type intermediate_type;
 
   int num_stage_bytes = groupsize * grainsize * thrust::max<int>(sizeof(input_type),sizeof(intermediate_type));
   int num_sums_bytes = 2 * groupsize * sizeof(intermediate_type);
@@ -428,8 +455,12 @@ __device__ void exclusive_scan(bulk::static_thread_group<groupsize,grainsize> &g
                                BinaryFunction binary_op)
 {
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
-  // XXX this needs to be inferred from the iterators and binary op
-  typedef typename thrust::iterator_value<RandomAccessIterator2>::type intermediate_type;
+
+  typedef typename detail::scan_detail::scan_intermediate<
+    RandomAccessIterator1,
+    RandomAccessIterator2,
+    BinaryFunction
+  >::type intermediate_type;
 
   int num_stage_bytes = groupsize * grainsize * thrust::max<int>(sizeof(input_type),sizeof(intermediate_type));
   int num_sums_bytes = 2 * groupsize * sizeof(intermediate_type);
