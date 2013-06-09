@@ -9,7 +9,6 @@
 #include "time_invocation_cuda.hpp"
 #include <thrust/detail/temporary_array.h>
 #include <thrust/detail/type_traits/function_traits.h>
-#include <thrust/copy.h>
 #include <bulk/bulk.hpp>
 
 
