@@ -8,6 +8,7 @@
 #include <iostream>
 #include "time_invocation_cuda.hpp"
 #include <thrust/detail/temporary_array.h>
+#include <thrust/detail/type_traits/function_traits.h>
 #include <thrust/copy.h>
 #include <bulk/bulk.hpp>
 
@@ -96,7 +97,7 @@ struct inclusive_downsweep
 };
 
 
-template<std::size_t groupsize, std::size_t grainsize>
+template<bool commutative, std::size_t groupsize, std::size_t grainsize>
 struct reduce_tiles
 {
   template<typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename BinaryFunction>
@@ -114,7 +115,10 @@ struct reduce_tiles
 
     // it's much faster to pass the last value as the init for some reason
     value_type init = first[range.second-1];
-    value_type total = bulk::reduce(this_group, first + range.first, first + range.second - 1, init, binary_op);
+
+    value_type total = commutative ?
+      bulk::reduce(this_group, first + range.first, first + range.second - 1, init, binary_op) :
+      bulk::noncommutative_reduce(this_group, first + range.first, first + range.second - 1, init, binary_op);
 
     if(this_group.this_thread.index() == 0)
     {
@@ -167,9 +171,9 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     thrust::device_vector<intermediate_type> carries(num_groups);
     	
     // n loads + num_groups stores
-    // XXX implement noncommutative_reduce_tiles
+    const bool commutative = thrust::detail::is_commutative<BinaryFunction>::value;
     bulk::static_thread_group<groupsize1,grainsize1> group1;
-    bulk::async(bulk::par(group1,num_groups), reduce_tiles<groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), binary_op);
+    bulk::async(bulk::par(group1,num_groups), reduce_tiles<commutative,groupsize1,grainsize1>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), binary_op);
     
     // scan the sums to get the carries
     const int groupsize2 = 256;
