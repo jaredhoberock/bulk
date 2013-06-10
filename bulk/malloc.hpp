@@ -118,9 +118,9 @@ class singleton_unsafe_on_chip_allocator
         b->is_free = true;
     
         // try to fuse the freed block the previous block
-        if(b->prev && b->prev->is_free)
+        if(prev(b) && prev(b)->is_free)
         {
-          b = b->prev;
+          b = prev(b);
           fuse_block(b);
         } // end if
     
