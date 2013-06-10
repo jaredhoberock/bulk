@@ -375,7 +375,7 @@ inline __device__ T *on_chip_cast(T *ptr)
 inline __device__ void *on_chip_malloc(size_t size)
 {
   void *result = s_on_chip_allocator.get().allocate(size);
-  return on_chip_malloc(result);
+  return on_chip_cast(result);
 } // end on_chip_malloc()
 
 
