@@ -239,6 +239,12 @@ void sean_scan(thrust::device_vector<T> *data)
 }
 
 
+void thrust_scan(thrust::device_vector<T> *data)
+{
+  thrust::inclusive_scan(data->begin(), data->end(), data->begin());
+}
+
+
 int main()
 {
   for(size_t n = 1; n <= 1 << 20; n <<= 1)
@@ -261,13 +267,18 @@ int main()
   sean_scan(&vec);
   double sean_msecs = time_invocation_cuda(50, sean_scan, &vec);
 
+  thrust_scan(&vec);
+  double thrust_msecs = time_invocation_cuda(50, thrust_scan, &vec);
+
   my_scan(&vec, 13);
   double my_msecs = time_invocation_cuda(50, my_scan, &vec, 13);
 
-  std::cout << "Sean's time: " << sean_msecs << " ms" << std::endl;
-  std::cout << "My time: " << my_msecs << " ms" << std::endl;
+  std::cout << "Sean's time:   " << sean_msecs << " ms" << std::endl;
+  std::cout << "Thrust's time: " << thrust_msecs << " ms" << std::endl;
+  std::cout << "My time:       " << my_msecs << " ms" << std::endl;
 
-  std::cout << "My relative performance: " << sean_msecs / my_msecs << std::endl;
+  std::cout << "Performance relative to Sean:   " << sean_msecs / my_msecs << std::endl;
+  std::cout << "Performance relative to Thrust: " << thrust_msecs / my_msecs << std::endl;
 
   return 0;
 }
