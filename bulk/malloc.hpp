@@ -364,9 +364,18 @@ inline __device__ void init_on_chip_malloc(size_t max_data_segment_size)
 } // end init_on_chip_malloc()
 
 
+template<typename T>
+inline __device__ T *on_chip_cast(T *ptr)
+{
+  extern __shared__ char s_begin[];
+  return reinterpret_cast<T*>((reinterpret_cast<char*>(ptr) - s_begin) + s_begin);
+} // end on_chip_cast()
+
+
 inline __device__ void *on_chip_malloc(size_t size)
 {
-  return s_on_chip_allocator.get().allocate(size);
+  void *result = s_on_chip_allocator.get().allocate(size);
+  return on_chip_malloc(result);
 } // end on_chip_malloc()
 
 
@@ -374,14 +383,6 @@ inline __device__ void on_chip_free(void *ptr)
 {
   return s_on_chip_allocator.get().deallocate(ptr);
 } // end on_chip_free()
-
-
-template<typename T>
-inline __device__ T *on_chip_cast(T *ptr)
-{
-  extern __shared__ char s_begin[];
-  return reinterpret_cast<T*>((reinterpret_cast<char*>(ptr) - s_begin) + s_begin);
-} // end on_chip_cast()
 
 
 } // end detail
