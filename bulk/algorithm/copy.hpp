@@ -16,7 +16,8 @@ template<typename ExecutionGroup,
          typename Size,
          typename RandomAccessIterator2>
 __forceinline__ __device__
-RandomAccessIterator2 simple_copy_n(ExecutionGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
+typename enable_if_execution_group<ExecutionGroup,RandomAccessIterator2>::type
+simple_copy_n(ExecutionGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
 {
   #pragma unroll
   for(Size i = g.this_exec.index();
@@ -177,9 +178,39 @@ template<typename ExecutionGroup,
          typename Size,
          typename RandomAccessIterator2>
 __forceinline__ __device__
-RandomAccessIterator2 copy_n(ExecutionGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
+typename enable_if_execution_group<ExecutionGroup, RandomAccessIterator2>::type
+  copy_n(ExecutionGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
 {
   return detail::copy_n(g, first, n, result);
+} // end copy_n()
+
+
+template<std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2>
+__forceinline__ __device__
+RandomAccessIterator2 copy_n(bulk::grain_executor<grainsize> &,
+                             RandomAccessIterator1 first,
+                             Size n,
+                             RandomAccessIterator2 result)
+{
+  RandomAccessIterator2 return_me = result + n;
+
+  // XXX faster than grain_executor::size_type
+  typedef int size_type;
+
+  for(RandomAccessIterator1 last = first + n;
+      first < last;
+      first += grainsize, result += grainsize)
+  {
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      if(i < (last - first))
+      {
+        result[i] = first[i];
+      } // end if
+    } // end for
+  } // end for
+
+  return return_me;
 } // end copy_n()
 
 
