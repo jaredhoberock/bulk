@@ -6,9 +6,6 @@
 #include <cstdlib>
 
 
-#if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 200)
-
-
 namespace bulk
 {
 namespace detail
@@ -393,10 +390,12 @@ inline __device__ void *shmalloc(size_t num_bytes)
   // first try on_chip_malloc
   void *result = detail::on_chip_malloc(num_bytes);
   
+#if __CUDA_ARCH__ >= 200
   if(!result)
   {
     result = std::malloc(num_bytes);
   } // end if
+#endif // __CUDA_ARCH__
 
   return result;
 } // end shmalloc()
@@ -404,14 +403,18 @@ inline __device__ void *shmalloc(size_t num_bytes)
 
 inline __device__ void shfree(void *ptr)
 {
+#if __CUDA_ARCH__ >= 200
   if(bulk::detail::is_shared(ptr))
   {
-    bulk::detail::on_chip_free(ptr);
+    bulk::detail::on_chip_free(bulk::detail::on_chip_cast(ptr));
   } // end if
   else
   {
     std::free(ptr);
   } // end else
+#else
+  bulk::detail::on_chip_free(bulk::detail::on_chip_cast(ptr));
+#endif
 } // end shfree()
 
 
@@ -446,7 +449,4 @@ inline void free(ThreadGroup &g, void *ptr)
 
 
 } // end namespace bulk
-
-
-#endif // __CUDA_ARCH__ >= 200
 
