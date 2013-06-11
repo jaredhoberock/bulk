@@ -16,8 +16,9 @@
 
 #pragma once
 
-#include <thrust/tuple.h>
+#include <bulk/detail/config.hpp>
 #include <bulk/detail/tuple_meta_transform.hpp>
+#include <thrust/tuple.h>
 
 BULK_NS_PREFIX
 namespace bulk

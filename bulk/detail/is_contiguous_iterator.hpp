@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
 #include <thrust/iterator/detail/is_trivial_iterator.h>
 
 BULK_NS_PREFIX

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
 #include <thrust/tuple.h>
 
 BULK_NS_PREFIX

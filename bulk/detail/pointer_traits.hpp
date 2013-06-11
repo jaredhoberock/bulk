@@ -1,5 +1,7 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
+
 BULK_NS_PREFIX
 namespace bulk
 {

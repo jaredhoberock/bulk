@@ -1,8 +1,10 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
+#include <bulk/detail/apply_from_tuple.hpp>
+
 #include <thrust/detail/config.h>
 #include <thrust/tuple.h>
-#include <bulk/detail/apply_from_tuple.hpp>
 
 BULK_NS_PREFIX
 namespace bulk

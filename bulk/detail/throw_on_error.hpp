@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
 #include <stdexcept>
 
 BULK_NS_PREFIX

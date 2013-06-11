@@ -1,9 +1,11 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
 #include <bulk/malloc.hpp>
-#include <thrust/detail/type_traits.h>
 #include <bulk/execution_group.hpp>
 #include <bulk/detail/tuple_transform.hpp>
+
+#include <thrust/detail/type_traits.h>
 
 
 BULK_NS_PREFIX

@@ -1,8 +1,10 @@
-#include <thrust/detail/config.h>
+#include <bulk/detail/config.hpp>
 #include <bulk/async.hpp>
 #include <bulk/detail/closure.hpp>
 #include <bulk/detail/group_task.hpp>
 #include <bulk/detail/throw_on_error.hpp>
+
+#include <thrust/detail/config.h>
 #include <thrust/detail/minmax.h>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include <thrust/system/cuda/detail/runtime_introspection.h>
