@@ -179,31 +179,31 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
 } // end inclusive_scan()
 
 
-typedef int T;
+typedef int U;
 
 
-void my_scan(thrust::device_vector<T> *data, T init)
+void my_scan(thrust::device_vector<U> *data, U init)
 {
-  ::inclusive_scan(data->begin(), data->end(), data->begin(), init, thrust::plus<int>());
+  ::inclusive_scan(data->begin(), data->end(), data->begin(), init, thrust::plus<U>());
 }
 
 
 void do_it(size_t n)
 {
-  thrust::host_vector<T> h_input(n);
+  thrust::host_vector<U> h_input(n);
   thrust::fill(h_input.begin(), h_input.end(), 1);
 
-  thrust::host_vector<T> h_result(n);
+  thrust::host_vector<U> h_result(n);
 
-  T init = 13;
+  U init = 13;
 
   thrust::inclusive_scan(h_input.begin(), h_input.end(), h_result.begin());
   thrust::for_each(h_result.begin(), h_result.end(), thrust::placeholders::_1 += init);
 
-  thrust::device_vector<T> d_input = h_input;
-  thrust::device_vector<T> d_result(d_input.size());
+  thrust::device_vector<U> d_input = h_input;
+  thrust::device_vector<U> d_result(d_input.size());
 
-  ::inclusive_scan(d_input.begin(), d_input.end(), d_result.begin(), init, thrust::plus<int>());
+  ::inclusive_scan(d_input.begin(), d_input.end(), d_result.begin(), init, thrust::plus<U>());
 
   cudaError_t error = cudaDeviceSynchronize();
 
@@ -219,13 +219,16 @@ void do_it(size_t n)
 template<typename InputIterator, typename OutputIterator>
 OutputIterator mgpu_inclusive_scan(InputIterator first, InputIterator last, OutputIterator result)
 {
+  //typedef typename thrust::iterator_value<InputIterator>::type T;
+  typedef int T;
+
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
   mgpu::Scan<mgpu::MgpuScanTypeInc>(thrust::raw_pointer_cast(&*first),
                                     last - first,
                                     thrust::raw_pointer_cast(&*result),
-                                    mgpu::ScanOp<mgpu::ScanOpTypeAdd,int>(),
-                                    (int*)0,
+                                    mgpu::ScanOp<mgpu::ScanOpTypeAdd,T>(),
+                                    (T*)0,
                                     false,
                                     *ctx);
 
@@ -233,13 +236,13 @@ OutputIterator mgpu_inclusive_scan(InputIterator first, InputIterator last, Outp
 }
 
 
-void sean_scan(thrust::device_vector<T> *data)
+void sean_scan(thrust::device_vector<U> *data)
 {
   mgpu_inclusive_scan(data->begin(), data->end(), data->begin());
 }
 
 
-void thrust_scan(thrust::device_vector<T> *data)
+void thrust_scan(thrust::device_vector<U> *data)
 {
   thrust::inclusive_scan(data->begin(), data->end(), data->begin());
 }
@@ -262,7 +265,7 @@ int main()
     do_it(n);
   }
 
-  thrust::device_vector<T> vec(1 << 28);
+  thrust::device_vector<U> vec(1 << 28);
 
   sean_scan(&vec);
   double sean_msecs = time_invocation_cuda(50, sean_scan, &vec);
