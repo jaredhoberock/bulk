@@ -180,13 +180,13 @@ struct scan_buffer
 };
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-__device__ void inclusive_scan_with_buffer(bulk::static_execution_group<groupsize,grainsize> &g,
-                                           RandomAccessIterator1 first, RandomAccessIterator1 last,
-                                           RandomAccessIterator2 result,
-                                           T carry_in,
-                                           BinaryFunction binary_op,
-                                           scan_buffer<groupsize,grainsize,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> &buffer)
+template<bool inclusive, std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
+__device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsize> &g,
+                                 RandomAccessIterator1 first, RandomAccessIterator1 last,
+                                 RandomAccessIterator2 result,
+                                 T carry_in,
+                                 BinaryFunction binary_op,
+                                 scan_buffer<groupsize,grainsize,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> &buffer)
 {
   typedef scan_buffer<
     groupsize,
@@ -261,17 +261,24 @@ __device__ void inclusive_scan_with_buffer(bulk::static_execution_group<groupsiz
       x = buffer.sums[tid];
     } // end if
     
-    // this loop is an inclusive_scan (x begins as the carry)
-    // XXX this loop should be one of the things to modify when porting to exclusive_scan
+    // this loop is a scan (x begins as the init)
     #pragma unroll
     for(size_type i = 0; i < grainsize; ++i) 
     {
       size_type index = local_offset + i;
       if(index < partition_size)
       {
-        x = binary_op(x, local_inputs[i]);
+        if(inclusive)
+        {
+          x = binary_op(x, local_inputs[i]);
+        } // end if
 
         shared.results[index] = x;
+
+        if(!inclusive)
+        {
+          x = binary_op(x, local_inputs[i]);
+        } // end if
       } // end if
     } // end for
 
@@ -279,103 +286,7 @@ __device__ void inclusive_scan_with_buffer(bulk::static_execution_group<groupsiz
     
     bulk::copy_n(g, shared.results, partition_size, result);
   } // end for
-} // end inclusive_scan_with_buffer()
-
-
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
-__device__ void exclusive_scan_with_buffer(bulk::static_execution_group<groupsize,grainsize> &g,
-                                           RandomAccessIterator1 first, RandomAccessIterator1 last,
-                                           RandomAccessIterator2 result,
-                                           T carry_in,
-                                           BinaryFunction binary_op,
-                                           void *buffer)
-{
-  typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
-  typedef typename scan_intermediate<
-    RandomAccessIterator1,
-    RandomAccessIterator2,
-    BinaryFunction
-  >::type intermediate_type;
-
-  intermediate_type *s_sums = reinterpret_cast<intermediate_type*>(buffer);
-
-  union {
-    input_type        *inputs;
-    intermediate_type *results;
-  } shared;
-
-  shared.inputs = reinterpret_cast<intermediate_type*>(reinterpret_cast<char*>(buffer) + 2*groupsize*sizeof(intermediate_type));
-
-  // XXX int is noticeably faster than ExecutionGroup::size_type
-  //typedef typename bulk::static_execution_group<groupsize,grainsize>::size_type size_type;
-  typedef int size_type;
-
-  size_type tid = g.this_exec.index();
-
-  size_type elements_per_group = groupsize * grainsize;
-
-  for(; first < last; first += elements_per_group, result += elements_per_group)
-  {
-    size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
-    
-    // stage data through shared memory
-    bulk::copy_n(g, first, partition_size, shared.inputs);
-    
-    // Transpose out of shared memory.
-    input_type local_inputs[grainsize];
-
-    size_type local_offset = grainsize * tid;
-
-    size_type local_size = thrust::max<size_type>(0,thrust::min<size_type>(grainsize, partition_size - grainsize * tid));
-
-    // XXX this should be uninitialized<input_type>
-    input_type x;
-
-    // this loop is a fused copy and accumulate
-    #pragma unroll
-    for(size_type i = 0; i < grainsize; ++i)
-    {
-      size_type index = local_offset + i;
-      if(index < partition_size)
-      {
-        local_inputs[i] = shared.inputs[index];
-        x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
-      } // end if
-    } // end for
-
-    if(local_size)
-    {
-      s_sums[tid] = x;
-    } // end if
-
-    g.wait();
-    
-    // exclusive scan the array of per-thread sums
-    carry_in = small_inplace_exclusive_scan_with_buffer<groupsize>(g, s_sums, carry_in, s_sums + groupsize, binary_op);
-
-    if(local_size)
-    {
-      x = s_sums[tid];
-    } // end if
-    
-    // this loop is an exclusive_scan (x begins as the carry)
-    #pragma unroll
-    for(size_type i = 0; i < grainsize; ++i) 
-    {
-      size_type index = local_offset + i;
-      if(index < partition_size)
-      {
-        shared.results[index] = x;
-
-        x = binary_op(x, local_inputs[i]);
-      } // end if
-    } // end for
-
-    g.wait();
-    
-    bulk::copy_n(g, shared.results, partition_size, result);
-  } // end for
-} // end exclusive_scan_with_buffer()
+} // end scan_with_buffer()
 
 
 } // end scan_detail
@@ -394,28 +305,16 @@ __device__ void inclusive_scan(bulk::static_execution_group<groupsize,grainsize>
                                T init,
                                BinaryFunction binary_op)
 {
-  //typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
-
-  //typedef typename detail::scan_detail::scan_intermediate<
-  //  RandomAccessIterator1,
-  //  RandomAccessIterator2,
-  //  BinaryFunction
-  //>::type intermediate_type;
-
-  //int num_stage_bytes = groupsize * grainsize * thrust::max<int>(sizeof(input_type),sizeof(intermediate_type));
-  //int num_sums_bytes = 2 * groupsize * sizeof(intermediate_type);
-
-  //void *buffer = bulk::malloc(g, num_stage_bytes + num_sums_bytes);
   typedef detail::scan_detail::scan_buffer<groupsize,grainsize,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> buffer_type;
   buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
 
   if(bulk::detail::is_shared(buffer))
   {
-    detail::scan_detail::inclusive_scan_with_buffer(g, first, last, result, init, binary_op, *bulk::detail::on_chip_cast(buffer));
+    detail::scan_detail::scan_with_buffer<true>(g, first, last, result, init, binary_op, *bulk::detail::on_chip_cast(buffer));
   } // end if
   else
   {
-    detail::scan_detail::inclusive_scan_with_buffer(g, first, last, result, init, binary_op, *buffer);
+    detail::scan_detail::scan_with_buffer<true>(g, first, last, result, init, binary_op, *buffer);
   } // end else
 
   bulk::free(g, buffer);
@@ -463,26 +362,16 @@ __device__ void exclusive_scan(bulk::static_execution_group<groupsize,grainsize>
                                T init,
                                BinaryFunction binary_op)
 {
-  typedef typename thrust::iterator_value<RandomAccessIterator1>::type  input_type;
-
-  typedef typename detail::scan_detail::scan_intermediate<
-    RandomAccessIterator1,
-    RandomAccessIterator2,
-    BinaryFunction
-  >::type intermediate_type;
-
-  int num_stage_bytes = groupsize * grainsize * thrust::max<int>(sizeof(input_type),sizeof(intermediate_type));
-  int num_sums_bytes = 2 * groupsize * sizeof(intermediate_type);
-
-  void *buffer = bulk::malloc(g, num_stage_bytes + num_sums_bytes);
+  typedef detail::scan_detail::scan_buffer<groupsize,grainsize,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> buffer_type;
+  buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
 
   if(bulk::detail::is_shared(buffer))
   {
-    detail::scan_detail::exclusive_scan_with_buffer(g, first, last, result, init, binary_op, bulk::detail::on_chip_cast(buffer));
+    detail::scan_detail::scan_with_buffer<false>(g, first, last, result, init, binary_op, *bulk::detail::on_chip_cast(buffer));
   } // end if
   else
   {
-    detail::scan_detail::exclusive_scan_with_buffer(g, first, last, result, init, binary_op, buffer);
+    detail::scan_detail::scan_with_buffer<false>(g, first, last, result, init, binary_op, *buffer);
   } // end else
 
   bulk::free(g, buffer);
