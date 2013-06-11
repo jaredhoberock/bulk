@@ -323,7 +323,11 @@ class singleton_on_chip_allocator
         inline __device__
         bool try_lock()
         {
+#if __CUDA_ARCH__ >= 110
           return atomicCAS(&m_in_use, 0, 1) != 0;
+#else
+          return false;
+#endif
         } // end try_lock()
 
 
