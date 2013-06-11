@@ -1,10 +1,13 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
 #include <bulk/execution_group.hpp>
 #include <bulk/detail/is_contiguous_iterator.hpp>
 #include <bulk/detail/pointer_traits.hpp>
 #include <thrust/detail/type_traits.h>
 
+
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -215,4 +218,5 @@ RandomAccessIterator2 copy_n(bulk::grain_executor<grainsize> &,
 
 
 } // end bulk
+BULK_NS_SUFFIX
 

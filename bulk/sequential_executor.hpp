@@ -1,7 +1,9 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
 #include <thrust/system/detail/sequential/execution_policy.h>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 
@@ -47,4 +49,5 @@ struct grain_executor
 
 
 }; // end bulk
+BULK_NS_SUFFIX
 

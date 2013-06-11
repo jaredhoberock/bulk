@@ -1,10 +1,13 @@
 #pragma once
 
-#include <thrust/iterator/iterator_traits.h>
-#include <thrust/detail/minmax.h>
+#include <bulk/detail/config.hpp>
 #include <bulk/algorithm/copy.hpp>
 #include <bulk/malloc.hpp>
+#include <thrust/iterator/iterator_traits.h>
+#include <thrust/detail/minmax.h>
 
+
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -214,4 +217,5 @@ T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 
 
 } // end bulk
+BULK_NS_SUFFIX
 

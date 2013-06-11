@@ -1,11 +1,14 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
+#include <bulk/sequential_executor.hpp>
+
 #include <thrust/detail/config.h>
 #include <thrust/detail/type_traits.h>
-#include <bulk/sequential_executor.hpp>
 #include <thrust/execution_policy.h>
 #include <thrust/system/cuda/detail/runtime_introspection.h>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace execution_group_detail
@@ -218,4 +221,5 @@ static const detail::placeholder there;
 
 
 } // end bulk
+BULK_NS_SUFFIX
 

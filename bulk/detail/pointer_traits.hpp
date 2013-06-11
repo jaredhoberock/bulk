@@ -1,5 +1,6 @@
 #pragma once
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -46,4 +47,5 @@ __device__ bool is_global(const void *ptr)
 
 } // end detail
 } // end bulk
+BULK_NS_SUFFIX
 

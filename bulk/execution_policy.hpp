@@ -1,7 +1,9 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
 #include <bulk/execution_group.hpp>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 
@@ -149,4 +151,5 @@ inline launch_config par(size_t num_threads)
 
 
 } // end bulk
+BULK_NS_SUFFIX
 

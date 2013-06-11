@@ -1,0 +1,10 @@
+#pragma once
+
+#ifdef BULK_NAMESPACE_PREFIX
+#define BULK_NS_PREFIX BULK_NAMESPACE_PREFIX
+#define BULK_NS_SUFFIX BULK_NAMESPACE_SUFFIX
+#else
+#define BULK_NS_PREFIX
+#define BULK_NS_SUFFIX
+#endif
+

@@ -10,6 +10,7 @@
 #include <thrust/system/cuda/detail/synchronize.h>
 #include <thrust/detail/util/blocking.h>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -270,4 +271,5 @@ future<void> async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, 
 
 
 } // end bulk
+BULK_NS_SUFFIX
 

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
+
+
+BULK_NS_PREFIX
 namespace bulk
 {
 
@@ -25,4 +29,5 @@ RandomAccessIterator for_each_n(ThreadGroup &g, RandomAccessIterator first, Size
 
 
 } // end bulk
+BULK_NS_SUFFIX
 

@@ -1,10 +1,12 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
+#include <bulk/future.hpp>
 #include <thrust/detail/config.h>
 #include <thrust/detail/cstdint.h>
-#include <bulk/future.hpp>
 
 
+BULK_NS_PREFIX
 namespace bulk
 {
 
@@ -46,6 +48,7 @@ future<void> async(LaunchConfig l, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3, 
 
 
 } // end bulk
+BULK_NS_SUFFIX
 
 #include <bulk/detail/async.inl>
 

@@ -1,11 +1,13 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
+#include <bulk/detail/pointer_traits.hpp>
 #include <thrust/detail/config.h>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
-#include <bulk/detail/pointer_traits.hpp>
 #include <cstdlib>
 
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -453,4 +455,5 @@ inline void free(ThreadGroup &g, void *ptr)
 
 
 } // end namespace bulk
+BULK_NS_SUFFIX
 

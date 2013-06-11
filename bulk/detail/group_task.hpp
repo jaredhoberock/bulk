@@ -6,6 +6,7 @@
 #include <bulk/detail/tuple_transform.hpp>
 
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -98,4 +99,5 @@ class group_task
 
 } // end detail
 } // end bulk
+BULK_NS_SUFFIX
 

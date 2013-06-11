@@ -18,6 +18,7 @@
 
 #include <thrust/tuple.h>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -174,4 +175,5 @@ template<typename Tuple,
 
 } // end detail
 } // end bulk
+BULK_NS_SUFFIX
 

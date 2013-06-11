@@ -2,6 +2,7 @@
 
 #include <thrust/tuple.h>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -143,4 +144,5 @@ void apply_from_tuple(Function f, const thrust::tuple<Arg1,Arg2,Arg3,Arg4,Arg5,A
 
 } // end detail
 } // end bulk
+BULK_NS_SUFFIX
 

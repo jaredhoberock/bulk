@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -19,4 +20,5 @@ inline void throw_on_error(cudaError_t e, const char *message)
 
 } // end detail
 } // end bulk
+BULK_NS_SUFFIX
 

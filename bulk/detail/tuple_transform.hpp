@@ -19,6 +19,7 @@
 #include <thrust/tuple.h>
 #include <bulk/detail/tuple_meta_transform.hpp>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -413,4 +414,5 @@ tuple_host_device_transform(const Tuple &t, UnaryFunction f)
 
 } // end detail
 } // end thrust
+BULK_NS_SUFFIX
 

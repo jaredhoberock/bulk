@@ -4,6 +4,7 @@
 #include <thrust/tuple.h>
 #include <bulk/detail/apply_from_tuple.hpp>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -186,4 +187,5 @@ closure<
 
 } // end detail
 } // end bulk
+BULK_NS_SUFFIX
 

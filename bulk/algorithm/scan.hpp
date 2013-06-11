@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
 #include <bulk/execution_group.hpp>
 #include <bulk/malloc.hpp>
 #include <thrust/reduce.h>
@@ -10,6 +11,8 @@
 #include <thrust/detail/type_traits/iterator/is_output_iterator.h>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 
+
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -314,4 +317,5 @@ __device__ void exclusive_scan(bulk::static_execution_group<groupsize,grainsize>
 
 
 } // end bulk
+BULK_NS_SUFFIX
 

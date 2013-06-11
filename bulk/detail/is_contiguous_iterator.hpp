@@ -2,6 +2,7 @@
 
 #include <thrust/iterator/detail/is_trivial_iterator.h>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 namespace detail
@@ -16,4 +17,5 @@ template<typename T>
 
 } // end detail
 } // end bulk
+BULK_NS_SUFFIX
 

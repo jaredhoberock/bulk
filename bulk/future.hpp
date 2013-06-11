@@ -1,9 +1,11 @@
 #pragma once
 
+#include <bulk/detail/config.hpp>
 #include <utility>
 #include <stdexcept>
 #include <iostream>
 
+BULK_NS_PREFIX
 namespace bulk
 {
 
@@ -117,4 +119,5 @@ struct future_core_access
 
 
 } // end namespace bulk
+BULK_NS_SUFFIX
 
