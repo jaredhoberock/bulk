@@ -8,6 +8,7 @@
 #include <thrust/detail/type_traits.h>
 #include <thrust/detail/type_traits/function_traits.h>
 #include <thrust/detail/type_traits/iterator/is_output_iterator.h>
+#include <thrust/system/cuda/detail/detail/uninitialized.h>
 
 namespace bulk
 {
@@ -29,83 +30,6 @@ struct scan_intermediate
       >
     >
 {};
-
-
-template<typename ExecutionGroup, typename Iterator, typename difference_type, typename BinaryFunction>
-__device__ void small_inclusive_scan_n(ExecutionGroup &g, Iterator first, difference_type n, BinaryFunction binary_op)
-{
-  typedef typename ExecutionGroup::size_type size_type;
-
-  typename thrust::iterator_value<Iterator>::type x;
-
-  size_type tid = g.this_exec.index();
-
-  if(tid < n)
-  {
-    x = first[tid];
-  }
-
-  g.wait();
-
-  for(size_type offset = 1; offset < n; offset += offset)
-  {
-    if(tid >= offset && tid < n)
-    {
-      x = binary_op(first[tid - offset], x);
-    }
-
-    g.wait();
-
-    if(tid < n)
-    {
-      first[tid] = x;
-    }
-
-    g.wait();
-  }
-}
-
-
-template<typename ExecutionGroup, typename Iterator, typename difference_type, typename T, typename BinaryFunction>
-__device__ T small_exclusive_scan_n(ExecutionGroup &g, Iterator first, difference_type n, T init, BinaryFunction binary_op)
-{
-  typedef typename ExecutionGroup::size_type size_type;
-
-  T x;
-
-  size_type tid = g.this_exec.index();
-
-  if(n > 0 && tid == 0)
-  {
-    *first = binary_op(init, *first);
-  }
-
-  g.wait();
-
-  if(tid < n)
-  {
-    x = first[tid];
-  }
-
-  g.wait();
-
-  small_inclusive_scan_n(g, first, n, binary_op);
-
-  T result = n > 0 ? first[n - 1] : init;
-
-  x = (tid == 0 || tid - 1 >= n) ? init : first[tid - 1];
-
-  g.wait();
-
-  if(tid < n)
-  {
-    first[tid] = x;
-  }
-
-  g.wait();
-
-  return result;
-}
 
 
 template<unsigned int size, typename ExecutionGroup, typename T, typename BinaryFunction>
@@ -130,7 +54,6 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *firs
 
   g.wait();
 
-  #pragma unroll
   for(size_type offset = 1; offset < size; offset += offset)
   {
     if(tid >= offset)
@@ -205,9 +128,9 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
   union {
     input_type        *inputs;
     intermediate_type *results;
-  } shared;
+  } stage;
 
-  shared.inputs = buffer.inputs;
+  stage.inputs = buffer.inputs;
 
   // XXX int is noticeably faster than ExecutionGroup::size_type
   //typedef typename bulk::static_execution_group<groupsize,grainsize>::size_type size_type;
@@ -222,7 +145,7 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
     
     // stage data through shared memory
-    bulk::copy_n(g, first, partition_size, shared.inputs);
+    bulk::copy_n(g, first, partition_size, stage.inputs);
     
     // Transpose out of shared memory.
     input_type local_inputs[grainsize];
@@ -241,7 +164,7 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
       size_type index = local_offset + i;
       if(index < partition_size)
       {
-        local_inputs[i] = shared.inputs[index];
+        local_inputs[i] = stage.inputs[index];
         x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
       } // end if
     } // end for
@@ -273,7 +196,7 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
           x = binary_op(x, local_inputs[i]);
         } // end if
 
-        shared.results[index] = x;
+        stage.results[index] = x;
 
         if(!inclusive)
         {
@@ -284,7 +207,7 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
 
     g.wait();
     
-    bulk::copy_n(g, shared.results, partition_size, result);
+    bulk::copy_n(g, stage.results, partition_size, result);
   } // end for
 } // end scan_with_buffer()
 
@@ -306,6 +229,8 @@ __device__ void inclusive_scan(bulk::static_execution_group<groupsize,grainsize>
                                BinaryFunction binary_op)
 {
   typedef detail::scan_detail::scan_buffer<groupsize,grainsize,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> buffer_type;
+
+#if __CUDA_ARCH__ >= 200
   buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
 
   if(bulk::detail::is_shared(buffer))
@@ -318,6 +243,10 @@ __device__ void inclusive_scan(bulk::static_execution_group<groupsize,grainsize>
   } // end else
 
   bulk::free(g, buffer);
+#else
+  __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer;
+  detail::scan_detail::scan_with_buffer<true>(g, first, last, result, init, binary_op, *bulk::detail::on_chip_cast(&buffer.get()));
+#endif // __CUDA_ARCH__
 } // end inclusive_scan()
 
 
@@ -363,6 +292,8 @@ __device__ void exclusive_scan(bulk::static_execution_group<groupsize,grainsize>
                                BinaryFunction binary_op)
 {
   typedef detail::scan_detail::scan_buffer<groupsize,grainsize,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> buffer_type;
+
+#if __CUDA_ARCH__ >= 200
   buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
 
   if(bulk::detail::is_shared(buffer))
@@ -375,6 +306,10 @@ __device__ void exclusive_scan(bulk::static_execution_group<groupsize,grainsize>
   } // end else
 
   bulk::free(g, buffer);
+#else
+  __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer;
+  detail::scan_detail::scan_with_buffer<false>(g, first, last, result, init, binary_op, buffer.get());
+#endif
 } // end exclusive_scan()
 
 

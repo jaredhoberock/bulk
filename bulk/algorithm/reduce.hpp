@@ -14,7 +14,7 @@ namespace reduce_detail
 
 
 template<typename ExecutionGroup, typename RandomAccessIterator, typename Size, typename T, typename BinaryFunction>
-__device__ T destructive_reduce_n(ExecutionGroup &g, RandomAccessIterator s_sums, Size n, T init, BinaryFunction binary_op)
+__device__ T destructive_reduce_n(ExecutionGroup &g, RandomAccessIterator first, Size n, T init, BinaryFunction binary_op)
 {
   typedef int size_type;
 
@@ -28,9 +28,9 @@ __device__ T destructive_reduce_n(ExecutionGroup &g, RandomAccessIterator s_sums
 
     if(tid < half_m)
     {
-      T old_val = s_sums[tid];
+      T old_val = first[tid];
 
-      s_sums[tid] = binary_op(old_val, s_sums[m - tid - 1]);
+      first[tid] = binary_op(old_val, first[m - tid - 1]);
     } // end if
 
     g.wait();
@@ -40,7 +40,7 @@ __device__ T destructive_reduce_n(ExecutionGroup &g, RandomAccessIterator s_sums
 
   g.wait();
 
-  T result = (n > 0) ? binary_op(init,s_sums[0]) : init;
+  T result = (n > 0) ? binary_op(init,first[0]) : init;
 
   g.wait();
 
@@ -74,7 +74,12 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 
   typename thrust::iterator_difference<RandomAccessIterator>::type n = last - first;
 
+#if __CUDA_ARCH__ >= 200
   T *buffer = reinterpret_cast<value_type*>(bulk::malloc(g, groupsize * sizeof(T)));
+#else
+  __shared__ thrust::system::cuda::detail::detail::uninitialized_array<T,groupsize> buffer_impl;
+  T *buffer = buffer_impl.data();
+#endif
   
   for(; first < last; first += elements_per_group)
   {
@@ -126,7 +131,9 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
   // reduce across the block
   T result = detail::reduce_detail::destructive_reduce_n(g, buffer, thrust::min<size_type>(groupsize,n), init, binary_op);
 
+#if __CUDA_ARCH__ >= 200
   bulk::free(g,buffer);
+#endif
 
   g.wait();
 
