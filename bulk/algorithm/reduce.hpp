@@ -142,6 +142,26 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 } // end reduce
 
 
+namespace detail
+{
+
+
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T>
+struct noncommutative_reduce_buffer
+{
+  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
+
+  union
+  {
+    value_type inputs[groupsize * grainsize];
+    T sums[groupsize];
+  }; // end union
+}; // end noncommutative_reduce_buffer
+
+
+} // end detail
+
+
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
 T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
@@ -162,17 +182,18 @@ T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 
   typename thrust::iterator_difference<RandomAccessIterator>::type n = last - first;
 
-  union buffer_type
-  {
-    value_type inputs[elements_per_group];
-    T sums[groupsize];
-  } *buffer;
+  typedef detail::reduce_detail::noncommutative_reduce_buffer<
+    groupsize,
+    grainsize,
+    RandomAccessIterator,
+    T
+  > buffer_type;
 
 #if __CUDA_ARCH__ >= 200
-  buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
+  buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
 #else
   __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer_impl;
-  buffer = buffer_impl.data();
+  buffer_type *buffer = &buffer_impl.get();
 #endif
   
   for(; first < last; first += elements_per_group)
