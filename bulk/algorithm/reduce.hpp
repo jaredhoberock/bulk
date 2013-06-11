@@ -144,6 +144,8 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 
 namespace detail
 {
+namespace reduce_detail
+{
 
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T>
@@ -159,6 +161,7 @@ struct noncommutative_reduce_buffer
 }; // end noncommutative_reduce_buffer
 
 
+} // end reduce_detail
 } // end detail
 
 
