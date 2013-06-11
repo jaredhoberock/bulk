@@ -135,8 +135,6 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
   bulk::free(g,buffer);
 #endif
 
-  g.wait();
-
   return result;
 } // end reduce
 
@@ -167,7 +165,12 @@ T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
     T sums[groupsize];
   } *buffer;
 
+#if __CUDA_ARCH__ >= 200
   buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
+#else
+  __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer_impl;
+  buffer = buffer_impl.data();
+#endif
   
   for(; first < last; first += elements_per_group)
   {
@@ -202,7 +205,9 @@ T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
     sum = detail::reduce_detail::destructive_reduce_n(g, buffer->sums, thrust::min<size_type>(groupsize,n), sum, binary_op);
   } // end for
 
+#if __CUDA_ARCH__ >= 200
   bulk::free(g, buffer);
+#endif
 
   return sum;
 } // end noncommutative_reduce
