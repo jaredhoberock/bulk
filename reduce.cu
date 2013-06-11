@@ -8,9 +8,9 @@
 
 struct reduce_partitions
 {
-  template<typename ExecutionGroup, typename Iterator1, typename Size, typename Iterator2>
+  template<typename ExecutionGroup, typename Iterator1, typename Size, typename Iterator2, typename BinaryFunction>
   __device__
-  void operator()(ExecutionGroup &this_group, Iterator1 first, Iterator1 last, Size partition_size, Iterator2 result)
+  void operator()(ExecutionGroup &this_group, Iterator1 first, Iterator1 last, Size partition_size, Iterator2 result, BinaryFunction binary_op)
   {
     typedef typename thrust::iterator_value<Iterator1>::type value_type;
 
@@ -18,7 +18,7 @@ struct reduce_partitions
 
     Iterator1 partition_last = thrust::min(partition_first + partition_size, last);
 
-    value_type sum = bulk::reduce(this_group, partition_first, partition_last, value_type(0), thrust::plus<value_type>());
+    value_type sum = bulk::reduce(this_group, partition_first, partition_last, value_type(0), binary_op);
 
     if(this_group.this_exec.index() == 0)
     {
@@ -57,12 +57,12 @@ T my_reduce(Iterator first, Iterator last, T init, BinaryOperation binary_op)
 
   bulk::static_execution_group<group_size> g;
 
-  bulk::async(bulk::par(g, partial_sums.size()), reduce_partitions(), bulk::there, first, last, partition_size, partial_sums.begin());
+  bulk::async(bulk::par(g, partial_sums.size()), reduce_partitions(), bulk::there, first, last, partition_size, partial_sums.begin(), binary_op);
 
   // we only need a single additional step because partition_size > subscription * num_processors
   if(partial_sums.size() > 1)
   {
-    bulk::async(bulk::par(g, 1), reduce_partitions(), bulk::there, partial_sums.begin(), partial_sums.end(), partial_sums.size(), partial_sums.begin());
+    bulk::async(bulk::par(g, 1), reduce_partitions(), bulk::there, partial_sums.begin(), partial_sums.end(), partial_sums.size(), partial_sums.begin(), binary_op);
   } // end while
 
   return partial_sums[0];
