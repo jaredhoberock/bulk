@@ -10,6 +10,56 @@
 BULK_NS_PREFIX
 namespace bulk
 {
+
+
+template<std::size_t grainsize,
+         std::size_t m,
+         typename T,
+         typename Size,
+         typename RandomAccessIterator>
+__forceinline__ __device__
+RandomAccessIterator copy_n(grain_executor<grainsize> &,
+                            const T (&first)[m],
+                            Size n,
+                            RandomAccessIterator result)
+{
+  #pragma unroll
+  for(int i = 0; i < m; ++i)
+  {
+    if(i < n)
+    {
+      result[i] = first[i];
+    } // end if
+  } // end for i
+
+  return result + n;
+} // end copy_n()
+
+
+template<std::size_t grainsize,
+         typename RandomAccessIterator,
+         typename Size,
+         typename T,
+         std::size_t m>
+__forceinline__ __device__
+T *copy_n(grain_executor<grainsize> &,
+          RandomAccessIterator first,
+          Size n,
+          T (&result)[m])
+{
+  #pragma unroll
+  for(int i = 0; i < m; ++i)
+  {
+    if(i < n)
+    {
+      result[i] = first[i];
+    } // end if
+  } // end for i
+
+  return result + n;
+} // end copy_n()
+
+
 namespace detail
 {
 

@@ -5,4 +5,5 @@
 #include <bulk/algorithm/copy.hpp> 
 #include <bulk/algorithm/reduce.hpp>
 #include <bulk/algorithm/scan.hpp>
+#include <bulk/algorithm/accumulate.hpp>
 
