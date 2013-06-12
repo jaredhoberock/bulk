@@ -51,34 +51,46 @@ RandomAccessIterator2 simple_copy_n(bulk::static_execution_group<size,grainsize>
 
   size_type tid = g.this_exec.index();
 
-  // XXX i have a feeling the indexing could be rewritten to require less arithmetic
-  for(RandomAccessIterator1 last = first + n;
-      first < last;
-      first += chunk_size, result += chunk_size)
+  // important special case which avoids the expensive for loop below
+  if(chunk_size == n)
   {
-    // avoid conditional accesses when possible
-    if((last - first) >= chunk_size)
+    for(size_type i = 0; i < grainsize; ++i)
     {
-      #pragma unroll
-      for(size_type i = 0; i < grainsize; ++i)
-      {
-        size_type idx = size * i + tid;
-        result[idx] = first[idx];
-      } // end for
-    } // end if
-    else
+      size_type idx = size * i + tid;
+      result[idx] = first[idx];
+    } // end for
+  } // end if
+  else
+  {
+    // XXX i have a feeling the indexing could be rewritten to require less arithmetic
+    for(RandomAccessIterator1 last = first + n;
+        first < last;
+        first += chunk_size, result += chunk_size)
     {
-      #pragma unroll
-      for(size_type i = 0; i < grainsize; ++i)
+      // avoid conditional accesses when possible
+      if((last - first) >= chunk_size)
       {
-        size_type idx = size * i + tid;
-        if(idx < (last - first))
+        #pragma unroll
+        for(size_type i = 0; i < grainsize; ++i)
         {
+          size_type idx = size * i + tid;
           result[idx] = first[idx];
-        } // end if
-      } // end for
-    } // end else
-  } // end for
+        } // end for
+      } // end if
+      else
+      {
+        #pragma unroll
+        for(size_type i = 0; i < grainsize; ++i)
+        {
+          size_type idx = size * i + tid;
+          if(idx < (last - first))
+          {
+            result[idx] = first[idx];
+          } // end if
+        } // end for
+      } // end else
+    } // end for
+  } // end else
 
   g.wait();
 
