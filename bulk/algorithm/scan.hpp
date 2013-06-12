@@ -15,6 +15,50 @@
 BULK_NS_PREFIX
 namespace bulk
 {
+
+
+template<std::size_t grainsize, unsigned int array_size, typename T, typename RandomAccessIterator, typename U, typename BinaryFunction>
+__forceinline__ __device__
+void inclusive_scan(grain_executor<grainsize> &exec,
+                    const T (&first)[array_size],
+                    const T *last,
+                    RandomAccessIterator result,
+                    U init,
+                    BinaryFunction binary_op)
+{
+  #pragma unroll
+  for(int i = 0; i < array_size; ++i)
+  {
+    if(first + i < last)
+    {
+      init = binary_op(init, first[i]);
+      result[i] = init;
+    }
+  }
+}
+
+
+template<std::size_t grainsize, unsigned int array_size, typename T, typename RandomAccessIterator, typename U, typename BinaryFunction>
+__forceinline__ __device__
+void exclusive_scan(grain_executor<grainsize> &exec,
+                    const T (&first)[array_size],
+                    const T *last,
+                    RandomAccessIterator result,
+                    U init,
+                    BinaryFunction binary_op)
+{
+  #pragma unroll
+  for(int i = 0; i < array_size; ++i)
+  {
+    if(first + i < last)
+    {
+      result[i] = init;
+      init = binary_op(init, first[i]);
+    }
+  }
+}
+
+
 namespace detail
 {
 namespace scan_detail
@@ -35,7 +79,7 @@ struct scan_intermediate
 {};
 
 
-template<unsigned int size, typename ExecutionGroup, typename T, typename BinaryFunction>
+template<typename ExecutionGroup, typename T, typename BinaryFunction>
 __device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *first, T init, T *buffer, BinaryFunction binary_op)
 {
   // XXX int is noticeably faster than ExecutionGroup::size_type
@@ -57,7 +101,7 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *firs
 
   g.wait();
 
-  for(size_type offset = 1; offset < size; offset += offset)
+  for(size_type offset = 1; offset < g.size(); offset += offset)
   {
     if(tid >= offset)
     {
@@ -71,7 +115,7 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *firs
     g.wait();
   }
 
-  T result = ping[size - 1];
+  T result = ping[g.size() - 1];
 
   x = (tid == 0) ? init : ping[tid - 1];
 
@@ -162,8 +206,10 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     input_type x;
 
     // this loop is a fused copy and accumulate
-    // XXX can't abstract this loop because it will
-    //     dynamically index local_inputs and spill
+    // could split into two loops or two function
+    // calls, but it reduces perf by a few percent
+    // for some types, for others, increases perf
+    // by a few percent
     #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
@@ -185,7 +231,7 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     g.wait();
     
     // exclusive scan the array of per-thread sums
-    carry_in = small_inplace_exclusive_scan_with_buffer<groupsize>(g, buffer.sums, carry_in, buffer.sums + groupsize, binary_op);
+    carry_in = small_inplace_exclusive_scan_with_buffer(g, buffer.sums, carry_in, buffer.sums + groupsize, binary_op);
 
     if(local_size)
     {
@@ -194,28 +240,14 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
 
     g.wait();
 
-    // this loop is a scan (x begins as the init)
-    // XXX can't abstract this loop because it will
-    //     dynamically index local_inputs and spill
-    #pragma unroll
-    for(size_type i = 0; i < grainsize; ++i) 
+    if(inclusive)
     {
-      size_type index = local_offset + i;
-      if(index < partition_size)
-      {
-        if(inclusive)
-        {
-          x = binary_op(x, local_inputs[i]);
-        } // end if
-
-        stage.results[index] = x;
-
-        if(!inclusive)
-        {
-          x = binary_op(x, local_inputs[i]);
-        } // end if
-      } // end if
-    } // end for
+      bulk::inclusive_scan(g.this_exec, local_inputs, local_inputs + local_size, stage.results + local_offset, x, binary_op);
+    } // end if
+    else
+    {
+      bulk::exclusive_scan(g.this_exec, local_inputs, local_inputs + local_size, stage.results + local_offset, x, binary_op);
+    } // end else
 
     g.wait();
     
