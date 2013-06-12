@@ -186,8 +186,6 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
 
   size_type elements_per_group = groupsize * grainsize;
 
-  int n = last - first;
-
   for(; first < last; first += elements_per_group, result += elements_per_group)
   {
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
