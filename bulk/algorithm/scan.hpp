@@ -3,6 +3,7 @@
 #include <bulk/detail/config.hpp>
 #include <bulk/execution_group.hpp>
 #include <bulk/malloc.hpp>
+#include <bulk/algorithm/copy.hpp>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/execution_policy.h>
@@ -203,18 +204,16 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     // XXX this should be uninitialized<input_type>
     input_type x;
 
-    // this loop is a fused copy and accumulate
-    // could split into two loops or two function
-    // calls, but it reduces perf by a few percent
-    // for some types, for others, increases perf
-    // by a few percent
+    // make a local copy from the stage
+    bulk::copy_n(g.this_exec, stage.inputs + local_offset, local_size, local_inputs);
+
+    // this loop is a sequential accumulate
+    // it's unclear how to abstract this
     #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
-      size_type index = local_offset + i;
-      if(index < partition_size)
+      if(i < local_size)
       {
-        local_inputs[i] = stage.inputs[index];
         x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
       } // end if
     } // end for
