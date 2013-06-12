@@ -96,10 +96,9 @@ struct scan_buffer
     BinaryFunction
   >::type intermediate_type;
 
-  intermediate_type sums[2*groupsize];
-
   union
   {
+    intermediate_type sums[2*groupsize];
     input_type        inputs[groupsize * grainsize];
     intermediate_type results[groupsize * grainsize];
   };
@@ -143,6 +142,8 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
 
   size_type elements_per_group = groupsize * grainsize;
 
+  int n = last - first;
+
   for(; first < last; first += elements_per_group, result += elements_per_group)
   {
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
@@ -161,6 +162,8 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     input_type x;
 
     // this loop is a fused copy and accumulate
+    // XXX can't abstract this loop because it will
+    //     dynamically index local_inputs and spill
     #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
@@ -171,6 +174,8 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
         x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
       } // end if
     } // end for
+
+    g.wait();
 
     if(local_size)
     {
@@ -186,8 +191,12 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     {
       x = buffer.sums[tid];
     } // end if
-    
+
+    g.wait();
+
     // this loop is a scan (x begins as the init)
+    // XXX can't abstract this loop because it will
+    //     dynamically index local_inputs and spill
     #pragma unroll
     for(size_type i = 0; i < grainsize; ++i) 
     {
