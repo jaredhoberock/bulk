@@ -108,12 +108,12 @@ struct reduce_tiles
     
     thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), partition_size, last_partial_partition_size, groupsize * grainsize, n);
 
-    // it's much faster to pass the last value as the init for some reason
-    value_type init = first[range.second-1];
+    // for commutative reduce, it's much faster to pass the last value as the init for some reason
+    value_type init = commutative ? first[range.second-1] : *first;
 
     value_type total = commutative ?
       bulk::reduce(this_group, first + range.first, first + range.second - 1, init, binary_op) :
-      bulk::noncommutative_reduce(this_group, first + range.first, first + range.second - 1, init, binary_op);
+      bulk::noncommutative_reduce(this_group, first + range.first + 1, first + range.second, init, binary_op);
 
     if(this_group.this_exec.index() == 0)
     {
@@ -170,40 +170,41 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     // num_groups loads + num_groups stores
     bulk::static_execution_group<256,3> group2;
     bulk::async(bulk::par(group2,1), exclusive_scan_n(), bulk::there, carries.begin(), num_groups, carries.begin(), init, binary_op);
-    
+
     // do the downsweep - n loads, n stores
-    bulk::async(bulk::par(group1,num_groups), inclusive_downsweep(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), result, binary_op);
+    typedef bulk::detail::scan_detail::scan_buffer<128,7,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type;
+    Size heap_size = sizeof(heap_type) + 48;
+    bulk::async(bulk::par(group1,num_groups,heap_size), inclusive_downsweep(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), result, binary_op);
   } // end else
 
   return result + n;
 } // end inclusive_scan()
 
 
-typedef int U;
-
-
-void my_scan(thrust::device_vector<U> *data, U init)
+template<typename T>
+void my_scan(thrust::device_vector<T> *data, T init)
 {
-  ::inclusive_scan(data->begin(), data->end(), data->begin(), init, thrust::plus<U>());
+  ::inclusive_scan(data->begin(), data->end(), data->begin(), init, thrust::plus<T>());
 }
 
 
+template<typename T>
 void do_it(size_t n)
 {
-  thrust::host_vector<U> h_input(n);
+  thrust::host_vector<T> h_input(n);
   thrust::fill(h_input.begin(), h_input.end(), 1);
 
-  thrust::host_vector<U> h_result(n);
+  thrust::host_vector<T> h_result(n);
 
-  U init = 13;
+  T init = 13;
 
   thrust::inclusive_scan(h_input.begin(), h_input.end(), h_result.begin());
   thrust::for_each(h_result.begin(), h_result.end(), thrust::placeholders::_1 += init);
 
-  thrust::device_vector<U> d_input = h_input;
-  thrust::device_vector<U> d_result(d_input.size());
+  thrust::device_vector<T> d_input = h_input;
+  thrust::device_vector<T> d_result(d_input.size());
 
-  ::inclusive_scan(d_input.begin(), d_input.end(), d_result.begin(), init, thrust::plus<U>());
+  ::inclusive_scan(d_input.begin(), d_input.end(), d_result.begin(), init, thrust::plus<T>());
 
   cudaError_t error = cudaDeviceSynchronize();
 
@@ -219,8 +220,7 @@ void do_it(size_t n)
 template<typename InputIterator, typename OutputIterator>
 OutputIterator mgpu_inclusive_scan(InputIterator first, InputIterator last, OutputIterator result)
 {
-  //typedef typename thrust::iterator_value<InputIterator>::type T;
-  typedef int T;
+  typedef typename thrust::iterator_value<InputIterator>::type T;
 
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
@@ -236,16 +236,42 @@ OutputIterator mgpu_inclusive_scan(InputIterator first, InputIterator last, Outp
 }
 
 
-void sean_scan(thrust::device_vector<U> *data)
+template<typename T>
+void sean_scan(thrust::device_vector<T> *data)
 {
   mgpu_inclusive_scan(data->begin(), data->end(), data->begin());
 }
 
 
-void thrust_scan(thrust::device_vector<U> *data)
+template<typename T>
+void thrust_scan(thrust::device_vector<T> *data)
 {
   thrust::inclusive_scan(data->begin(), data->end(), data->begin());
 }
+
+
+template<typename T>
+void compare()
+{
+  thrust::device_vector<T> vec(1 << 28);
+
+  sean_scan(&vec);
+  double sean_msecs = time_invocation_cuda(50, sean_scan<T>, &vec);
+
+  thrust_scan(&vec);
+  double thrust_msecs = time_invocation_cuda(50, thrust_scan<T>, &vec);
+
+  my_scan(&vec, T(13));
+  double my_msecs = time_invocation_cuda(50, my_scan<T>, &vec, 13);
+
+  std::cout << "Sean's time:   " << sean_msecs << " ms" << std::endl;
+  std::cout << "Thrust's time: " << thrust_msecs << " ms" << std::endl;
+  std::cout << "My time:       " << my_msecs << " ms" << std::endl;
+
+  std::cout << "Performance relative to Sean:   " << sean_msecs / my_msecs << std::endl;
+  std::cout << "Performance relative to Thrust: " << thrust_msecs / my_msecs << std::endl;
+}
+
 
 
 int main()
@@ -253,7 +279,7 @@ int main()
   for(size_t n = 1; n <= 1 << 20; n <<= 1)
   {
     std::cout << "Testing n = " << n << std::endl;
-    do_it(n);
+    do_it<int>(n);
   }
 
   thrust::default_random_engine rng;
@@ -262,26 +288,14 @@ int main()
     size_t n = rng() % (1 << 20);
    
     std::cout << "Testing n = " << n << std::endl;
-    do_it(n);
+    do_it<int>(n);
   }
 
-  thrust::device_vector<U> vec(1 << 28);
+  std::cout << "32b int:" << std::endl;
+  compare<int>();
 
-  sean_scan(&vec);
-  double sean_msecs = time_invocation_cuda(50, sean_scan, &vec);
-
-  thrust_scan(&vec);
-  double thrust_msecs = time_invocation_cuda(50, thrust_scan, &vec);
-
-  my_scan(&vec, 13);
-  double my_msecs = time_invocation_cuda(50, my_scan, &vec, 13);
-
-  std::cout << "Sean's time:   " << sean_msecs << " ms" << std::endl;
-  std::cout << "Thrust's time: " << thrust_msecs << " ms" << std::endl;
-  std::cout << "My time:       " << my_msecs << " ms" << std::endl;
-
-  std::cout << "Performance relative to Sean:   " << sean_msecs / my_msecs << std::endl;
-  std::cout << "Performance relative to Thrust: " << thrust_msecs / my_msecs << std::endl;
+  std::cout << "64b float:" << std::endl;
+  compare<double>();
 
   return 0;
 }
