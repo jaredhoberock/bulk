@@ -197,6 +197,7 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
   for(; first < last; first += elements_per_group, result += elements_per_group)
   {
     // XXX each iteration is essentially a bounded scan
+    //     the bound is groupsize * grainsize
 
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
     
@@ -242,6 +243,8 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     g.wait();
     
     // exclusive scan the array of per-thread sums
+    // XXX this call is essentially a bounded scan
+    //     the bound is groupsize
     carry_in = small_inplace_exclusive_scan_with_buffer(g, buffer.sums, carry_in, buffer.sums + groupsize, binary_op);
 
     if(local_size)
