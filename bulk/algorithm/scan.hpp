@@ -196,8 +196,9 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
 
   for(; first < last; first += elements_per_group, result += elements_per_group)
   {
-    // XXX each iteration is essentially a bounded scan
+    // XXX each iteration is essentially a bounded scan and could be abstracted
     //     the bound is groupsize * grainsize
+    //     it's not clear how we could exploit the bound in a hypothetical abstraction
 
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
     
