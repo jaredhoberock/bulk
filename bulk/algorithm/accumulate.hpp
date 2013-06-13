@@ -96,6 +96,8 @@ T accumulate(bulk::static_execution_group<groupsize,grainsize> &g,
   
   for(; first < last; first += elements_per_group)
   {
+    // XXX each iteration is essentially a bounded accumulate
+    
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
     
     // copy partition into smem
