@@ -2,7 +2,6 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/algorithm/copy.hpp>
-#include <bulk/algorithm/accumulate.hpp>
 #include <bulk/malloc.hpp>
 #include <thrust/iterator/iterator_traits.h>
 #include <thrust/detail/minmax.h>
@@ -143,106 +142,6 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 
   return result;
 } // end reduce
-
-
-namespace detail
-{
-namespace reduce_detail
-{
-
-
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T>
-struct noncommutative_reduce_buffer
-{
-  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
-
-  union
-  {
-    value_type inputs[groupsize * grainsize];
-    T sums[groupsize];
-  }; // end union
-}; // end noncommutative_reduce_buffer
-
-
-} // end reduce_detail
-} // end detail
-
-
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
-__device__
-T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
-                        RandomAccessIterator first,
-                        RandomAccessIterator last,
-                        T init,
-                        BinaryFunction binary_op)
-{
-  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
-
-  typedef int size_type;
-
-  const size_type elements_per_group = groupsize * grainsize;
-
-  size_type tid = g.this_exec.index();
-
-  T sum = init;
-
-  typename thrust::iterator_difference<RandomAccessIterator>::type n = last - first;
-
-  typedef detail::reduce_detail::noncommutative_reduce_buffer<
-    groupsize,
-    grainsize,
-    RandomAccessIterator,
-    T
-  > buffer_type;
-
-#if __CUDA_ARCH__ >= 200
-  buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
-#else
-  __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer_impl;
-  buffer_type *buffer = &buffer_impl.get();
-#endif
-  
-  for(; first < last; first += elements_per_group)
-  {
-    size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
-    
-    // copy partition into smem
-    bulk::copy_n(g, first, partition_size, buffer->inputs);
-    
-    T this_sum;
-    size_type local_offset = grainsize * g.this_exec.index();
-
-    size_type local_size = thrust::max<size_type>(0,thrust::min<size_type>(grainsize, partition_size - grainsize * tid));
-
-    if(local_size)
-    {
-      this_sum = buffer->inputs[local_offset];
-      this_sum = bulk::accumulate(bound<grainsize-1>(g.this_exec),
-                                  buffer->inputs + local_offset + 1,
-                                  buffer->inputs + local_offset + local_size,
-                                  this_sum,
-                                  binary_op);
-    } // end if
-
-    g.wait();
-
-    if(local_size)
-    {
-      buffer->sums[tid] = this_sum;
-    } // end if
-
-    g.wait();
-    
-    // sum over the group
-    sum = detail::reduce_detail::destructive_reduce_n(g, buffer->sums, thrust::min<size_type>(groupsize,n), sum, binary_op);
-  } // end for
-
-#if __CUDA_ARCH__ >= 200
-  bulk::free(g, buffer);
-#endif
-
-  return sum;
-} // end noncommutative_reduce
 
 
 } // end bulk

@@ -113,7 +113,7 @@ struct reduce_tiles
 
     value_type total = commutative ?
       bulk::reduce(this_group, first + range.first, first + range.second - 1, init, binary_op) :
-      bulk::noncommutative_reduce(this_group, first + range.first + 1, first + range.second, init, binary_op);
+      bulk::accumulate(this_group, first + range.first + 1, first + range.second, init, binary_op);
 
     if(this_group.this_exec.index() == 0)
     {
