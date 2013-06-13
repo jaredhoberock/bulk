@@ -92,8 +92,7 @@ struct inclusive_downsweep
 };
 
 
-template<bool commutative>
-struct reduce_tiles
+struct accumulate_tiles
 {
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename BinaryFunction>
   __device__ void operator()(bulk::static_execution_group<groupsize,grainsize> &this_group,
@@ -108,19 +107,21 @@ struct reduce_tiles
     
     thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), partition_size, last_partial_partition_size, groupsize * grainsize, n);
 
-    // for commutative reduce, it's much faster to pass the last value as the init for some reason
+    const bool commutative = thrust::detail::is_commutative<BinaryFunction>::value;
+
+    // for a commutative accumulate, it's much faster to pass the last value as the init for some reason
     value_type init = commutative ? first[range.second-1] : *first;
 
-    value_type total = commutative ?
-      bulk::reduce(this_group, first + range.first, first + range.second - 1, init, binary_op) :
+    value_type sum = commutative ?
+      bulk::accumulate(this_group, first + range.first, first + range.second - 1, init, binary_op) :
       bulk::accumulate(this_group, first + range.first + 1, first + range.second, init, binary_op);
 
     if(this_group.this_exec.index() == 0)
     {
-      result[this_group.index()] = total;
+      result[this_group.index()] = sum;
     } // end if
   } // end operator()
-}; // end reduce_tiles
+}; // end accumulate_tiles
 
 
 template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
@@ -163,8 +164,7 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     thrust::detail::temporary_array<intermediate_type,thrust::cuda::tag> carries(t, num_groups);
     	
     // n loads + num_groups stores
-    const bool commutative = thrust::detail::is_commutative<BinaryFunction>::value;
-    bulk::async(bulk::par(group1,num_groups), reduce_tiles<commutative>(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), binary_op);
+    bulk::async(bulk::par(group1,num_groups), accumulate_tiles(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), binary_op);
     
     // scan the sums to get the carries
     // num_groups loads + num_groups stores

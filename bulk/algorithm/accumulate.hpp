@@ -1,7 +1,9 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
+#include <bulk/algorithm/reduce.hpp>
 #include <bulk/sequential_executor.hpp>
+#include <thrust/detail/type_traits/function_traits.h>
 
 BULK_NS_PREFIX
 namespace bulk
@@ -54,10 +56,6 @@ struct buffer
     T sums[groupsize];
   }; // end union
 }; // end buffer
-
-
-} // end accumulate_detail
-} // end detail
 
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
@@ -137,6 +135,30 @@ T accumulate(bulk::static_execution_group<groupsize,grainsize> &g,
 
   return sum;
 } // end accumulate
+} // end accumulate_detail
+} // end detail
+
+
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
+__device__
+T accumulate(bulk::static_execution_group<groupsize,grainsize> &g,
+             RandomAccessIterator first,
+             RandomAccessIterator last,
+             T init,
+             BinaryFunction binary_op)
+{
+  // use reduce when the operator is commutative
+  if(thrust::detail::is_commutative<BinaryFunction>::value)
+  {
+    init = bulk::reduce(g, first, last, init, binary_op);
+  } // end if
+  else
+  {
+    init = detail::accumulate_detail::accumulate(g, first, last, init, binary_op);
+  } // end else
+
+  return init;
+} // end accumulate()
 
 
 } // end bulk
