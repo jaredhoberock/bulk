@@ -22,30 +22,36 @@ struct sequential_executor
 }; // end sequential_executor
 
 
-static const std::size_t default_grain_executor_grainsize = 1;
-
-
-template<std::size_t grainsize_ = default_grain_executor_grainsize>
-struct grain_executor
-  : thrust::system::detail::sequential::execution_policy<grain_executor<grainsize_> >
+// XXX consider making this more like an adaptor
+template<std::size_t bound_>
+struct bounded_executor
+  : thrust::system::detail::sequential::execution_policy<bounded_executor<bound_> >
 {
-  public:
-    typedef unsigned int size_type;
+  typedef int size_type;
 
-    static const size_type static_grainsize = grainsize_;
+  static const size_type static_bound = bound_;
 
-    __device__
-    size_type index() const
-    {
-      return threadIdx.x;
-    } // end index()
+  __device__
+  size_type index() const
+  {
+    return threadIdx.x;
+  } // end index()
 
-    __host__ __device__
-    size_type grainsize() const
-    {
-      return static_grainsize;
-    } // end grainsize()
-}; // end grain_executor
+
+  __device__
+  size_type bound() const
+  {
+    return static_bound;
+  } // end bound()
+}; // end bounded_executor
+
+
+template<std::size_t b, typename SequentialExecutor>
+__device__
+bounded_executor<b> bound(const SequentialExecutor &)
+{
+  return bounded_executor<b>();
+} // end bound()
 
 
 }; // end bulk

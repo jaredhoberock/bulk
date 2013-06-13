@@ -4,6 +4,7 @@
 #include <bulk/execution_group.hpp>
 #include <bulk/malloc.hpp>
 #include <bulk/algorithm/copy.hpp>
+#include <bulk/algorithm/accumulate.hpp>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/execution_policy.h>
@@ -18,46 +19,52 @@ namespace bulk
 {
 
 
-template<std::size_t grainsize, unsigned int array_size, typename T, typename RandomAccessIterator, typename U, typename BinaryFunction>
+template<std::size_t bound, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
 __forceinline__ __device__
-void inclusive_scan(grain_executor<grainsize> &exec,
-                    const T (&first)[array_size],
-                    const T *last,
-                    RandomAccessIterator result,
-                    U init,
-                    BinaryFunction binary_op)
+RandomAccessIterator2
+  inclusive_scan(const bounded_executor<bound> &exec,
+                 RandomAccessIterator1 first,
+                 RandomAccessIterator1 last,
+                 RandomAccessIterator2 result,
+                 T init,
+                 BinaryFunction binary_op)
 {
   #pragma unroll
-  for(int i = 0; i < array_size; ++i)
+  for(int i = 0; i < exec.bound(); ++i)
   {
     if(first + i < last)
     {
       init = binary_op(init, first[i]);
       result[i] = init;
-    }
-  }
-}
+    } // end if
+  } // end for
+
+  return result + (last - first);
+} // end inclusive_scan
 
 
-template<std::size_t grainsize, unsigned int array_size, typename T, typename RandomAccessIterator, typename U, typename BinaryFunction>
+template<std::size_t bound, typename RandomAccessIterator1, typename RandomAccessIterator2, typename T, typename BinaryFunction>
 __forceinline__ __device__
-void exclusive_scan(grain_executor<grainsize> &exec,
-                    const T (&first)[array_size],
-                    const T *last,
-                    RandomAccessIterator result,
-                    U init,
-                    BinaryFunction binary_op)
+RandomAccessIterator2
+  exclusive_scan(const bounded_executor<bound> &exec,
+                 RandomAccessIterator1 first,
+                 RandomAccessIterator1 last,
+                 RandomAccessIterator2 result,
+                 T init,
+                 BinaryFunction binary_op)
 {
   #pragma unroll
-  for(int i = 0; i < array_size; ++i)
+  for(int i = 0; i < exec.bound(); ++i)
   {
     if(first + i < last)
     {
       result[i] = init;
       init = binary_op(init, first[i]);
-    }
-  }
-}
+    } // end if
+  } // end for
+
+  return result + (last - first);
+} // end exclusive_scan
 
 
 namespace detail
@@ -193,22 +200,19 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     
     // stage data through shared memory
     bulk::copy_n(g, first, partition_size, stage.inputs);
-    
-    // Transpose out of shared memory.
+
+    // make a local copy from the stage
     input_type local_inputs[grainsize];
 
     size_type local_offset = grainsize * tid;
-
     size_type local_size = thrust::max<size_type>(0,thrust::min<size_type>(grainsize, partition_size - grainsize * tid));
+
+    bulk::copy_n(bound<grainsize>(g.this_exec), stage.inputs + local_offset, local_size, local_inputs);
 
     // XXX this should be uninitialized<input_type>
     input_type x;
 
-    // make a local copy from the stage
-    bulk::copy_n(g.this_exec, stage.inputs + local_offset, local_size, local_inputs);
-
     // this loop is a sequential accumulate
-    // it's unclear how to abstract this
     #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
@@ -217,6 +221,14 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
         x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
       } // end if
     } // end for
+
+    // XXX RFE 1307230
+    //     this code yields a 30% speed down
+    //if(local_size)
+    //{
+    //  x = local_inputs[0];
+    //  x = bulk::accumulate(bound<grainsize-1>(g.this_exec), local_inputs + 1, local_inputs + local_size, x, binary_op);
+    //} // end if
 
     g.wait();
 
@@ -239,11 +251,11 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
 
     if(inclusive)
     {
-      bulk::inclusive_scan(g.this_exec, local_inputs, local_inputs + local_size, stage.results + local_offset, x, binary_op);
+      bulk::inclusive_scan(bound<grainsize>(g.this_exec), local_inputs, local_inputs + local_size, stage.results + local_offset, x, binary_op);
     } // end if
     else
     {
-      bulk::exclusive_scan(g.this_exec, local_inputs, local_inputs + local_size, stage.results + local_offset, x, binary_op);
+      bulk::exclusive_scan(bound<grainsize>(g.this_exec), local_inputs, local_inputs + local_size, stage.results + local_offset, x, binary_op);
     } // end else
 
     g.wait();

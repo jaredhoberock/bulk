@@ -12,19 +12,20 @@ namespace bulk
 {
 
 
-template<std::size_t grainsize,
-         std::size_t m,
-         typename T,
+template<std::size_t bound,
+         typename RandomAccessIterator1,
          typename Size,
-         typename RandomAccessIterator>
+         typename RandomAccessIterator2>
 __forceinline__ __device__
-RandomAccessIterator copy_n(grain_executor<grainsize> &,
-                            const T (&first)[m],
-                            Size n,
-                            RandomAccessIterator result)
+RandomAccessIterator2 copy_n(const bounded_executor<bound> &b,
+                             RandomAccessIterator1 first,
+                             Size n,
+                             RandomAccessIterator2 result)
 {
+  typedef typename bounded_executor<bound>::size_type size_type;
+
   #pragma unroll
-  for(int i = 0; i < m; ++i)
+  for(size_type i = 0; i < b.bound(); ++i)
   {
     if(i < n)
     {
@@ -35,29 +36,6 @@ RandomAccessIterator copy_n(grain_executor<grainsize> &,
   return result + n;
 } // end copy_n()
 
-
-template<std::size_t grainsize,
-         typename RandomAccessIterator,
-         typename Size,
-         typename T,
-         std::size_t m>
-__forceinline__ __device__
-T *copy_n(grain_executor<grainsize> &,
-          RandomAccessIterator first,
-          Size n,
-          T (&result)[m])
-{
-  #pragma unroll
-  for(int i = 0; i < m; ++i)
-  {
-    if(i < n)
-    {
-      result[i] = first[i];
-    } // end if
-  } // end for i
-
-  return result + n;
-} // end copy_n()
 
 
 namespace detail
@@ -247,35 +225,6 @@ typename enable_if_execution_group<ExecutionGroup, RandomAccessIterator2>::type
   copy_n(ExecutionGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
 {
   return detail::copy_n(g, first, n, result);
-} // end copy_n()
-
-
-template<std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2>
-__forceinline__ __device__
-RandomAccessIterator2 copy_n(bulk::grain_executor<grainsize> &,
-                             RandomAccessIterator1 first,
-                             Size n,
-                             RandomAccessIterator2 result)
-{
-  RandomAccessIterator2 return_me = result + n;
-
-  // XXX faster than grain_executor::size_type
-  typedef int size_type;
-
-  for(RandomAccessIterator1 last = first + n;
-      first < last;
-      first += grainsize, result += grainsize)
-  {
-    for(size_type i = 0; i < grainsize; ++i)
-    {
-      if(i < (last - first))
-      {
-        result[i] = first[i];
-      } // end if
-    } // end for
-  } // end for
-
-  return return_me;
 } // end copy_n()
 
 

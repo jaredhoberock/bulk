@@ -2,6 +2,7 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/algorithm/copy.hpp>
+#include <bulk/algorithm/accumulate.hpp>
 #include <bulk/malloc.hpp>
 #include <thrust/iterator/iterator_traits.h>
 #include <thrust/detail/minmax.h>
@@ -91,6 +92,8 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
     // load input into register
     value_type inputs[grainsize];
 
+    // XXX this is a sequential strided copy
+    //     the stride is groupsize
     if(partition_size >= elements_per_group)
     {
       for(size_type i = 0; i < grainsize; ++i)
@@ -209,19 +212,21 @@ T noncommutative_reduce(bulk::static_execution_group<groupsize,grainsize> &g,
     T this_sum;
     size_type local_offset = grainsize * g.this_exec.index();
 
-    for(size_type i = 0; i < grainsize; ++i)
+    size_type local_size = thrust::max<size_type>(0,thrust::min<size_type>(grainsize, partition_size - grainsize * tid));
+
+    if(local_size)
     {
-      size_type index = local_offset + i;
-      if(index < partition_size)
-      {
-        T x = buffer->inputs[index];
-        this_sum = i ? binary_op(this_sum, x) : x;
-      } // end if
-    } // end for
+      this_sum = buffer->inputs[local_offset];
+      this_sum = bulk::accumulate(bound<grainsize-1>(g.this_exec),
+                                  buffer->inputs + local_offset + 1,
+                                  buffer->inputs + local_offset + local_size,
+                                  this_sum,
+                                  binary_op);
+    } // end if
 
     g.wait();
 
-    if(local_offset < partition_size)
+    if(local_size)
     {
       buffer->sums[tid] = this_sum;
     } // end if

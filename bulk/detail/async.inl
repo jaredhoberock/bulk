@@ -18,6 +18,20 @@ namespace bulk
 namespace detail
 {
 
+
+template<typename Function>
+size_t maximum_potential_occupancy(Function kernel, size_t num_threads, size_t num_smem_bytes)
+{
+  namespace ns = thrust::system::cuda::detail;
+
+  ns::function_attributes_t attr = ns::function_attributes(kernel);
+
+  return ns::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(ns::device_properties(),
+                                                                             attr,
+                                                                             num_threads,
+                                                                             0);
+}
+
 using thrust::system::cuda::detail::detail::uninitialized;
 
 
@@ -47,6 +61,9 @@ void launch_by_pointer(const Function *f)
   Function f_reg = *f;
   f_reg();
 }
+
+
+bool verbose = false;
 
 
 template<typename ThreadGroup, typename Closure>
@@ -88,6 +105,11 @@ struct launcher
       //>>>(wrapped_task);
 
       thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
+
+      if(verbose)
+      {
+        std::cout << "async(): occupancy: " << maximum_potential_occupancy(get_global_function(), l.num_threads_per_group(), l.num_smem_bytes_per_group()) << std::endl;
+      } // end if
     } // end if
 
     // XXX this business is pretty expensive
@@ -116,20 +138,6 @@ typename disable_if_static_execution_group<
 
   return ns::block_size_with_maximum_potential_occupancy(attr, ns::device_properties());
 } // end choose_block_size()
-
-
-template<typename Function>
-size_t maximum_potential_occupancy(Function kernel, size_t num_threads)
-{
-  namespace ns = thrust::system::cuda::detail;
-
-  ns::function_attributes_t attr = ns::function_attributes(kernel);
-
-  return ns::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(ns::device_properties(),
-                                                                             attr,
-                                                                             num_threads,
-                                                                             0);
-}
 
 
 template<typename ThreadGroup, typename Function>
