@@ -6,6 +6,35 @@
 #include "time_invocation_cuda.hpp"
 
 
+template<int NT, int VT, typename It1, typename It2, typename T, typename Comp>
+__device__
+void my_DeviceMergeKeysIndices(It1 a_global, It2 b_global, int4 range, int tid, T* keys_shared, T* results, int* indices, Comp comp)
+{
+  int a0 = range.x;
+  int a1 = range.y;
+  int b0 = range.z;
+  int b1 = range.w;
+  int aCount = a1 - a0;
+  int bCount = b1 - b0;
+  
+  // Load the data into shared memory.
+  mgpu::DeviceLoad2ToShared<NT, VT, VT>(a_global + a0, aCount, b_global + b0, bCount, tid, keys_shared);
+  
+  // Run a merge path to find the start of the serial merge for each thread.
+  int diag = VT * tid;
+  int mp = mgpu::MergePath<mgpu::MgpuBoundsLower>(keys_shared, aCount, keys_shared + aCount, bCount, diag, comp);
+  
+  // Compute the ranges of the sources in shared memory.
+  int a0tid = mp;
+  int a1tid = aCount;
+  int b0tid = aCount + diag - mp;
+  int b1tid = aCount + bCount;
+  
+  // Serial merge into register.
+  mgpu::SerialMerge<VT, true>(keys_shared, a0tid, a1tid, b0tid, b1tid, results, indices, comp);
+}
+
+
 template<int NT, int VT, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename KeyType, typename Comp>
 __device__
 void my_DeviceMerge(KeysIt1 aKeys_global,
@@ -18,7 +47,7 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
 {
   KeyType results[VT];
   int indices[VT];
-  mgpu::DeviceMergeKeysIndices<NT, VT>(aKeys_global, bKeys_global, range, tid, keys_shared, results, indices, comp);
+  my_DeviceMergeKeysIndices<NT, VT>(aKeys_global, bKeys_global, range, tid, keys_shared, results, indices, comp);
   
   // Store merge results back to shared memory.
   mgpu::DeviceThreadToShared<VT>(results, tid, keys_shared);
