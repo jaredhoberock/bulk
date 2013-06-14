@@ -63,22 +63,20 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
          T init,
          BinaryFunction binary_op)
 {
-  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
-
   typedef int size_type;
 
   const size_type elements_per_group = groupsize * grainsize;
 
   size_type tid = g.this_exec.index();
 
-  value_type this_sum;
+  T this_sum;
 
   bool this_sum_defined = false;
 
   typename thrust::iterator_difference<RandomAccessIterator>::type n = last - first;
 
 #if __CUDA_ARCH__ >= 200
-  T *buffer = reinterpret_cast<value_type*>(bulk::malloc(g, groupsize * sizeof(T)));
+  T *buffer = reinterpret_cast<T*>(bulk::malloc(g, groupsize * sizeof(T)));
 #else
   __shared__ thrust::system::cuda::detail::detail::uninitialized_array<T,groupsize> buffer_impl;
   T *buffer = buffer_impl.data();
@@ -89,7 +87,7 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
     
     // load input into register
-    value_type inputs[grainsize];
+    T inputs[grainsize];
 
     // XXX this is a sequential strided copy
     //     the stride is groupsize
@@ -118,7 +116,7 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
       size_type index = groupsize * i + g.this_exec.index();
       if(index < partition_size)
       {
-        value_type x = inputs[i];
+        T x = inputs[i];
         this_sum = (i || this_sum_defined) ? binary_op(this_sum, x) : x;
       } // end if
     } // end for
