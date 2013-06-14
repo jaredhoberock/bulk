@@ -5,16 +5,62 @@
 #include <thrust/sort.h>
 #include "time_invocation_cuda.hpp"
 
-//template<typename T>
-//void my_merge(const thrust::device_vector<T> *a,
-//              const thrust::device_vector<T> *b,
-//              thrust::device_vector<T> *c)
-//{
-//  my_merge(a->begin(), a->end(),
-//           b->begin(), b->end(),
-//           c->begin(),
-//           thrust::less<T>());
-//}
+
+template<typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename RandomAccessIterator3,
+         typename Compare>
+RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
+                               RandomAccessIterator1 last1,
+                               RandomAccessIterator2 first2,
+                               RandomAccessIterator2 last2,
+                               RandomAccessIterator3 result,
+                               Compare comp)
+{
+  typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
+
+  mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
+
+  const int NT = 128;
+  const int VT = 11;
+  const int NV = NT * VT;
+
+  // find partitions
+  MGPU_MEM(int) partitionsDevice =
+    mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(
+      first1, last1 - first1,
+      first2, last2 - first2,
+      NV,
+      0,
+      comp,
+      *ctx);
+
+  // merge partitions
+  int n = (last1 - first1) + (last2 - first2);
+  int num_blocks = (n + NV - 1) / NV;
+  typedef mgpu::LaunchBoxVT<NT, VT> Tuning;
+  mgpu::KernelMerge<Tuning, false, false><<<num_blocks, NT, 0, 0>>>
+    (first1, (const int*)0, last1 - first1,
+     first2, (const int*)0, last2 - first2, 
+      partitionsDevice->get(), 0,
+      result,
+      (int*)0,
+      comp);
+
+  return result + n;
+} // end merge()
+
+
+template<typename T>
+void my_merge(const thrust::device_vector<T> *a,
+              const thrust::device_vector<T> *b,
+              thrust::device_vector<T> *c)
+{
+  my_merge(a->begin(), a->end(),
+           b->begin(), b->end(),
+           c->begin(),
+           thrust::less<T>());
+}
 
 
 template<typename T>
@@ -86,15 +132,15 @@ void compare(size_t n)
   thrust_merge(&a, &b, &c);
   double thrust_msecs = time_invocation_cuda(50, thrust_merge<T>, &a, &b, &c);
 
-  //my_merge(&a, &b, &c);
-  //double my_msecs = time_invocation_cuda(50, my_merge<T>, &a, &b, &c);
+  my_merge(&a, &b, &c);
+  double my_msecs = time_invocation_cuda(50, my_merge<T>, &a, &b, &c);
 
   std::cout << "Sean's time: " << sean_msecs << " ms" << std::endl;
   std::cout << "Thrust's time: " << thrust_msecs << " ms" << std::endl;
-  //std::cout << "My time:       " << my_msecs << " ms" << std::endl;
+  std::cout << "My time:       " << my_msecs << " ms" << std::endl;
 
-  //std::cout << "Performance relative to Sean: " << sean_msecs / my_msecs << std::endl;
-  //std::cout << "Performance relative to Thrust: " << thrust_msecs / my_msecs << std::endl;
+  std::cout << "Performance relative to Sean: " << sean_msecs / my_msecs << std::endl;
+  std::cout << "Performance relative to Thrust: " << thrust_msecs / my_msecs << std::endl;
 }
 
 
@@ -110,15 +156,13 @@ int main()
   thrust::sort(a.begin(), a.end());
   thrust::sort(b.begin(), b.end());
 
-  //int my_result = my_reduce(&vec, 13);
+  my_merge(&a, &b, &c);
 
-  //std::cout << "my_result: " << my_result << std::endl;
+  thrust::device_vector<int> ref(n);
 
-  //thrust::device_vector<int> ref(n);
+  thrust_merge(&a, &b, &ref);
 
-  //thrust_merge(&a, &b, &ref);
-
-  //assert(c == ref);
+  assert(c == ref);
 
   std::cout << "Large input: " << std::endl;
   std::cout << "int: " << std::endl;
