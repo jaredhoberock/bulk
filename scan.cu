@@ -98,14 +98,14 @@ struct accumulate_tiles
   __device__ void operator()(bulk::static_execution_group<groupsize,grainsize> &this_group,
                              RandomAccessIterator1 first,
                              Size n,
-                             Size partition_size,
+                             Size num_partitions_per_tile,
                              Size last_partial_partition_size,
                              RandomAccessIterator2 result,
                              BinaryFunction binary_op)
   {
     typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
     
-    thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), partition_size, last_partial_partition_size, groupsize * grainsize, n);
+    thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), num_partitions_per_tile, last_partial_partition_size, groupsize * grainsize, n);
 
     const bool commutative = thrust::detail::is_commutative<BinaryFunction>::value;
 
