@@ -6,14 +6,14 @@
 #include "time_invocation_cuda.hpp"
 
 
-template<int NT, int VT, bool HasValues, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename ValsIt1, typename ValsIt2, typename KeyType, typename ValsIt3, typename Comp>
+template<int NT, int VT, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename KeyType, typename Comp>
 __device__
-void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
-                    KeysIt2 bKeys_global, ValsIt2 bVals_global,
+void my_DeviceMerge(KeysIt1 aKeys_global,
+                    KeysIt2 bKeys_global,
                     int tid, int block,
                     int4 range,
-                    KeyType* keys_shared, int* indices_shared,
-                    KeysIt3 keys_global, ValsIt3 vals_global,
+                    KeyType* keys_shared,
+                    KeysIt3 keys_global,
                     Comp comp)
 {
   KeyType results[VT];
@@ -27,14 +27,6 @@ void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
   int aCount = range.y - range.x;
   int bCount = range.w - range.z;
   mgpu::DeviceSharedToGlobal<NT, VT>(aCount + bCount, keys_shared, tid, keys_global + NT * VT * block);
-  
-  // Copy the values.
-  if(HasValues)
-  {
-    mgpu::DeviceThreadToShared<VT>(indices, tid, indices_shared);
-    
-    mgpu::DeviceTransferMergeValues<NT, VT>(aCount + bCount, aVals_global + range.x, bVals_global + range.z, aCount, indices_shared, tid, vals_global + NT * VT * block);
-  }
 }
 
 
@@ -67,14 +59,14 @@ void KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
   
   int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, coop, NT * VT, mp_global);
   
-  my_DeviceMerge<NT, VT, HasValues>(aKeys_global, aVals_global,
-                                    bKeys_global, bVals_global,
-                                    tid,
-                                    block,
-                                    range,
-                                    shared.keys, shared.indices, 
-                                    keys_global, vals_global,
-                                    comp);
+  my_DeviceMerge<NT, VT>(aKeys_global,
+                         bKeys_global,
+                         tid,
+                         block,
+                         range,
+                         shared.keys, 
+                         keys_global,
+                         comp);
 }
 
 
