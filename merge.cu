@@ -6,6 +6,78 @@
 #include "time_invocation_cuda.hpp"
 
 
+template<int NT, int VT, bool HasValues, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename ValsIt1, typename ValsIt2, typename KeyType, typename ValsIt3, typename Comp>
+__device__
+void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
+                    KeysIt2 bKeys_global, ValsIt2 bVals_global,
+                    int tid, int block,
+                    int4 range,
+                    KeyType* keys_shared, int* indices_shared,
+                    KeysIt3 keys_global, ValsIt3 vals_global,
+                    Comp comp)
+{
+  KeyType results[VT];
+  int indices[VT];
+  mgpu::DeviceMergeKeysIndices<NT, VT>(aKeys_global, bKeys_global, range, tid, keys_shared, results, indices, comp);
+  
+  // Store merge results back to shared memory.
+  mgpu::DeviceThreadToShared<VT>(results, tid, keys_shared);
+  
+  // Store merged keys to global memory.
+  int aCount = range.y - range.x;
+  int bCount = range.w - range.z;
+  mgpu::DeviceSharedToGlobal<NT, VT>(aCount + bCount, keys_shared, tid, keys_global + NT * VT * block);
+  
+  // Copy the values.
+  if(HasValues)
+  {
+    mgpu::DeviceThreadToShared<VT>(indices, tid, indices_shared);
+    
+    mgpu::DeviceTransferMergeValues<NT, VT>(aCount + bCount, aVals_global + range.x, bVals_global + range.z, aCount, indices_shared, tid, vals_global + NT * VT * block);
+  }
+}
+
+
+template<typename Tuning, bool HasValues, bool MergeSort, typename KeysIt1, 
+	typename KeysIt2, typename KeysIt3, typename ValsIt1, typename ValsIt2,
+	typename ValsIt3, typename Comp>
+__global__
+void KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
+                 KeysIt2 bKeys_global, ValsIt2 bVals_global, int bCount,
+                 const int* mp_global,
+                 int coop,
+                 KeysIt3 keys_global, ValsIt3 vals_global,
+                 Comp comp)
+{
+  typedef MGPU_LAUNCH_PARAMS Params;
+  typedef typename std::iterator_traits<KeysIt1>::value_type KeyType;
+  typedef typename std::iterator_traits<ValsIt1>::value_type ValType;
+  
+  const int NT = Params::NT;
+  const int VT = Params::VT;
+  const int NV = NT * VT;
+  union Shared {
+  	KeyType keys[NT * (VT + 1)];
+  	int indices[NV];
+  };
+  __shared__ Shared shared;
+  
+  int tid = threadIdx.x;
+  int block = blockIdx.x;
+  
+  int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, coop, NT * VT, mp_global);
+  
+  my_DeviceMerge<NT, VT, HasValues>(aKeys_global, aVals_global,
+                                    bKeys_global, bVals_global,
+                                    tid,
+                                    block,
+                                    range,
+                                    shared.keys, shared.indices, 
+                                    keys_global, vals_global,
+                                    comp);
+}
+
+
 template<typename RandomAccessIterator1,
          typename RandomAccessIterator2,
          typename RandomAccessIterator3,
@@ -23,7 +95,10 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
 
   const int NT = 128;
   const int VT = 11;
-  const int NV = NT * VT;
+  typedef mgpu::LaunchBoxVT<NT, VT> Tuning;
+  int2 launch = Tuning::GetLaunchParams(*ctx);
+  
+  const int NV = launch.x * launch.y;
 
   // find partitions
   MGPU_MEM(int) partitionsDevice =
@@ -38,8 +113,7 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
   // merge partitions
   int n = (last1 - first1) + (last2 - first2);
   int num_blocks = (n + NV - 1) / NV;
-  typedef mgpu::LaunchBoxVT<NT, VT> Tuning;
-  mgpu::KernelMerge<Tuning, false, false><<<num_blocks, NT, 0, 0>>>
+  mgpu::KernelMerge<Tuning, false, false><<<num_blocks, launch.x, 0, 0>>>
     (first1, (const int*)0, last1 - first1,
      first2, (const int*)0, last2 - first2, 
       partitionsDevice->get(), 0,
@@ -72,7 +146,7 @@ void sean_merge(const thrust::device_vector<T> *a,
   mgpu::MergeKeys(a->begin(), a->size(),
                   b->begin(), b->size(),
                   c->begin(),
-                  thrust::less<int>(),
+                  thrust::less<T>(),
                   *ctx);
 }
 
@@ -126,14 +200,14 @@ void compare(size_t n)
   thrust::sort(a.begin(), a.end());
   thrust::sort(b.begin(), b.end());
 
+  my_merge(&a, &b, &c);
+  double my_msecs = time_invocation_cuda(50, my_merge<T>, &a, &b, &c);
+
   sean_merge(&a, &b, &c);
   double sean_msecs = time_invocation_cuda(50, sean_merge<T>, &a, &b, &c);
 
   thrust_merge(&a, &b, &c);
   double thrust_msecs = time_invocation_cuda(50, thrust_merge<T>, &a, &b, &c);
-
-  my_merge(&a, &b, &c);
-  double my_msecs = time_invocation_cuda(50, my_merge<T>, &a, &b, &c);
 
   std::cout << "Sean's time: " << sean_msecs << " ms" << std::endl;
   std::cout << "Thrust's time: " << thrust_msecs << " ms" << std::endl;
