@@ -60,7 +60,8 @@ struct reduce_partitions
   void operator()(ExecutionGroup &this_group, Iterator1 first, Iterator1 last, Iterator2 result, BinaryOperation binary_op)
   {
     // noticeably faster to pass the last element as the init
-    (*this)(this_group, first, last - 1, result, thrust::raw_reference_cast(last[-1]), binary_op);
+    typename thrust::iterator_value<Iterator2>::type init = last[-1];
+    (*this)(this_group, first, last - 1, result, init, binary_op);
   }
 
 
