@@ -79,9 +79,11 @@ struct launcher
   {
     l.configure(c);
 
+    size_t heap_size = choose_heap_size(l.num_threads_per_group(), l.num_smem_bytes_per_group());
+
     if(l.num_groups() > 0 && l.num_threads_per_group() > 0)
     {
-      task_type task(c, l.num_smem_bytes_per_group());
+      task_type task(c, heap_size);
 
       //uninitialized<task_type> wrapped_task;
       //wrapped_task.construct(task);
@@ -99,7 +101,7 @@ struct launcher
       launch_by_value<<<
         static_cast<unsigned int>(l.num_groups()),
         static_cast<unsigned int>(l.num_threads_per_group()),
-        static_cast<size_t>(l.num_smem_bytes_per_group()),
+        heap_size,
         l.stream()
       >>>(task);
       //>>>(wrapped_task);
@@ -122,6 +124,72 @@ struct launcher
   {
     return launch_by_value<task_type>;
   } // end get_launch_function()
+
+
+  typedef thrust::system::cuda::detail::function_attributes_t function_attributes_t;
+
+  static function_attributes_t function_attributes()
+  {
+    return thrust::system::cuda::detail::function_attributes(get_global_function());
+  } // end function_attributes()
+
+
+  typedef thrust::system::cuda::detail::device_properties_t device_properties_t;
+
+  static device_properties_t device_properties()
+  {
+    return thrust::system::cuda::detail::device_properties();
+  } // end device_properties()
+
+
+  static size_t max_active_blocks_per_multiprocessor(const device_properties_t &props,
+                                                     const function_attributes_t &attr,
+                                                     size_t num_threads_per_block,
+                                                     size_t num_smem_bytes_per_block)
+  {
+    return thrust::system::cuda::detail::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(props, attr, num_threads_per_block, num_smem_bytes_per_block);
+  } // end max_active_blocks_per_multiprocessor()
+
+
+  // returns the maximum number of additional dynamic smem bytes that would not lower the kernel's occupancy
+  static size_t dynamic_smem_occupancy_limit(device_properties_t &props, function_attributes_t &attr, size_t num_threads_per_block, size_t num_smem_bytes_per_block)
+  {
+    // figure out the kernel's occupancy with 0 bytes of dynamic smem
+    size_t occupancy = max_active_blocks_per_multiprocessor(props, attr, num_threads_per_block, num_smem_bytes_per_block);
+
+    return thrust::system::cuda::detail::proportional_smem_allocation(props, attr, occupancy);
+  } // end smem_occupancy_limit()
+
+
+  static size_t choose_heap_size(size_t group_size, size_t requested_size)
+  {
+    function_attributes_t attr = function_attributes();
+
+    // if the kernel's ptx version is < 200, we return 0 because there is no heap
+    if(attr.ptxVersion < 20)
+    {
+      return 0;
+    } // end if
+
+    // how much smem could we allocate without reducing occupancy?
+    device_properties_t props = device_properties();
+    size_t result = dynamic_smem_occupancy_limit(props, attr, group_size, 0);
+
+    // did the caller request a particular size?
+    if(requested_size != bulk::group_launch_config<ThreadGroup>::use_default)
+    {
+      // add in a few bytes to the request for the heap data structure
+      requested_size += 48;
+
+      if(requested_size > result)
+      {
+        // the request overflows occupancy, so we might as well bump it to the next level
+        result = dynamic_smem_occupancy_limit(props, attr, group_size, requested_size);
+      } // end else
+    } // end i
+
+    return result;
+  } // end choose_smem_size()
 }; // end launcher
 
 
@@ -138,23 +206,6 @@ typename disable_if_static_execution_group<
 
   return ns::block_size_with_maximum_potential_occupancy(attr, ns::device_properties());
 } // end choose_block_size()
-
-
-template<typename ThreadGroup, typename Function>
-size_t choose_smem_size(ThreadGroup g, Function f)
-{
-  namespace ns = thrust::system::cuda::detail;
-
-  ns::function_attributes_t attr = ns::function_attributes(launcher<ThreadGroup,Function>::get_global_function());
-
-  size_t occupancy =
-    ns::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(ns::device_properties(),
-                                                                        attr,
-                                                                        g.size(),
-                                                                        0);
-
-  return ns::proportional_smem_allocation(ns::device_properties(), attr, occupancy);
-} // end choose_smem_size()
 
 
 } // end detail
@@ -177,12 +228,6 @@ template<typename ThreadGroup>
 
     m_num_groups = thrust::detail::util::divide_ri(m_num_threads, num_threads_per_group());
   } // end if
-
-  if(m_num_smem_bytes_per_group == use_default)
-  {
-    m_num_smem_bytes_per_group = detail::choose_smem_size(m_example_group, f);
-  } // end if
-
 } // end launch::configure()
 
 
@@ -195,10 +240,7 @@ template<typename ThreadGroup>
                     Function
                   >::type *)
 {
-  if(m_num_smem_bytes_per_group == use_default)
-  {
-    m_num_smem_bytes_per_group = detail::choose_smem_size(m_example_group, f);
-  } // end if
+  // no op
 } // end launch::configure()
 
 
