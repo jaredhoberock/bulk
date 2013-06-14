@@ -154,7 +154,10 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     const Size partition_size = group1.size() * group1.grainsize();
     
     Size num_partitions = (n + partition_size - 1) / partition_size;
-    Size num_groups = thrust::min<Size>(group1.hardware_concurrency() * 25, num_partitions);
+
+    // 20 determined from empirical testing on k20c & GTX 480
+    int subscription = 20;
+    Size num_groups = thrust::min<Size>(subscription * group1.hardware_concurrency(), num_partitions);
 
     // each group consumes one tile of data
     Size num_partitions_per_tile = num_partitions / num_groups;
