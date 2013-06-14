@@ -143,7 +143,7 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
   {
     bulk::static_execution_group<512,3> group;
     typedef bulk::detail::scan_detail::scan_buffer<512,3,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type;
-    Size heap_size = sizeof(heap_type) + 48;
+    Size heap_size = sizeof(heap_type);
     bulk::async(bulk::par(group, 1, heap_size), inclusive_scan_n(), bulk::there, first, n, result, init, binary_op);
   } // end if
   else
@@ -167,19 +167,19 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     thrust::detail::temporary_array<intermediate_type,thrust::cuda::tag> carries(t, num_groups);
     	
     // n loads + num_groups stores
-    Size heap_size = group1.size() * sizeof(intermediate_type) + 48;
+    Size heap_size = group1.size() * sizeof(intermediate_type);
     bulk::async(bulk::par(group1,num_groups,heap_size), accumulate_tiles(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), binary_op);
     
     // scan the sums to get the carries
     // num_groups loads + num_groups stores
     bulk::static_execution_group<256,3> group2;
     typedef bulk::detail::scan_detail::scan_buffer<256,3,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type2;
-    heap_size = sizeof(heap_type2) + 48;
+    heap_size = sizeof(heap_type2);
     bulk::async(bulk::par(group2,1,heap_size), exclusive_scan_n(), bulk::there, carries.begin(), num_groups, carries.begin(), init, binary_op);
 
     // do the downsweep - n loads, n stores
     typedef bulk::detail::scan_detail::scan_buffer<128,7,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type3;
-    heap_size = sizeof(heap_type3) + 48;
+    heap_size = sizeof(heap_type3);
     bulk::async(bulk::par(group1,num_groups,heap_size), inclusive_downsweep(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), result, binary_op);
   } // end else
 
