@@ -7,58 +7,7 @@
 #include "time_invocation_cuda.hpp"
 
 
-template<int VT, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename Compare>
-__device__
-void my_SerialMerge(RandomAccessIterator1 first1, RandomAccessIterator1 last1,
-                    RandomAccessIterator2 first2, RandomAccessIterator2 last2,
-                    RandomAccessIterator3 result,
-                    Compare comp)
-{ 
-  typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type1;
-  typedef typename thrust::iterator_value<RandomAccessIterator2>::type value_type2;
-
-  int n1 = last1 - first1;
-  int idx1 = 0;
-
-  int n2 = last2 - first2;
-  int idx2 = 0;
-
-  value_type1 a = *first1;
-  value_type2 b = *first2;
-
-  bool exhausted2 = idx2 >= n2;
-  
-  #pragma unroll
-  for(int i = 0; i < VT; ++i)
-  {
-    //bool p = (idx2 >= n2) || ((idx1 < n1) && !comp(b, a));
-    bool p = exhausted2 || ((idx1 < n1) && !comp(b, a));
-    
-    if(idx1 < n1 || !exhausted2)
-    {
-      result[i] = p ? a : b;
-    }
-    
-    if(p)
-    {
-      ++idx1;
-
-      // XXX making this a conditional load is pretty expensive for some reason
-      a = first1[idx1];
-    }
-    else
-    {
-      ++idx2;
-
-      if(idx2 >= n2) exhausted2 = true;
-
-      // XXX making this a conditional load is pretty expensive for some reason
-      b = first2[idx2];
-    }
-  }
-}
-
-
+// XXX this loop is what merge's performance depends on
 template<std::size_t bound,
          typename InputIterator1,
          typename InputIterator2,
@@ -93,8 +42,9 @@ OutputIterator bounded_merge(InputIterator1 first1, InputIterator1 last1,
     b = first2[0];
   }
 
+  int i = 0;
   #pragma unroll
-  for(int i = 0; i < bound; ++i)
+  for(; i < bound; ++i)
   {
     // 4 cases:
     // 0. both ranges are exhausted
@@ -107,7 +57,7 @@ OutputIterator bounded_merge(InputIterator1 first1, InputIterator1 last1,
 
     if(exhausted1 && exhausted2)
     {
-      ;
+      break;
     } // end if
     else if(exhausted1)
     {
@@ -144,7 +94,7 @@ OutputIterator bounded_merge(InputIterator1 first1, InputIterator1 last1,
     } // end else
   } // end for i
 
-  return result;
+  return result + i;
 } // end bounded_merge
 
 
@@ -172,10 +122,10 @@ void bounded_inplace_merge(RandomAccessIterator first, RandomAccessIterator midd
   // Serial merge into register.
   typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
   value_type local_result[grainsize];
-  my_SerialMerge<grainsize>(first + local_offset1, middle,
-                            first + local_offset2, last,
-                            local_result,
-                            comp);
+  bounded_merge<grainsize>(first + local_offset1, middle,
+                           first + local_offset2, last,
+                           local_result,
+                           comp);
 
   g.wait();
 
@@ -227,10 +177,8 @@ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
   
   const int NT = Params::NT;
   const int VT = Params::VT;
-  union Shared {
-  	KeyType keys[NT * (VT + 1)];
-  };
-  __shared__ Shared shared;
+
+  __shared__ KeyType s_keys[NT * VT];
   
   int tid = threadIdx.x;
   int block = blockIdx.x;
@@ -242,7 +190,7 @@ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
                          tid,
                          block,
                          range,
-                         shared.keys, 
+                         s_keys, 
                          keys_global,
                          comp);
 }
@@ -263,8 +211,10 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
 
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
-  const int NT = 128;
-  const int VT = 11;
+  // XXX these seem to work well for K20c but could use some comprehensive tuning
+  const int NT = 128 + 64;
+  const int VT = 9;
+
   typedef mgpu::LaunchBoxVT<NT, VT> Tuning;
   int2 launch = Tuning::GetLaunchParams(*ctx);
   
