@@ -143,7 +143,7 @@ void bounded_inplace_merge(RandomAccessIterator first, RandomAccessIterator midd
 
   // local result back to source
   int local_offset = grainsize * threadIdx.x;
-  int local_size = thrust::min<int>(grainsize, n1 + n2 - local_offset);
+  int local_size = thrust::max<int>(0, thrust::min<int>(grainsize, n1 + n2 - local_offset));
   bulk::copy_n(bulk::bound<grainsize>(g), local_result, local_size, first + local_offset); 
 
   g.wait();
