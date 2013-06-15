@@ -8,7 +8,7 @@
 
 template<int VT, bool RangeCheck, typename T, typename Comp>
 __device__
-void my_SerialMerge(const T* keys_shared, int aBegin, int aEnd, int bBegin, int bEnd, T* results, int* indices, Comp comp)
+void my_SerialMerge(const T* keys_shared, int aBegin, int aEnd, int bBegin, int bEnd, T* results, Comp comp)
 { 
   T aKey = keys_shared[aBegin];
   T bKey = keys_shared[bBegin];
@@ -27,7 +27,6 @@ void my_SerialMerge(const T* keys_shared, int aBegin, int aEnd, int bBegin, int 
     }
     
     results[i] = p ? aKey : bKey;
-    indices[i] = p ? aBegin : bBegin;
     
     if(p) aKey = keys_shared[++aBegin];
     else bKey = keys_shared[++bBegin];
@@ -38,7 +37,7 @@ void my_SerialMerge(const T* keys_shared, int aBegin, int aEnd, int bBegin, int 
 
 template<int NT, int VT, typename It1, typename It2, typename T, typename Comp>
 __device__
-void my_DeviceMergeKeysIndices(It1 a_global, It2 b_global, int4 range, int tid, T* keys_shared, T* results, int* indices, Comp comp)
+void my_DeviceMergeKeysIndices(It1 a_global, It2 b_global, int4 range, int tid, T* keys_shared, T* results, Comp comp)
 {
   int a0 = range.x;
   int a1 = range.y;
@@ -61,7 +60,7 @@ void my_DeviceMergeKeysIndices(It1 a_global, It2 b_global, int4 range, int tid, 
   int b1tid = aCount + bCount;
   
   // Serial merge into register.
-  my_SerialMerge<VT, true>(keys_shared, a0tid, a1tid, b0tid, b1tid, results, indices, comp);
+  my_SerialMerge<VT, true>(keys_shared, a0tid, a1tid, b0tid, b1tid, results, comp);
 }
 
 
@@ -76,8 +75,7 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
                     Comp comp)
 {
   KeyType results[VT];
-  int indices[VT];
-  my_DeviceMergeKeysIndices<NT, VT>(aKeys_global, bKeys_global, range, tid, keys_shared, results, indices, comp);
+  my_DeviceMergeKeysIndices<NT, VT>(aKeys_global, bKeys_global, range, tid, keys_shared, results, comp);
   
   // Store merge results back to shared memory.
   mgpu::DeviceThreadToShared<VT>(results, tid, keys_shared);
@@ -106,10 +104,8 @@ void KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
   
   const int NT = Params::NT;
   const int VT = Params::VT;
-  const int NV = NT * VT;
   union Shared {
   	KeyType keys[NT * (VT + 1)];
-  	int indices[NV];
   };
   __shared__ Shared shared;
   
