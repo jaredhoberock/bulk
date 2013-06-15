@@ -3,6 +3,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/merge.h>
 #include <thrust/sort.h>
+#include <bulk/bulk.hpp>
 #include "time_invocation_cuda.hpp"
 
 
@@ -153,6 +154,8 @@ template<std::size_t groupsize, std::size_t grainsize,
 __device__
 void bounded_inplace_merge(RandomAccessIterator first, RandomAccessIterator middle, RandomAccessIterator last, Compare comp)
 {
+  bulk::static_execution_group<groupsize,grainsize> g;
+
   int n1 = middle - first;
   int n2 = last - middle;
 
@@ -174,11 +177,14 @@ void bounded_inplace_merge(RandomAccessIterator first, RandomAccessIterator midd
                             local_result,
                             comp);
 
-  // XXX is this barrier necessary here?
-  __syncthreads();
+  g.wait();
 
-  // copy from registers back to source
-  mgpu::DeviceThreadToShared<grainsize>(local_result, threadIdx.x, first);
+  // local result back to source
+  int local_offset = grainsize * threadIdx.x;
+  int local_size = thrust::min<int>(grainsize, n1 + n2 - local_offset);
+  bulk::copy_n(bulk::bound<grainsize>(g), local_result, local_size, first + local_offset); 
+
+  g.wait();
 }
 
 
