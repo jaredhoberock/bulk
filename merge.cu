@@ -6,7 +6,7 @@
 #include "time_invocation_cuda.hpp"
 
 
-template<int VT, bool RangeCheck, typename T, typename Comp>
+template<int VT, typename T, typename Comp>
 __device__
 void my_SerialMerge(const T* keys_shared, int aBegin, int aEnd, int bBegin, int bEnd, T* results, Comp comp)
 { 
@@ -16,15 +16,7 @@ void my_SerialMerge(const T* keys_shared, int aBegin, int aEnd, int bBegin, int 
   #pragma unroll
   for(int i = 0; i < VT; ++i)
   {
-    bool p;
-    if(RangeCheck) 
-    {
-      p = (bBegin >= bEnd) || ((aBegin < aEnd) && !comp(bKey, aKey));
-    }
-    else
-    {
-      p = !comp(bKey, aKey);
-    }
+    bool p = (bBegin >= bEnd) || ((aBegin < aEnd) && !comp(bKey, aKey));
     
     results[i] = p ? aKey : bKey;
     
@@ -60,7 +52,7 @@ void my_DeviceMergeKeysIndices(It1 a_global, It2 b_global, int4 range, int tid, 
   int b1tid = aCount + bCount;
   
   // Serial merge into register.
-  my_SerialMerge<VT, true>(keys_shared, a0tid, a1tid, b0tid, b1tid, results, comp);
+  my_SerialMerge<VT>(keys_shared, a0tid, a1tid, b0tid, b1tid, results, comp);
 }
 
 
