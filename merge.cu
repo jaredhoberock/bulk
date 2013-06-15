@@ -149,7 +149,7 @@ OutputIterator bounded_merge(InputIterator1 first1, InputIterator1 last1,
 
 template<int NT, int VT, typename T, typename Comp>
 __device__
-void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, T* results, Comp comp)
+void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, Comp comp)
 {
   // Run a merge path to find the start of the serial merge for each thread.
   int diag = VT * tid;
@@ -160,11 +160,15 @@ void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, 
   int local_offset2 = aCount + diag - mp;
   
   // Serial merge into register.
+  T local_result[VT];
   my_SerialMerge<VT>(keys_shared + local_offset1, keys_shared + aCount,
                      keys_shared + local_offset2, keys_shared + aCount + bCount,
-                     results,
+                     local_result,
                      comp);
   __syncthreads();
+
+  // copy from registers back to source
+  mgpu::DeviceThreadToShared<VT>(local_result, tid, keys_shared);
 }
 
 
@@ -183,11 +187,7 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
   int bCount = range.w - range.z;
   mgpu::DeviceLoad2ToShared<NT, VT, VT>(aKeys_global + range.x, aCount, bKeys_global + range.z, bCount, tid, keys_shared);
 
-  KeyType results[VT];
-  my_DeviceMergeKeysIndices<NT, VT>(tid, keys_shared, aCount, bCount, results, comp);
-  
-  // Store merge results back to shared memory.
-  mgpu::DeviceThreadToShared<VT>(results, tid, keys_shared);
+  my_DeviceMergeKeysIndices<NT, VT>(tid, keys_shared, aCount, bCount, comp);
   
   // Store merged keys to global memory.
   mgpu::DeviceSharedToGlobal<NT, VT>(aCount + bCount, keys_shared, tid, keys_global + NT * VT * block);
