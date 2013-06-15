@@ -6,25 +6,68 @@
 #include "time_invocation_cuda.hpp"
 
 
-template<int VT, typename T, typename Comp>
+template<std::size_t bound,
+         typename InputIterator1,
+         typename InputIterator2,
+         typename OutputIterator,
+         typename Compare>
 __device__
-void my_SerialMerge(const T* keys_shared, int aBegin, int aEnd, int bBegin, int bEnd, T* results, Comp comp)
-{ 
-  T aKey = keys_shared[aBegin];
-  T bKey = keys_shared[bBegin];
-  
+void bounded_merge(InputIterator1 first1, InputIterator1 last1,
+                   InputIterator2 first2, InputIterator2 last2,
+                   OutputIterator result,
+                   Compare comp)
+{
+  typedef typename thrust::iterator_value<InputIterator1>::type value_type1;
+  typedef typename thrust::iterator_value<InputIterator2>::type value_type2;
+
   #pragma unroll
-  for(int i = 0; i < VT; ++i)
+  for(int i = 0; i < bound; ++i)
   {
-    bool p = (bBegin >= bEnd) || ((aBegin < aEnd) && !comp(bKey, aKey));
-    
-    results[i] = p ? aKey : bKey;
-    
-    if(p) aKey = keys_shared[++aBegin];
-    else bKey = keys_shared[++bBegin];
-  }
-  __syncthreads();
-}
+    // 4 cases:
+    // 1. both ranges are exhausted
+    // 1. range 1 is exhausted
+    // 2. range 2 is exhausted
+    // 3. neither range is exhausted
+
+    const bool exhausted1 = first1 >= last1;
+    const bool exhausted2 = first2 >= last2;
+
+    if(exhausted1 && exhausted2)
+    {
+      ;
+    } // end if
+    else if(exhausted1)
+    {
+      *result = *first2;
+      ++first2;
+    } // end else if
+    else if(exhausted2)
+    {
+      *result = *first1;
+      ++first1;
+    } // end else if
+    else
+    {
+      value_type1 a = *first1;
+      value_type2 b = *first2;
+
+      if(!comp(b,a))
+      {
+        *result = a;
+        ++result;
+        ++first1;
+      } // end if
+      else
+      {
+        *result = b;
+        ++result;
+        ++first2;
+      } // end else
+    } // end else
+  } // end for i
+
+  return result;
+} // end bounded_merge
 
 
 template<int NT, int VT, typename It1, typename It2, typename T, typename Comp>
@@ -45,14 +88,17 @@ void my_DeviceMergeKeysIndices(It1 a_global, It2 b_global, int4 range, int tid, 
   int diag = VT * tid;
   int mp = mgpu::MergePath<mgpu::MgpuBoundsLower>(keys_shared, aCount, keys_shared + aCount, bCount, diag, comp);
   
-  // Compute the ranges of the sources in shared memory.
-  int a0tid = mp;
-  int a1tid = aCount;
-  int b0tid = aCount + diag - mp;
-  int b1tid = aCount + bCount;
+  // compute the local offsets of each input range within keys_shared
+  int local_offset1 = mp;
+  int local_offset2 = aCount + diag - mp;
   
   // Serial merge into register.
-  my_SerialMerge<VT>(keys_shared, a0tid, a1tid, b0tid, b1tid, results, comp);
+  bounded_merge<VT>(keys_shared + local_offset1, aCount,
+                    keys_shared + local_offset2, bCount,
+                    results,
+                    comp);
+
+  __syncthreads();
 }
 
 
