@@ -147,28 +147,38 @@ OutputIterator bounded_merge(InputIterator1 first1, InputIterator1 last1,
 } // end bounded_merge
 
 
-template<int NT, int VT, typename T, typename Comp>
+template<std::size_t groupsize, std::size_t grainsize,
+         typename RandomAccessIterator,
+         typename Compare>
 __device__
-void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, Comp comp)
+void bounded_inplace_merge(RandomAccessIterator first, RandomAccessIterator middle, RandomAccessIterator last, Compare comp)
 {
+  int n1 = middle - first;
+  int n2 = last - middle;
+
   // Run a merge path to find the start of the serial merge for each thread.
-  int diag = VT * tid;
-  int mp = mgpu::MergePath<mgpu::MgpuBoundsLower>(keys_shared, aCount, keys_shared + aCount, bCount, diag, comp);
+  int diag = grainsize * threadIdx.x;
+
+  // XXX could invent an "inplace_merge_path" variant which didn't require redundant parameters n1 & middle
+  int mp = mgpu::MergePath<mgpu::MgpuBoundsLower>(first, n1, middle, n2, diag, comp);
   
   // Compute the ranges of the sources in shared memory.
   int local_offset1 = mp;
-  int local_offset2 = aCount + diag - mp;
+  int local_offset2 = n1 + diag - mp;
   
   // Serial merge into register.
-  T local_result[VT];
-  my_SerialMerge<VT>(keys_shared + local_offset1, keys_shared + aCount,
-                     keys_shared + local_offset2, keys_shared + aCount + bCount,
-                     local_result,
-                     comp);
+  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
+  value_type local_result[grainsize];
+  my_SerialMerge<grainsize>(first + local_offset1, middle,
+                            first + local_offset2, last,
+                            local_result,
+                            comp);
+
+  // XXX is this barrier necessary here?
   __syncthreads();
 
   // copy from registers back to source
-  mgpu::DeviceThreadToShared<VT>(local_result, tid, keys_shared);
+  mgpu::DeviceThreadToShared<grainsize>(local_result, threadIdx.x, first);
 }
 
 
@@ -187,7 +197,7 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
   int bCount = range.w - range.z;
   mgpu::DeviceLoad2ToShared<NT, VT, VT>(aKeys_global + range.x, aCount, bKeys_global + range.z, bCount, tid, keys_shared);
 
-  my_DeviceMergeKeysIndices<NT, VT>(tid, keys_shared, aCount, bCount, comp);
+  bounded_inplace_merge<NT,VT>(keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
   
   // Store merged keys to global memory.
   mgpu::DeviceSharedToGlobal<NT, VT>(aCount + bCount, keys_shared, tid, keys_global + NT * VT * block);
