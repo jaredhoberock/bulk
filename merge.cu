@@ -4,6 +4,7 @@
 #include <thrust/merge.h>
 #include <thrust/sort.h>
 #include <bulk/bulk.hpp>
+#include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include "time_invocation_cuda.hpp"
 
 
@@ -28,19 +29,20 @@ OutputIterator bounded_merge(InputIterator1 first1, InputIterator1 last1,
   int n2 = last2 - first2;
   int idx2 = 0;
 
-  // XXX these should be uninitialized
-  value_type1 a;
-  value_type2 b;
+  using thrust::system::cuda::detail::detail::uninitialized;
+
+  uninitialized<value_type1> a;
+  uninitialized<value_type2> b;
 
   if(n1)
   {
-    a = first1[0];
-  }
+    a.construct(first1[0]);
+  } // end if
 
   if(n2)
   {
-    b = first2[0];
-  }
+    b.construct(first2[0]);
+  } // end if
 
   int i = 0;
   #pragma unroll
@@ -71,7 +73,7 @@ OutputIterator bounded_merge(InputIterator1 first1, InputIterator1 last1,
     } // end else if
     else
     {
-      if(!comp(b,a))
+      if(!comp(b.get(),a.get()))
       {
         result[i] = a;
         ++idx1;
@@ -93,6 +95,16 @@ OutputIterator bounded_merge(InputIterator1 first1, InputIterator1 last1,
       } // end else
     } // end else
   } // end for i
+
+  if(n1)
+  {
+    a.destroy();
+  } // end if
+
+  if(n2)
+  {
+    b.destroy();
+  } // end if
 
   return result + i;
 } // end bounded_merge
