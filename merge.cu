@@ -4,6 +4,7 @@
 #include <thrust/merge.h>
 #include <thrust/sort.h>
 #include <bulk/bulk.hpp>
+#include "join_iterator.hpp"
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include "time_invocation_cuda.hpp"
 
@@ -149,6 +150,56 @@ void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
 }
 
 
+// XXX this is essentially a bounded version for group copy_n
+template<int NT, int VT, typename InputIt1, typename T>
+__device__
+void my_DeviceLoadToShared(InputIt1 src, int n, T *dest)
+{
+  int tid = threadIdx.x;
+  T reg[VT];
+  if(NT * VT == n)
+  {
+    #pragma unroll
+    for(int i = 0; i < VT; ++i)
+    {
+      int src_idx = NT * i + tid;
+      reg[i] = src[src_idx];
+    }
+
+    #pragma unroll
+    for(int i = 0; i < VT; ++i)
+    {
+      int dst_idx = NT * i + tid;
+      dest[dst_idx] = reg[i];
+    }
+  }
+  else
+  {
+    #pragma unroll
+    for(int i = 0; i < VT; ++i)
+    {
+      int src_idx = NT * i + tid;
+      if(src_idx < n)
+      {
+        reg[i] = src[src_idx];
+      }
+    }
+
+    #pragma unroll
+    for(int i = 0; i < VT; ++i)
+    {
+      int dst_idx = NT * i + tid;
+      if(dst_idx < n)
+      {
+        dest[dst_idx] = reg[i];
+      }
+    }
+  }
+
+  __syncthreads();
+}
+
+
 template<int NT, int VT, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename KeyType, typename Comp>
 __device__
 void my_DeviceMerge(KeysIt1 aKeys_global,
@@ -164,7 +215,10 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
   // Load the data into shared memory.
   int aCount = range.y - range.x;
   int bCount = range.w - range.z;
-  mgpu::DeviceLoad2ToShared<NT, VT, VT>(aKeys_global + range.x, aCount, bKeys_global + range.z, bCount, tid, keys_shared);
+
+  my_DeviceLoadToShared<NT,VT>(make_join_iterator(aKeys_global + range.x, aCount, bKeys_global + range.z),
+                               aCount + bCount,
+                               keys_shared);
 
   bounded_inplace_merge<NT,VT>(exec, keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
   
