@@ -151,52 +151,66 @@ void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
 
 
 // XXX this is essentially a bounded version for group copy_n
-template<int NT, int VT, typename InputIt1, typename T>
+//     the bound is NT * VT
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2>
 __device__
-void my_DeviceLoadToShared(InputIt1 src, int n, T *dest)
+RandomAccessIterator2 bounded_copy_n(bulk::static_execution_group<groupsize,grainsize> &g,
+                                     RandomAccessIterator1 first,
+                                     Size n,
+                                     RandomAccessIterator2 result)
 {
-  int tid = threadIdx.x;
-  T reg[VT];
-  if(NT * VT == n)
+  typedef int size_type;
+
+  size_type tid = g.this_exec.index();
+
+  typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
+
+  // XXX make this an uninitialized array
+  value_type stage[grainsize];
+
+  // avoid conditional accesses when possible
+  if(groupsize * grainsize <= n)
   {
     #pragma unroll
-    for(int i = 0; i < VT; ++i)
+    for(size_type i = 0; i < grainsize; ++i)
     {
-      int src_idx = NT * i + tid;
-      reg[i] = src[src_idx];
-    }
+      size_type src_idx = g.size() * i + tid;
+      stage[i] = first[src_idx];
+    } // end for i
 
     #pragma unroll
-    for(int i = 0; i < VT; ++i)
+    for(size_type i = 0; i < grainsize; ++i)
     {
-      int dst_idx = NT * i + tid;
-      dest[dst_idx] = reg[i];
-    }
-  }
+      size_type dst_idx = g.size() * i + tid;
+      result[dst_idx] = stage[i];
+    } // end for i
+  } // end if
   else
   {
     #pragma unroll
-    for(int i = 0; i < VT; ++i)
+    for(size_type i = 0; i < grainsize; ++i)
     {
-      int src_idx = NT * i + tid;
+      size_type src_idx = g.size() * i + tid;
       if(src_idx < n)
       {
-        reg[i] = src[src_idx];
-      }
-    }
+        stage[i] = first[src_idx];
+      } // end if
+    } // end for
 
     #pragma unroll
-    for(int i = 0; i < VT; ++i)
+    for(size_type i = 0; i < grainsize; ++i)
     {
-      int dst_idx = NT * i + tid;
+      size_type dst_idx = g.size() * i + tid;
       if(dst_idx < n)
       {
-        dest[dst_idx] = reg[i];
-      }
-    }
-  }
+        result[dst_idx] = stage[i];
+      } // end if
+    } // end for
+  } // end else
 
-  __syncthreads();
+  g.wait();
+
+  return result + thrust::min<Size>(g.size() * grainsize, n);
 }
 
 
@@ -216,9 +230,10 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
   int aCount = range.y - range.x;
   int bCount = range.w - range.z;
 
-  my_DeviceLoadToShared<NT,VT>(make_join_iterator(aKeys_global + range.x, aCount, bKeys_global + range.z),
-                               aCount + bCount,
-                               keys_shared);
+  bounded_copy_n(exec,
+                 make_join_iterator(aKeys_global + range.x, aCount, bKeys_global + range.z),
+                 aCount + bCount,
+                 keys_shared);
 
   bounded_inplace_merge<NT,VT>(exec, keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
   
