@@ -169,7 +169,7 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
   bounded_inplace_merge<NT,VT>(exec, keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
   
   // Store merged keys to global memory.
-  mgpu::DeviceSharedToGlobal<NT, VT>(aCount + bCount, keys_shared, tid, keys_global + NT * VT * block);
+  bulk::copy_n(exec, keys_shared, aCount + bCount, keys_global + NT * VT * block);
 }
 
 
