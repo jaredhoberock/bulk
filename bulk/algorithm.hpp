@@ -6,4 +6,5 @@
 #include <bulk/algorithm/reduce.hpp>
 #include <bulk/algorithm/scan.hpp>
 #include <bulk/algorithm/accumulate.hpp>
+#include <bulk/algorithm/merge.hpp>
 

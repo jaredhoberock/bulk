@@ -5,110 +5,7 @@
 #include <thrust/sort.h>
 #include <bulk/bulk.hpp>
 #include "join_iterator.hpp"
-#include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include "time_invocation_cuda.hpp"
-
-
-// XXX this loop is what merge's performance depends on
-template<std::size_t bound,
-         typename InputIterator1,
-         typename InputIterator2,
-         typename OutputIterator,
-         typename Compare>
-__device__
-OutputIterator bounded_merge(InputIterator1 first1, InputIterator1 last1,
-                             InputIterator2 first2, InputIterator2 last2,
-                             OutputIterator result,
-                             Compare comp)
-{
-  typedef typename thrust::iterator_value<InputIterator1>::type value_type1;
-  typedef typename thrust::iterator_value<InputIterator2>::type value_type2;
-
-  int n1 = last1 - first1;
-  int idx1 = 0;
-
-  int n2 = last2 - first2;
-  int idx2 = 0;
-
-  using thrust::system::cuda::detail::detail::uninitialized;
-
-  uninitialized<value_type1> a;
-  uninitialized<value_type2> b;
-
-  if(n1)
-  {
-    a.construct(first1[0]);
-  } // end if
-
-  if(n2)
-  {
-    b.construct(first2[0]);
-  } // end if
-
-  int i = 0;
-  #pragma unroll
-  for(; i < bound; ++i)
-  {
-    // 4 cases:
-    // 0. both ranges are exhausted
-    // 1. range 1 is exhausted
-    // 2. range 2 is exhausted
-    // 3. neither range is exhausted
-
-    const bool exhausted1 = idx1 >= n1;
-    const bool exhausted2 = idx2 >= n2;
-
-    if(exhausted1 && exhausted2)
-    {
-      break;
-    } // end if
-    else if(exhausted1)
-    {
-      result[i] = b;
-      ++idx2;
-    } // end else if
-    else if(exhausted2)
-    {
-      result[i] = a;
-      ++idx1;
-    } // end else if
-    else
-    {
-      if(!comp(b.get(),a.get()))
-      {
-        result[i] = a;
-        ++idx1;
-
-        if(idx1 < n1)
-        {
-          a = first1[idx1];
-        } // end if
-      } // end if
-      else
-      {
-        result[i] = b;
-        ++idx2;
-
-        if(idx2 < n2)
-        {
-          b = first2[idx2];
-        } // end if
-      } // end else
-    } // end else
-  } // end for i
-
-  if(n1)
-  {
-    a.destroy();
-  } // end if
-
-  if(n2)
-  {
-    b.destroy();
-  } // end if
-
-  return result + i;
-} // end bounded_merge
 
 
 template<std::size_t groupsize, std::size_t grainsize,
@@ -134,10 +31,11 @@ void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
   // Serial merge into register.
   typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
   value_type local_result[grainsize];
-  bounded_merge<grainsize>(first + local_offset1, middle,
-                           first + local_offset2, last,
-                           local_result,
-                           comp);
+  bulk::merge(bulk::bound<grainsize>(g.this_exec),
+              first + local_offset1, middle,
+              first + local_offset2, last,
+              local_result,
+              comp);
 
   g.wait();
 
@@ -238,6 +136,7 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
   bounded_inplace_merge<NT,VT>(exec, keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
   
   // Store merged keys to global memory.
+  // XXX this might be slightly faster with a bounded_copy_n
   bulk::copy_n(exec, keys_shared, aCount + bCount, keys_global + NT * VT * block);
 }
 
