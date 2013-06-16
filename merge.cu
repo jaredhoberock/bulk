@@ -244,7 +244,11 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
 
   // merge partitions
   int n = (last1 - first1) + (last2 - first2);
+
+  // XXX it's easy to launch too many blocks this way
+  //     we need to cap it and virtualize
   int num_blocks = (n + NV - 1) / NV;
+
   my_KernelMerge<Tuning, false, false><<<num_blocks, launch.x, 0, 0>>>
     (first1, (const int*)0, last1 - first1,
      first2, (const int*)0, last2 - first2, 
@@ -366,6 +370,8 @@ void validate(size_t n)
   thrust::merge(a.begin(), a.end(), b.begin(), b.end(), ref.begin());
 
   my_merge(&a, &b, &c);
+
+  std::cout << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
 
   assert(c == ref);
 }
