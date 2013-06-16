@@ -82,6 +82,7 @@ RandomAccessIterator2 simple_copy_n(bulk::static_execution_group<size,grainsize>
   // important special case which avoids the expensive for loop below
   if(chunk_size == n)
   {
+    #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
       size_type idx = size * i + tid;
