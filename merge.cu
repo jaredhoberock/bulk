@@ -114,10 +114,9 @@ template<std::size_t groupsize, std::size_t grainsize,
          typename RandomAccessIterator,
          typename Compare>
 __device__
-void bounded_inplace_merge(RandomAccessIterator first, RandomAccessIterator middle, RandomAccessIterator last, Compare comp)
+void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
+                           RandomAccessIterator first, RandomAccessIterator middle, RandomAccessIterator last, Compare comp)
 {
-  bulk::static_execution_group<groupsize,grainsize> g;
-
   int n1 = middle - first;
   int n2 = last - middle;
 
@@ -144,7 +143,7 @@ void bounded_inplace_merge(RandomAccessIterator first, RandomAccessIterator midd
   // local result back to source
   int local_offset = grainsize * threadIdx.x;
   int local_size = thrust::max<int>(0, thrust::min<int>(grainsize, n1 + n2 - local_offset));
-  bulk::copy_n(bulk::bound<grainsize>(g), local_result, local_size, first + local_offset); 
+  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), local_result, local_size, first + local_offset); 
 
   g.wait();
 }
@@ -160,12 +159,14 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
                     KeysIt3 keys_global,
                     Comp comp)
 {
+  bulk::static_execution_group<NT,VT> exec;
+
   // Load the data into shared memory.
   int aCount = range.y - range.x;
   int bCount = range.w - range.z;
   mgpu::DeviceLoad2ToShared<NT, VT, VT>(aKeys_global + range.x, aCount, bKeys_global + range.z, bCount, tid, keys_shared);
 
-  bounded_inplace_merge<NT,VT>(keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
+  bounded_inplace_merge<NT,VT>(exec, keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
   
   // Store merged keys to global memory.
   mgpu::DeviceSharedToGlobal<NT, VT>(aCount + bCount, keys_shared, tid, keys_global + NT * VT * block);
