@@ -350,25 +350,32 @@ void compare(size_t n)
 }
 
 
+template<typename T>
+void validate(size_t n)
+{
+  thrust::device_vector<T> a(n / 2), b(n / 2);
+  thrust::device_vector<T> c(n);
+
+  random_fill(a);
+  random_fill(b);
+
+  thrust::sort(a.begin(), a.end());
+  thrust::sort(b.begin(), b.end());
+
+  thrust::device_vector<T> ref(n);
+  thrust::merge(a.begin(), a.end(), b.begin(), b.end(), ref.begin());
+
+  my_merge(&a, &b, &c);
+
+  assert(c == ref);
+}
+
+
 int main()
 {
   size_t n = 123456789;
 
-  thrust::device_vector<int> a(n / 2), b(n / 2);
-  thrust::device_vector<int> c(n);
-
-  random_fill(a);
-  random_fill(b);
-  thrust::sort(a.begin(), a.end());
-  thrust::sort(b.begin(), b.end());
-
-  my_merge(&a, &b, &c);
-
-  thrust::device_vector<int> ref(n);
-
-  thrust_merge(&a, &b, &ref);
-
-  assert(c == ref);
+  validate<int>(n);
 
   std::cout << "Large input: " << std::endl;
   std::cout << "int: " << std::endl;
@@ -383,5 +390,4 @@ int main()
 
   return 0;
 }
-
 
