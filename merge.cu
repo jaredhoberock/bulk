@@ -114,16 +114,19 @@ RandomAccessIterator2 bounded_copy_n(bulk::static_execution_group<groupsize,grai
 }
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename Compare>
 __device__
-RandomAccessIterator4
-  bounded_merge_with_buffer(bulk::static_execution_group<groupsize,grainsize> &exec,
-                            RandomAccessIterator1 first1, RandomAccessIterator1 last1,
-                            RandomAccessIterator2 first2, RandomAccessIterator2 last2,
-                            RandomAccessIterator3 buffer,
-                            RandomAccessIterator4 result,
-                            Compare comp)
+RandomAccessIterator3
+  bounded_merge(bulk::static_execution_group<groupsize,grainsize> &exec,
+                RandomAccessIterator1 first1, RandomAccessIterator1 last1,
+                RandomAccessIterator2 first2, RandomAccessIterator2 last2,
+                RandomAccessIterator3 result,
+                Compare comp)
 {
+  typedef typename thrust::iterator_value<RandomAccessIterator3>::type value_type;
+
+  __shared__ value_type buffer[groupsize * grainsize];
+
   typedef int size_type;
 
   size_type n1 = last1 - first1;
@@ -159,8 +162,6 @@ void my_KernelMerge(KeysIt1 aKeys_global, int aCount,
   
   const int NT = Params::NT;
   const int VT = Params::VT;
-
-  __shared__ KeyType s_keys[NT * VT];
   
   int block = blockIdx.x;
   
@@ -168,12 +169,11 @@ void my_KernelMerge(KeysIt1 aKeys_global, int aCount,
 
   bulk::static_execution_group<NT,VT> g;
   
-  bounded_merge_with_buffer<NT, VT>(g,
-                                    aKeys_global + range.x, aKeys_global + range.y,
-                                    bKeys_global + range.z, bKeys_global + range.w,
-                                    s_keys, 
-                                    keys_global + NT * VT * block,
-                                    comp);
+  bounded_merge(g,
+                aKeys_global + range.x, aKeys_global + range.y,
+                bKeys_global + range.z, bKeys_global + range.w,
+                keys_global + NT * VT * block,
+                comp);
 }
 
 
