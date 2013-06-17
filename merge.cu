@@ -147,6 +147,52 @@ RandomAccessIterator3
 }
 
 
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename Compare>
+__device__
+RandomAccessIterator3 merge(bulk::static_execution_group<groupsize,grainsize> &exec,
+                            RandomAccessIterator1 first1, RandomAccessIterator1 last1,
+                            RandomAccessIterator2 first2, RandomAccessIterator2 last2,
+                            RandomAccessIterator3 result,
+                            Compare comp)
+{
+  typedef int size_type;
+
+  size_type chunk_size = exec.size() * exec.grainsize();
+
+  size_type n1 = last1 - first1;
+  size_type n2 = last2 - first2;
+
+  // avoid the search & loop when possible
+  if(n1 + n2 <= chunk_size)
+  {
+    result = bounded_merge(exec, first1, last1, first2, last2, result, comp);
+  } // end if
+  else
+  {
+    while((first1 < last1) || (first2 < last2))
+    {
+      size_type n1 = last1 - first1;
+      size_type n2 = last2 - first2;
+
+      size_type diag = thrust::min<size_type>(chunk_size, n1 + n2);
+
+      size_type mp = mgpu::MergePath<mgpu::MgpuBoundsLower>(first1, n1, first2, n2, diag, comp);
+
+      result = bounded_merge(exec,
+                             first1, first1 + mp,
+                             first2, first2 + diag - mp,
+                             result,
+                             comp);
+
+      first1 += mp;
+      first2 += diag - mp;
+    } // end while
+  } // end else
+
+  return result;
+} // end merge()
+
+
 template<std::size_t groupsize, std::size_t grainsize, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename Comp>
 __global__
 void my_KernelMerge(KeysIt1 aKeys_global, int aCount,
