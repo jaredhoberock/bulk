@@ -118,7 +118,6 @@ template<std::size_t groupsize, std::size_t grainsize, typename KeysIt1, typenam
 __device__
 void my_DeviceMerge(KeysIt1 aKeys_global,
                     KeysIt2 bKeys_global,
-                    int tid, int block,
                     int4 range,
                     KeyType* keys_shared,
                     KeysIt3 keys_global,
@@ -139,7 +138,7 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
   
   // Store merged keys to global memory.
   // XXX this might be slightly faster with a bounded_copy_n
-  bulk::copy_n(exec, keys_shared, aCount + bCount, keys_global + exec.size() * exec.grainsize() * block);
+  bulk::copy_n(exec, keys_shared, aCount + bCount, keys_global + exec.size() * exec.grainsize() * exec.index());
 }
 
 
@@ -163,15 +162,12 @@ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
 
   __shared__ KeyType s_keys[NT * VT];
   
-  int tid = threadIdx.x;
   int block = blockIdx.x;
   
   int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, coop, NT * VT, mp_global);
   
   my_DeviceMerge<NT, VT>(aKeys_global,
                          bKeys_global,
-                         tid,
-                         block,
                          range,
                          s_keys, 
                          keys_global,
