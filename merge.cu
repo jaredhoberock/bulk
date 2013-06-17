@@ -144,20 +144,18 @@ RandomAccessIterator4
 }
 
 
-template<typename Tuning, bool HasValues, bool MergeSort, typename KeysIt1, 
-	typename KeysIt2, typename KeysIt3, typename ValsIt1, typename ValsIt2,
-	typename ValsIt3, typename Comp>
+template<typename Tuning, typename KeysIt1, 
+	typename KeysIt2, typename KeysIt3,
+	typename Comp>
 __global__
-void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
-                    KeysIt2 bKeys_global, ValsIt2 bVals_global, int bCount,
+void my_KernelMerge(KeysIt1 aKeys_global, int aCount,
+                    KeysIt2 bKeys_global, int bCount,
                     const int* mp_global,
-                    int coop,
-                    KeysIt3 keys_global, ValsIt3 vals_global,
+                    KeysIt3 keys_global,
                     Comp comp)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
-  typedef typename std::iterator_traits<KeysIt1>::value_type KeyType;
-  typedef typename std::iterator_traits<ValsIt1>::value_type ValType;
+  typedef typename std::iterator_traits<KeysIt3>::value_type KeyType;
   
   const int NT = Params::NT;
   const int VT = Params::VT;
@@ -166,7 +164,7 @@ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
   
   int block = blockIdx.x;
   
-  int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, coop, NT * VT, mp_global);
+  int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, 0, NT * VT, mp_global);
 
   bulk::static_execution_group<NT,VT> g;
   
@@ -220,13 +218,7 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
   //     we need to cap it and virtualize
   int num_blocks = (n + NV - 1) / NV;
 
-  my_KernelMerge<Tuning, false, false><<<num_blocks, launch.x, 0, 0>>>
-    (first1, (const int*)0, last1 - first1,
-     first2, (const int*)0, last2 - first2, 
-      partitionsDevice->get(), 0,
-      result,
-      (int*)0,
-      comp);
+  my_KernelMerge<Tuning><<<num_blocks, launch.x>>>(first1, last1 - first1, first2, last2 - first2, partitionsDevice->get(), result, comp);
 
   return result + n;
 } // end merge()
