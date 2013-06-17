@@ -41,6 +41,8 @@ void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
 
   // local result back to source
   int local_offset = grainsize * threadIdx.x;
+
+  // this is faster than getting the size from merge's result
   int local_size = thrust::max<int>(0, thrust::min<int>(grainsize, n1 + n2 - local_offset));
   bulk::copy_n(bulk::bound<grainsize>(g.this_exec), local_result, local_size, first + local_offset); 
 
@@ -112,7 +114,7 @@ RandomAccessIterator2 bounded_copy_n(bulk::static_execution_group<groupsize,grai
 }
 
 
-template<int NT, int VT, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename KeyType, typename Comp>
+template<std::size_t groupsize, std::size_t grainsize, typename KeysIt1, typename KeysIt2, typename KeyType, typename KeysIt3, typename Compare>
 __device__
 void my_DeviceMerge(KeysIt1 aKeys_global,
                     KeysIt2 bKeys_global,
@@ -120,9 +122,9 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
                     int4 range,
                     KeyType* keys_shared,
                     KeysIt3 keys_global,
-                    Comp comp)
+                    Compare comp)
 {
-  bulk::static_execution_group<NT,VT> exec;
+  bulk::static_execution_group<groupsize,grainsize> exec;
 
   // Load the data into shared memory.
   int aCount = range.y - range.x;
@@ -133,11 +135,11 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
                  aCount + bCount,
                  keys_shared);
 
-  bounded_inplace_merge<NT,VT>(exec, keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
+  bounded_inplace_merge(exec, keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
   
   // Store merged keys to global memory.
   // XXX this might be slightly faster with a bounded_copy_n
-  bulk::copy_n(exec, keys_shared, aCount + bCount, keys_global + NT * VT * block);
+  bulk::copy_n(exec, keys_shared, aCount + bCount, keys_global + exec.size() * exec.grainsize() * block);
 }
 
 
