@@ -116,15 +116,15 @@ RandomAccessIterator2 bounded_copy_n(bulk::static_execution_group<groupsize,grai
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __device__
-RandomAccessIterator4 bounded_merge_with_buffer(RandomAccessIterator1 first1, RandomAccessIterator1 last1,
-                                                RandomAccessIterator2 first2, RandomAccessIterator2 last2,
-                                                RandomAccessIterator3 buffer,
-                                                RandomAccessIterator4 result,
-                                                Compare comp)
+RandomAccessIterator4
+  bounded_merge_with_buffer(bulk::static_execution_group<groupsize,grainsize> &exec,
+                            RandomAccessIterator1 first1, RandomAccessIterator1 last1,
+                            RandomAccessIterator2 first2, RandomAccessIterator2 last2,
+                            RandomAccessIterator3 buffer,
+                            RandomAccessIterator4 result,
+                            Compare comp)
 {
   typedef int size_type;
-
-  bulk::static_execution_group<groupsize,grainsize> exec;
 
   size_type n1 = last1 - first1;
   size_type n2 = last2 - first2;
@@ -167,8 +167,11 @@ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
   int block = blockIdx.x;
   
   int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, coop, NT * VT, mp_global);
+
+  bulk::static_execution_group<NT,VT> g;
   
-  bounded_merge_with_buffer<NT, VT>(aKeys_global + range.x, aKeys_global + range.y,
+  bounded_merge_with_buffer<NT, VT>(g,
+                                    aKeys_global + range.x, aKeys_global + range.y,
                                     bKeys_global + range.z, bKeys_global + range.w,
                                     s_keys, 
                                     keys_global + NT * VT * block,
