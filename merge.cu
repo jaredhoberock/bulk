@@ -147,9 +147,7 @@ RandomAccessIterator3
 }
 
 
-template<typename Tuning, typename KeysIt1, 
-	typename KeysIt2, typename KeysIt3,
-	typename Comp>
+template<std::size_t groupsize, std::size_t grainsize, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename Comp>
 __global__
 void my_KernelMerge(KeysIt1 aKeys_global, int aCount,
                     KeysIt2 bKeys_global, int bCount,
@@ -157,22 +155,18 @@ void my_KernelMerge(KeysIt1 aKeys_global, int aCount,
                     KeysIt3 keys_global,
                     Comp comp)
 {
-  typedef MGPU_LAUNCH_PARAMS Params;
-  typedef typename std::iterator_traits<KeysIt3>::value_type KeyType;
-  
-  const int NT = Params::NT;
-  const int VT = Params::VT;
-  
-  int block = blockIdx.x;
-  
-  int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, 0, NT * VT, mp_global);
+  bulk::static_execution_group<groupsize,grainsize> g;
 
-  bulk::static_execution_group<NT,VT> g;
+  typedef typename std::iterator_traits<KeysIt3>::value_type KeyType;
+
+  int elements_per_group = g.size() * g.grainsize();
+  
+  int4 range = mgpu::ComputeMergeRange(aCount, bCount, g.index(), 0, elements_per_group, mp_global);
   
   bounded_merge(g,
                 aKeys_global + range.x, aKeys_global + range.y,
                 bKeys_global + range.z, bKeys_global + range.w,
-                keys_global + NT * VT * block,
+                keys_global + elements_per_group * g.index(),
                 comp);
 }
 
@@ -218,7 +212,7 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
   //     we need to cap it and virtualize
   int num_blocks = (n + NV - 1) / NV;
 
-  my_KernelMerge<Tuning><<<num_blocks, launch.x>>>(first1, last1 - first1, first2, last2 - first2, partitionsDevice->get(), result, comp);
+  my_KernelMerge<NT,VT><<<num_blocks, launch.x>>>(first1, last1 - first1, first2, last2 - first2, partitionsDevice->get(), result, comp);
 
   return result + n;
 } // end merge()
