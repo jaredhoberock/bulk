@@ -51,7 +51,7 @@ void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
 
 
 // XXX this is essentially a bounded version for group copy_n
-//     the bound is NT * VT
+//     the bound is groupsize * grainsize
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2>
 __device__
 RandomAccessIterator2 bounded_copy_n(bulk::static_execution_group<groupsize,grainsize> &g,
@@ -193,13 +193,13 @@ RandomAccessIterator3 merge(bulk::static_execution_group<groupsize,grainsize> &e
 } // end merge()
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename Comp>
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __global__
-void my_KernelMerge(KeysIt1 aKeys_global, int aCount,
-                    KeysIt2 bKeys_global, int bCount,
-                    const int* mp_global,
-                    KeysIt3 keys_global,
-                    Comp comp)
+void merge_n(RandomAccessIterator1 first1, Size n1,
+             RandomAccessIterator2 first2, Size n2,
+             RandomAccessIterator3 merge_paths_first,
+             RandomAccessIterator4 result,
+             Compare comp)
 {
   bulk::static_execution_group<groupsize,grainsize> g;
 
@@ -207,12 +207,12 @@ void my_KernelMerge(KeysIt1 aKeys_global, int aCount,
 
   size_type elements_per_group = g.size() * g.grainsize();
   
-  int4 range = mgpu::ComputeMergeRange(aCount, bCount, g.index(), 0, elements_per_group, mp_global);
+  int4 range = mgpu::ComputeMergeRange(n1, n2, g.index(), 0, elements_per_group, merge_paths_first);
   
   bounded_merge(g,
-                aKeys_global + range.x, aKeys_global + range.y,
-                bKeys_global + range.z, bKeys_global + range.w,
-                keys_global + elements_per_group * g.index(),
+                first1 + range.x, first1 + range.y,
+                first2 + range.z, first2 + range.w,
+                result + elements_per_group * g.index(),
                 comp);
 }
 
@@ -258,7 +258,7 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
   //     we need to cap it and virtualize
   int num_blocks = (n + NV - 1) / NV;
 
-  my_KernelMerge<NT,VT><<<num_blocks, launch.x>>>(first1, last1 - first1, first2, last2 - first2, partitionsDevice->get(), result, comp);
+  merge_n<NT,VT><<<num_blocks, launch.x>>>(first1, last1 - first1, first2, last2 - first2, partitionsDevice->get(), result, comp);
 
   return result + n;
 } // end merge()
