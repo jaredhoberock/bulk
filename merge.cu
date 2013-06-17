@@ -114,14 +114,14 @@ RandomAccessIterator2 bounded_copy_n(bulk::static_execution_group<groupsize,grai
 }
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename KeysIt1, typename KeysIt2, typename KeyType, typename KeysIt3, typename Compare>
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __device__
-void my_DeviceMerge(KeysIt1 aKeys_global,
-                    KeysIt2 bKeys_global,
-                    int4 range,
-                    KeyType* keys_shared,
-                    KeysIt3 keys_global,
-                    Compare comp)
+RandomAccessIterator4 bounded_merge_with_buffer(RandomAccessIterator1 first1,
+                                                RandomAccessIterator2 first2,
+                                                int4 range,
+                                                RandomAccessIterator3 buffer,
+                                                RandomAccessIterator4 result,
+                                                Compare comp)
 {
   bulk::static_execution_group<groupsize,grainsize> exec;
 
@@ -130,15 +130,15 @@ void my_DeviceMerge(KeysIt1 aKeys_global,
   int bCount = range.w - range.z;
 
   bounded_copy_n(exec,
-                 make_join_iterator(aKeys_global + range.x, aCount, bKeys_global + range.z),
+                 make_join_iterator(first1 + range.x, aCount, first2 + range.z),
                  aCount + bCount,
-                 keys_shared);
+                 buffer);
 
-  bounded_inplace_merge(exec, keys_shared, keys_shared + aCount, keys_shared + aCount + bCount, comp);
+  bounded_inplace_merge(exec, buffer, buffer + aCount, buffer + aCount + bCount, comp);
   
   // Store merged keys to global memory.
   // XXX this might be slightly faster with a bounded_copy_n
-  bulk::copy_n(exec, keys_shared, aCount + bCount, keys_global + exec.size() * exec.grainsize() * exec.index());
+  return bulk::copy_n(exec, buffer, aCount + bCount, result + exec.size() * exec.grainsize() * exec.index());
 }
 
 
@@ -166,12 +166,12 @@ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
   
   int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, coop, NT * VT, mp_global);
   
-  my_DeviceMerge<NT, VT>(aKeys_global,
-                         bKeys_global,
-                         range,
-                         s_keys, 
-                         keys_global,
-                         comp);
+  bounded_merge_with_buffer<NT, VT>(aKeys_global,
+                                    bKeys_global,
+                                    range,
+                                    s_keys, 
+                                    keys_global,
+                                    comp);
 }
 
 
