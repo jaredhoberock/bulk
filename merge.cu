@@ -116,29 +116,31 @@ RandomAccessIterator2 bounded_copy_n(bulk::static_execution_group<groupsize,grai
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __device__
-RandomAccessIterator4 bounded_merge_with_buffer(RandomAccessIterator1 first1,
-                                                RandomAccessIterator2 first2,
-                                                int4 range,
+RandomAccessIterator4 bounded_merge_with_buffer(RandomAccessIterator1 first1, RandomAccessIterator1 last1,
+                                                RandomAccessIterator2 first2, RandomAccessIterator2 last2,
                                                 RandomAccessIterator3 buffer,
                                                 RandomAccessIterator4 result,
                                                 Compare comp)
 {
+  typedef int size_type;
+
   bulk::static_execution_group<groupsize,grainsize> exec;
 
-  // Load the data into shared memory.
-  int aCount = range.y - range.x;
-  int bCount = range.w - range.z;
+  size_type n1 = last1 - first1;
+  size_type n2 = last2 - first2;
 
+  // copy into the buffer
   bounded_copy_n(exec,
-                 make_join_iterator(first1 + range.x, aCount, first2 + range.z),
-                 aCount + bCount,
+                 make_join_iterator(first1, n1, first2),
+                 n1 + n2,
                  buffer);
 
-  bounded_inplace_merge(exec, buffer, buffer + aCount, buffer + aCount + bCount, comp);
+  // inplace merge in the buffer
+  bounded_inplace_merge(exec, buffer, buffer + n1, buffer + n1 + n2, comp);
   
-  // Store merged keys to global memory.
+  // copy to the result
   // XXX this might be slightly faster with a bounded_copy_n
-  return bulk::copy_n(exec, buffer, aCount + bCount, result + exec.size() * exec.grainsize() * exec.index());
+  return bulk::copy_n(exec, buffer, n1 + n2, result);
 }
 
 
@@ -166,11 +168,10 @@ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount,
   
   int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, coop, NT * VT, mp_global);
   
-  bounded_merge_with_buffer<NT, VT>(aKeys_global,
-                                    bKeys_global,
-                                    range,
+  bounded_merge_with_buffer<NT, VT>(aKeys_global + range.x, aKeys_global + range.y,
+                                    bKeys_global + range.z, bKeys_global + range.w,
                                     s_keys, 
-                                    keys_global,
+                                    keys_global + NT * VT * block,
                                     comp);
 }
 
