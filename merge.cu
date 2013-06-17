@@ -203,9 +203,9 @@ void my_KernelMerge(KeysIt1 aKeys_global, int aCount,
 {
   bulk::static_execution_group<groupsize,grainsize> g;
 
-  typedef typename std::iterator_traits<KeysIt3>::value_type KeyType;
+  typedef int size_type;
 
-  int elements_per_group = g.size() * g.grainsize();
+  size_type elements_per_group = g.size() * g.grainsize();
   
   int4 range = mgpu::ComputeMergeRange(aCount, bCount, g.index(), 0, elements_per_group, mp_global);
   
