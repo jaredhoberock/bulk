@@ -506,36 +506,6 @@ inline void *malloc(ThreadGroup &g, size_t num_bytes)
 
   if(g.this_exec.index() == 0)
   {
-    s_result = bulk::shmalloc(num_bytes);
-  } // end if
-
-  g.wait();
-
-  return s_result;
-} // end malloc()
-
-
-template<typename ThreadGroup>
-__device__
-inline void free(ThreadGroup &g, void *ptr)
-{
-  if(g.this_exec.index() == 0)
-  {
-    bulk::shfree(ptr);
-  } // end if
-
-  g.wait();
-} // end free()
-
-
-template<typename ThreadGroup>
-__device__
-inline void *new_malloc(ThreadGroup &g, size_t num_bytes)
-{
-  __shared__ void *s_result;
-
-  if(g.this_exec.index() == 0)
-  {
     s_result = bulk::unsafe_shmalloc(num_bytes);
   } // end if
 
@@ -547,7 +517,7 @@ inline void *new_malloc(ThreadGroup &g, size_t num_bytes)
 
 template<typename ThreadGroup>
 __device__
-inline void new_free(ThreadGroup &g, void *ptr)
+inline void free(ThreadGroup &g, void *ptr)
 {
   if(g.this_exec.index() == 0)
   {
