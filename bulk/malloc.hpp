@@ -54,6 +54,18 @@ class os
     }
 
 
+    __device__ inline void *program_break() const
+    {
+      return m_program_break;
+    }
+
+    
+    __device__ inline void *data_segment_begin() const
+    {
+      return s_data_segment_begin;
+    }
+
+
   private:
     __device__ inline size_t data_segment_size()
     {
@@ -73,20 +85,18 @@ class singleton_unsafe_on_chip_allocator
 {
   public:
     __device__ inline singleton_unsafe_on_chip_allocator(size_t max_data_segment_size)
-      : m_os(max_data_segment_size),
-        m_heap_begin(reinterpret_cast<block*>(m_os.sbrk(0))),
-        m_heap_end(m_heap_begin)
+      : m_os(max_data_segment_size)
     {}
   
     __device__ inline void *allocate(size_t size)
     {
       size_t aligned_size = align4(size);
     
-      block *prev = find_first_free_insertion_point(m_heap_begin, m_heap_end, aligned_size);
+      block *prev = find_first_free_insertion_point(heap_begin(), heap_end(), aligned_size);
     
       block *b;
     
-      if(prev != m_heap_end && (b = next(prev)) != m_heap_end)
+      if(prev != heap_end() && (b = next(prev)) != heap_end())
       {
         // can we split?
         if((b->size - aligned_size) >= sizeof(block) + 4) // +4 for alignment
@@ -100,7 +110,7 @@ class singleton_unsafe_on_chip_allocator
       {
         // nothing fits, extend the heap
         b = extend_heap(prev, aligned_size);
-        if(b == m_heap_end)
+        if(b == heap_end())
         {
           return 0;
         } // end if
@@ -127,14 +137,12 @@ class singleton_unsafe_on_chip_allocator
         } // end if
     
         // now try to fuse with the next block
-        if(next(b) != m_heap_end)
+        if(next(b) != heap_end())
         {
           fuse_block(b);
         } // end if
         else
         {
-          m_heap_end = b;
-    
           // the the OS know where the new break is
           m_os.brk(b);
         } // end else
@@ -160,8 +168,17 @@ class singleton_unsafe_on_chip_allocator
   
   
     os     m_os;
-    block *m_heap_begin;
-    block *m_heap_end;
+
+    __device__ inline block *heap_begin() const
+    {
+      return reinterpret_cast<block*>(m_os.data_segment_begin());
+    } // end heap_begin()
+
+
+    __device__ inline block *heap_end() const
+    {
+      return reinterpret_cast<block*>(m_os.program_break());
+    } // end heap_end();
 
   
     __device__ inline static void *data(block *b)
@@ -199,7 +216,7 @@ class singleton_unsafe_on_chip_allocator
       b->size = size;
     
       // link the old block to the new one
-      if(next(new_block) != m_heap_end)
+      if(next(new_block) != heap_end())
       {
         next(new_block)->prev = new_block;
       } // end if
@@ -208,11 +225,11 @@ class singleton_unsafe_on_chip_allocator
   
     __device__ inline bool fuse_block(block *b)
     {
-      if(next(b) != m_heap_end && next(b)->is_free)
+      if(next(b) != heap_end() && next(b)->is_free)
       {
         b->size += sizeof(block) + next(b)->size;
     
-        if(next(b) != m_heap_end)
+        if(next(b) != heap_end())
         {
           next(b)->prev = b;
         }
@@ -248,7 +265,7 @@ class singleton_unsafe_on_chip_allocator
     __device__ inline block *extend_heap(block *prev, size_t size)
     {
       // the new block goes at the current end of the heap
-      block *new_block = m_heap_end;
+      block *new_block = heap_end();
     
       // move the break to the right to accomodate both a block and the requested allocation
       if(m_os.sbrk(sizeof(block) + size) == reinterpret_cast<void*>(-1))
@@ -256,9 +273,6 @@ class singleton_unsafe_on_chip_allocator
         // allocation failed
         return new_block;
       }
-    
-      // record the new end of the heap
-      m_heap_end = reinterpret_cast<block*>(reinterpret_cast<char*>(m_heap_end) + sizeof(block) + size);
     
       new_block->size = size;
       new_block->prev = prev;
@@ -287,13 +301,20 @@ class singleton_on_chip_allocator
 
 
     inline __device__
+    void *unsafe_allocate(size_t size)
+    {
+      return m_alloc.allocate(size);
+    }
+
+
+    inline __device__
     void *allocate(size_t size)
     {
       void *result;
 
       m_mutex.lock();
       {
-        result = m_alloc.allocate(size);
+        result = unsafe_allocate(size);
       } // end critical section
       m_mutex.unlock();
 
@@ -302,11 +323,18 @@ class singleton_on_chip_allocator
 
 
     inline __device__
+    void unsafe_deallocate(void *ptr)
+    {
+      m_alloc.deallocate(ptr);
+    } // end unsafe_deallocate()
+
+
+    inline __device__
     void deallocate(void *ptr)
     {
       m_mutex.lock();
       {
-        m_alloc.deallocate(ptr);
+        unsafe_deallocate(ptr);
       } // end critical section
       m_mutex.unlock();
     } // end deallocate()
@@ -384,8 +412,21 @@ inline __device__ void *on_chip_malloc(size_t size)
 
 inline __device__ void on_chip_free(void *ptr)
 {
-  return s_on_chip_allocator.get().deallocate(ptr);
+  s_on_chip_allocator.get().deallocate(ptr);
 } // end on_chip_free()
+
+
+inline __device__ void *unsafe_on_chip_malloc(size_t size)
+{
+  void *result = s_on_chip_allocator.get().unsafe_allocate(size);
+  return on_chip_cast(result);
+} // end unsafe_on_chip_malloc()
+
+
+inline __device__ void unsafe_on_chip_free(void *ptr)
+{
+  s_on_chip_allocator.get().unsafe_deallocate(ptr);
+} // end unsafe_on_chip_free()
 
 
 } // end detail
@@ -407,6 +448,22 @@ inline __device__ void *shmalloc(size_t num_bytes)
 } // end shmalloc()
 
 
+inline __device__ void *unsafe_shmalloc(size_t num_bytes)
+{
+  // first try on_chip_malloc
+  void *result = detail::unsafe_on_chip_malloc(num_bytes);
+  
+#if __CUDA_ARCH__ >= 200
+  if(!result)
+  {
+    result = std::malloc(num_bytes);
+  } // end if
+#endif // __CUDA_ARCH__
+
+  return result;
+} // end unsafe_shmalloc()
+
+
 inline __device__ void shfree(void *ptr)
 {
 #if __CUDA_ARCH__ >= 200
@@ -422,6 +479,23 @@ inline __device__ void shfree(void *ptr)
   bulk::detail::on_chip_free(bulk::detail::on_chip_cast(ptr));
 #endif
 } // end shfree()
+
+
+inline __device__ void unsafe_shfree(void *ptr)
+{
+#if __CUDA_ARCH__ >= 200
+  if(bulk::detail::is_shared(ptr))
+  {
+    bulk::detail::unsafe_on_chip_free(bulk::detail::on_chip_cast(ptr));
+  } // end if
+  else
+  {
+    std::free(ptr);
+  } // end else
+#else
+  bulk::detail::unsafe_on_chip_free(bulk::detail::on_chip_cast(ptr));
+#endif
+} // end unsafe_shfree()
 
 
 template<typename ThreadGroup>
@@ -448,6 +522,36 @@ inline void free(ThreadGroup &g, void *ptr)
   if(g.this_exec.index() == 0)
   {
     bulk::shfree(ptr);
+  } // end if
+
+  g.wait();
+} // end free()
+
+
+template<typename ThreadGroup>
+__device__
+inline void *new_malloc(ThreadGroup &g, size_t num_bytes)
+{
+  __shared__ void *s_result;
+
+  if(g.this_exec.index() == 0)
+  {
+    s_result = bulk::unsafe_shmalloc(num_bytes);
+  } // end if
+
+  g.wait();
+
+  return s_result;
+} // end malloc()
+
+
+template<typename ThreadGroup>
+__device__
+inline void new_free(ThreadGroup &g, void *ptr)
+{
+  if(g.this_exec.index() == 0)
+  {
+    bulk::unsafe_shfree(ptr);
   } // end if
 
   g.wait();
