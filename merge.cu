@@ -206,12 +206,14 @@ void merge_n(RandomAccessIterator1 first1, Size n1,
   typedef int size_type;
 
   size_type elements_per_group = g.size() * g.grainsize();
-  
-  int4 range = mgpu::ComputeMergeRange(n1, n2, g.index(), 0, elements_per_group, merge_paths_first);
+
+  size_type mp0  = merge_paths_first[g.index()];
+  size_type mp1  = merge_paths_first[g.index()+1];
+  size_type diag = elements_per_group * g.index();
   
   bounded_merge(g,
-                first1 + range.x, first1 + range.y,
-                first2 + range.z, first2 + range.w,
+                first1 + mp0,        first1 + mp1,
+                first2 + diag - mp0, first2 + thrust::min<Size>(n1 + n2, diag + elements_per_group) - mp1, // <- surely that can be simplified
                 result + elements_per_group * g.index(),
                 comp);
 }
