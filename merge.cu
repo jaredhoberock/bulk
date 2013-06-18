@@ -219,6 +219,33 @@ void merge_n(RandomAccessIterator1 first1, Size n1,
 }
 
 
+template<typename Size, typename RandomAccessIterator1,typename RandomAccessIterator2, typename Compare>
+struct locate_merge_path
+{
+  Size partition_size;
+  RandomAccessIterator1 first1, last1;
+  RandomAccessIterator2 first2, last2;
+  Compare comp;
+
+  locate_merge_path(Size partition_size, RandomAccessIterator1 first1, RandomAccessIterator1 last1, RandomAccessIterator2 first2, RandomAccessIterator2 last2, Compare comp)
+    : partition_size(partition_size),
+      first1(first1), last1(last1),
+      first2(first2), last2(last2),
+      comp(comp)
+  {}
+
+  template<typename Index>
+  __device__
+  Size operator()(Index i)
+  {
+    Size n1 = last1 - first1;
+    Size n2 = last2 - first2;
+    Size diag = thrust::min<Size>(partition_size * i, n1 + n2);
+    return mgpu::MergePath<mgpu::MgpuBoundsLower>(first1, n1, first2, n2, diag, comp);
+  }
+};
+
+
 template<typename RandomAccessIterator1,
          typename RandomAccessIterator2,
          typename RandomAccessIterator3,
@@ -235,32 +262,22 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
 
   // XXX these seem to work well for K20c but could use some comprehensive tuning
-  const int NT = 128 + 64;
-  const int VT = 9;
-
-  typedef mgpu::LaunchBoxVT<NT, VT> Tuning;
-  int2 launch = Tuning::GetLaunchParams(*ctx);
+  const int groupsize = 128 + 64;
+  const int grainsize = 9;
   
-  const int NV = launch.x * launch.y;
-
-  // find partitions
-  MGPU_MEM(int) partitionsDevice =
-    mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(
-      first1, last1 - first1,
-      first2, last2 - first2,
-      NV,
-      0,
-      comp,
-      *ctx);
-
-  // merge partitions
-  int n = (last1 - first1) + (last2 - first2);
+  const int tile_size = groupsize * grainsize;
 
   // XXX it's easy to launch too many blocks this way
   //     we need to cap it and virtualize
-  int num_blocks = (n + NV - 1) / NV;
+  int n = (last1 - first1) + (last2 - first2);
+  int num_blocks = (n + tile_size - 1) / tile_size;
 
-  merge_n<NT,VT><<<num_blocks, launch.x>>>(first1, last1 - first1, first2, last2 - first2, partitionsDevice->get(), result, comp);
+  thrust::device_vector<int> merge_paths(num_blocks + 1);
+
+  thrust::tabulate(merge_paths.begin(), merge_paths.end(), locate_merge_path<int,RandomAccessIterator1,RandomAccessIterator2,Compare>(tile_size,first1,last1,first2,last2,comp));
+
+  // merge partitions
+  merge_n<NT,VT><<<num_blocks, NT>>>(first1, last1 - first1, first2, last2 - first2, merge_paths.begin(), result, comp);
 
   return result + n;
 } // end merge()
