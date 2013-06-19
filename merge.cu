@@ -44,17 +44,19 @@ __device__
 void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
                            RandomAccessIterator first, RandomAccessIterator middle, RandomAccessIterator last, Compare comp)
 {
-  int n1 = middle - first;
-  int n2 = last - middle;
+  typedef int size_type;
+
+  size_type n1 = middle - first;
+  size_type n2 = last - middle;
 
   // Run a merge path to find the start of the serial merge for each thread.
-  int diag = grainsize * threadIdx.x;
+  size_type diag = grainsize * threadIdx.x;
 
-  int mp = merge_path(first, n1, middle, n2, diag, comp);
+  size_type mp = merge_path(first, n1, middle, n2, diag, comp);
   
   // Compute the ranges of the sources in shared memory.
-  int local_offset1 = mp;
-  int local_offset2 = n1 + diag - mp;
+  size_type local_offset1 = mp;
+  size_type local_offset2 = n1 + diag - mp;
   
   // Serial merge into register.
   typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
@@ -68,10 +70,10 @@ void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
   g.wait();
 
   // local result back to source
-  int local_offset = grainsize * threadIdx.x;
+  size_type local_offset = grainsize * threadIdx.x;
 
   // this is faster than getting the size from merge's result
-  int local_size = thrust::max<int>(0, thrust::min<int>(grainsize, n1 + n2 - local_offset));
+  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, n1 + n2 - local_offset));
   bulk::copy_n(bulk::bound<grainsize>(g.this_exec), local_result, local_size, first + local_offset); 
 
   g.wait();
