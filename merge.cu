@@ -3,6 +3,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/merge.h>
 #include <thrust/sort.h>
+#include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include <bulk/bulk.hpp>
 #include "join_iterator.hpp"
 #include "time_invocation_cuda.hpp"
@@ -190,8 +191,8 @@ RandomAccessIterator3
 
   bulk::free(exec, buffer);
 #else
-  __shared__ value_type buffer[groupsize * grainsize];
-  result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer, result, comp);
+  __shared__ thrust::system::cuda::detail::detail::uninitialized_array<value_type, groupsize * grainsize> buffer;
+  result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer.data(), result, comp);
 #endif
 
   return result;
