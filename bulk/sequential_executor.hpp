@@ -1,6 +1,7 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
+#include <bulk/detail/bounded_execution.hpp>
 #include <thrust/system/detail/sequential/execution_policy.h>
 
 BULK_NS_PREFIX
@@ -19,41 +20,42 @@ struct sequential_executor
     {
       return threadIdx.x;
     } // end index()
+
+    // XXX remove these
+    __device__
+    void wait() const {}
+
+    __device__
+    size_type size() const
+    {
+      return 1;
+    } // end size()
 }; // end sequential_executor
 
 
-// XXX consider making this more like an adaptor
-template<std::size_t bound_>
-struct bounded_executor
-  : thrust::system::detail::sequential::execution_policy<bounded_executor<bound_> >
+template<std::size_t bound>
+class bounded_executor
+  : public bulk::detail::bounded_execution<bound, bulk::sequential_executor>
 {
-  typedef int size_type;
+  private:
+    typedef bulk::detail::bounded_execution<bound, bulk::sequential_executor> super_t;
 
-  static const size_type static_bound = bound_;
-
-  __device__
-  size_type index() const
-  {
-    return threadIdx.x;
-  } // end index()
-
-
-  __device__
-  size_type bound() const
-  {
-    return static_bound;
-  } // end bound()
-}; // end bounded_executor
+  public:
+    __device__
+    bounded_executor(const bulk::sequential_executor &exec)
+      : super_t(exec)
+    {}
+}; // end bounded_execution
 
 
-template<std::size_t b, typename SequentialExecutor>
+template<std::size_t b>
 __device__
-bounded_executor<b> bound(const SequentialExecutor &)
+bounded_executor<b> bound(const bulk::sequential_executor &exec)
 {
-  return bounded_executor<b>();
+  return bounded_executor<b>(exec);
 } // end bound()
 
 
-}; // end bulk
+} // end bulk
 BULK_NS_SUFFIX
 
