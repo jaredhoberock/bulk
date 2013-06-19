@@ -8,6 +8,34 @@
 #include "time_invocation_cuda.hpp"
 
 
+template<typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename Compare>
+__device__
+Size merge_path(RandomAccessIterator1 first1, Size n1,
+                RandomAccessIterator2 first2, Size n2,
+                Size diag,
+                Compare comp)
+{
+  Size begin = thrust::max<Size>(Size(0), diag - n2);
+  Size end = thrust::min<Size>(diag, n1);
+  
+  while(begin < end)
+  {
+    Size mid = (begin + end) >> 1;
+
+    if(comp(first2[diag - 1 - mid], first1[mid]))
+    {
+      end = mid;
+    } // end if
+    else
+    {
+      begin = mid + 1;
+    } // end else
+  } // end while
+
+  return begin;
+} // end merge_path()
+
+
 template<std::size_t groupsize, std::size_t grainsize,
          typename RandomAccessIterator,
          typename Compare>
@@ -21,8 +49,7 @@ void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
   // Run a merge path to find the start of the serial merge for each thread.
   int diag = grainsize * threadIdx.x;
 
-  // XXX could invent an "inplace_merge_path" variant which didn't require redundant parameters n1 & middle
-  int mp = mgpu::MergePath<mgpu::MgpuBoundsLower>(first, n1, middle, n2, diag, comp);
+  int mp = merge_path(first, n1, middle, n2, diag, comp);
   
   // Compute the ranges of the sources in shared memory.
   int local_offset1 = mp;
@@ -204,7 +231,7 @@ RandomAccessIterator3 merge(bulk::static_execution_group<groupsize,grainsize> &e
 
       size_type diag = thrust::min<size_type>(chunk_size, n1 + n2);
 
-      size_type mp = mgpu::MergePath<mgpu::MgpuBoundsLower>(first1, n1, first2, n2, diag, comp);
+      size_type mp = merge_path(first1, n1, first2, n2, diag, comp);
 
       result = bounded_merge_with_buffer(exec,
                                          first1, first1 + mp,
