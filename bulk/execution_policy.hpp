@@ -46,24 +46,6 @@ class group_launch_config
     {}
 
 
-    // XXX this should be a member of launcher
-    template<typename Function>
-    void configure(Function f,
-                   typename enable_if_static_execution_group<
-                     ExecutionGroup,
-                     Function
-                   >::type * = 0);
-
-
-    // XXX this should be a member of launcher
-    template<typename Function>
-    void configure(Function f,
-                   typename disable_if_static_execution_group<
-                     ExecutionGroup,
-                     Function
-                   >::type * = 0);
-
-
     cudaStream_t stream() const
     {
       return m_stream;

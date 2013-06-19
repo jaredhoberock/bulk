@@ -77,11 +77,11 @@ struct launcher
   template<typename LaunchConfig>
   future<void> go(LaunchConfig l, Closure c)
   {
-    l.configure(c);
+    size_t num_groups = l.num_groups();
+    size_t group_size = choose_group_size(l.num_threads_per_group());
+    size_t heap_size = choose_heap_size(group_size, l.num_smem_bytes_per_group());
 
-    size_t heap_size = choose_heap_size(l.num_threads_per_group(), l.num_smem_bytes_per_group());
-
-    if(l.num_groups() > 0 && l.num_threads_per_group() > 0)
+    if(num_groups > 0 && group_size > 0)
     {
       task_type task(c, heap_size);
 
@@ -99,8 +99,8 @@ struct launcher
       } // end if
 
       launch_by_value<<<
-        static_cast<unsigned int>(l.num_groups()),
-        static_cast<unsigned int>(l.num_threads_per_group()),
+        static_cast<unsigned int>(num_groups),
+        static_cast<unsigned int>(group_size),
         heap_size,
         l.stream()
       >>>(task);
@@ -119,6 +119,7 @@ struct launcher
     // XXX we need to think more carefully about how the events get created here
     return (l.stream() != 0) ? future_core_access::create_in_stream(l.stream()) : future<void>();
   } // end go()
+
 
   static global_function_t get_global_function()
   {
@@ -190,58 +191,25 @@ struct launcher
 
     return result;
   } // end choose_smem_size()
+
+
+  static size_t choose_group_size(size_t requested_size)
+  {
+    size_t result = requested_size;
+
+    if(result == bulk::group_launch_config<ThreadGroup>::use_default)
+    {
+      function_attributes_t attr = function_attributes();
+
+      return thrust::system::cuda::detail::block_size_with_maximum_potential_occupancy(attr, device_properties());
+    } // end if
+
+    return result;
+  } // end choose_group_size()
 }; // end launcher
 
 
-template<typename ThreadGroup, typename Function>
-typename disable_if_static_execution_group<
-  ThreadGroup,
-  size_t
->::type
-  choose_block_size(ThreadGroup g, Function f)
-{
-  namespace ns = thrust::system::cuda::detail;
-
-  ns::function_attributes_t attr = ns::function_attributes(launcher<ThreadGroup,Function>::get_global_function());
-
-  return ns::block_size_with_maximum_potential_occupancy(attr, ns::device_properties());
-} // end choose_block_size()
-
-
 } // end detail
-
-
-template<typename ThreadGroup>
-  template<typename Function>
-    void group_launch_config<ThreadGroup>
-      ::configure(Function f,
-                  typename disable_if_static_execution_group<
-                    ThreadGroup,
-                    Function
-                  >::type *)
-{
-  if(num_threads_per_group() == use_default)
-  {
-    size_t block_size = detail::choose_block_size(m_example_group, f);
-
-    m_example_group = ThreadGroup(block_size);
-
-    m_num_groups = thrust::detail::util::divide_ri(m_num_threads, num_threads_per_group());
-  } // end if
-} // end launch::configure()
-
-
-template<typename ThreadGroup>
-  template<typename Function>
-    void group_launch_config<ThreadGroup>
-      ::configure(Function f,
-                  typename enable_if_static_execution_group<
-                    ThreadGroup,
-                    Function
-                  >::type *)
-{
-  // no op
-} // end launch::configure()
 
 
 namespace detail
