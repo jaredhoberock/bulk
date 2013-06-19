@@ -119,22 +119,27 @@ class static_execution_group
 };
 
 
-
-class execution_group
-  : public execution_group_detail::execution_group_base<execution_group>
+template<std::size_t grainsize_>
+class static_execution_group<0,grainsize_>
+  : public execution_group_detail::execution_group_base<
+      static_execution_group<0,grainsize_>
+    >
 {
   private:
-    typedef execution_group_detail::execution_group_base<execution_group> super_t;
+    typedef execution_group_detail::execution_group_base<
+      static_execution_group<0,grainsize_>
+    > super_t;
+
+    typedef typename super_t::executor_type executor_type;
 
   public:
     typedef typename super_t::size_type size_type;
 
-    __device__
-    execution_group()
-    {}
+    static const size_type static_grainsize = grainsize_;
 
-    explicit execution_group(size_type size)
-      : m_size(size)
+    __host__ __device__
+    static_execution_group(size_type sz)
+      : m_size(sz)
     {}
 
     __host__ __device__
@@ -147,15 +152,20 @@ class execution_group
 #endif
     }
 
-    __device__
+    // "grainsize" inspired by TBB
+    // this is the size of the quantum of sequential work
+    __host__ __device__
     size_type grainsize() const
     {
-      return 1;
+      return grainsize_;
     }
 
   private:
     size_type m_size;
 };
+
+
+typedef static_execution_group<0,1> execution_group;
 
 
 template<typename T>
@@ -166,16 +176,16 @@ template<std::size_t size, std::size_t grainsize>
 struct is_execution_group<static_execution_group<size,grainsize> > : thrust::detail::true_type {};
 
 
-template<>
-struct is_execution_group<execution_group> : thrust::detail::true_type {};
-
-
 template<typename T>
 struct is_static_execution_group : thrust::detail::false_type {};
 
 
 template<std::size_t size, std::size_t grainsize>
 struct is_static_execution_group<static_execution_group<size,grainsize> > : thrust::detail::true_type {};
+
+
+template<std::size_t grainsize>
+struct is_static_execution_group<static_execution_group<0,grainsize> > : thrust::detail::false_type {};
 
 
 template<typename T, typename U = void>
