@@ -17,6 +17,14 @@ namespace detail
 extern __shared__ int s_data_segment_begin[];
 
 
+template<typename T>
+inline __device__ T *on_chip_cast(T *ptr)
+{
+  extern __shared__ char s_begin[];
+  return reinterpret_cast<T*>((reinterpret_cast<char*>(ptr) - s_begin) + s_begin);
+} // end on_chip_cast()
+
+
 class os
 {
   public:
@@ -274,9 +282,9 @@ class singleton_unsafe_on_chip_allocator
         return new_block;
       }
     
-      new_block->size = size;
-      new_block->prev = prev;
-      new_block->is_free = false;
+      on_chip_cast(new_block)->size = size;
+      on_chip_cast(new_block)->prev = prev;
+      on_chip_cast(new_block)->is_free = false;
     
       return new_block;
     } // end extend_heap()
@@ -393,14 +401,6 @@ inline __device__ void init_on_chip_malloc(size_t max_data_segment_size)
 {
   s_on_chip_allocator.construct(max_data_segment_size);
 } // end init_on_chip_malloc()
-
-
-template<typename T>
-inline __device__ T *on_chip_cast(T *ptr)
-{
-  extern __shared__ char s_begin[];
-  return reinterpret_cast<T*>((reinterpret_cast<char*>(ptr) - s_begin) + s_begin);
-} // end on_chip_cast()
 
 
 inline __device__ void *on_chip_malloc(size_t size)
