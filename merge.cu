@@ -183,7 +183,7 @@ RandomAccessIterator3 merge(bulk::static_execution_group<groupsize,grainsize> &e
 
   typedef typename thrust::iterator_value<RandomAccessIterator3>::type value_type;
 
-  value_type *buffer = bulk::detail::on_chip_cast(reinterpret_cast<value_type*>(bulk::malloc(exec, exec.size() * exec.grainsize() * sizeof(value_type))));
+  value_type *buffer = reinterpret_cast<value_type*>(bulk::malloc(exec, exec.size() * exec.grainsize() * sizeof(value_type)));
 
   size_type chunk_size = exec.size() * exec.grainsize();
 
@@ -304,27 +304,28 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
                                Compare comp)
 {
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
+  typedef typename thrust::iterator_difference<RandomAccessIterator1>::type difference_type;
+  typedef int size_type;
 
-  // 91/89/100
-  const int groupsize = 256 + 32;
-  const int grainsize = (sizeof(value_type) == sizeof(int)) ? 7 : 5;
+  // 91/89/100% of sean's merge
+  const size_type groupsize = 256 + 32;
+  const size_type grainsize = (sizeof(value_type) == sizeof(int)) ? 7 : 5;
   
-  const int tile_size = groupsize * grainsize;
+  const size_type tile_size = groupsize * grainsize;
 
   // XXX it's easy to launch too many blocks this way
   //     we need to cap it and virtualize
-  int n = (last1 - first1) + (last2 - first2);
+  difference_type n = (last1 - first1) + (last2 - first2);
 
-  int num_groups = (n + tile_size - 1) / tile_size;
+  difference_type num_groups = (n + tile_size - 1) / tile_size;
 
-  thrust::device_vector<int> merge_paths(num_groups + 1);
+  thrust::device_vector<size_type> merge_paths(num_groups + 1);
 
-  thrust::tabulate(merge_paths.begin(), merge_paths.end(), locate_merge_path<int,RandomAccessIterator1,RandomAccessIterator2,Compare>(tile_size,first1,last1,first2,last2,comp));
+  thrust::tabulate(merge_paths.begin(), merge_paths.end(), locate_merge_path<size_type,RandomAccessIterator1,RandomAccessIterator2,Compare>(tile_size,first1,last1,first2,last2,comp));
 
   // merge partitions
   bulk::static_execution_group<groupsize,grainsize> g;
-
-  int heap_size = tile_size * sizeof(value_type);
+  size_type heap_size = tile_size * sizeof(value_type);
   bulk::async(bulk::par(g, num_groups, heap_size), merge_functor(), bulk::there, first1, last1 - first1, first2, last2 - first2, merge_paths.begin(), result, comp);
 
   return result + n;
