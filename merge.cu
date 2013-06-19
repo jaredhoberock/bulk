@@ -314,7 +314,7 @@ struct locate_merge_path
     Size n1 = last1 - first1;
     Size n2 = last2 - first2;
     Size diag = thrust::min<Size>(partition_size * i, n1 + n2);
-    return mgpu::MergePath<mgpu::MgpuBoundsLower>(first1, n1, first2, n2, diag, comp);
+    return merge_path(first1, n1, first2, n2, diag, comp);
   }
 };
 
