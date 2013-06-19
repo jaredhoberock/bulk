@@ -215,17 +215,17 @@ merge(const bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g_,
   // find the start of each local merge
   size_type local_offset = grainsize * g.this_exec.index();
 
-  size_type mp = bulk::merge_path(first, n1, middle, n2, local_offset, comp);
+  size_type mp = bulk::merge_path(first1, n1, first2, n2, local_offset, comp);
   
   // do a local sequential merge
   size_type local_offset1 = mp;
-  size_type local_offset2 = n1 + local_offset - mp;
+  size_type local_offset2 = local_offset - mp;
   
-  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
+  typedef typename thrust::iterator_value<RandomAccessIterator3>::type value_type;
   value_type local_result[grainsize];
   bulk::merge(bulk::bound<grainsize>(g.this_exec),
-              first + local_offset1, middle,
-              first + local_offset2, last,
+              first1 + local_offset1, last1,
+              first2 + local_offset2, last2,
               local_result,
               comp);
 
