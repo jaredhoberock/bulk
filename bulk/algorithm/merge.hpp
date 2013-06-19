@@ -10,6 +10,34 @@ namespace bulk
 {
 
 
+template<typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename Compare>
+__device__
+Size merge_path(RandomAccessIterator1 first1, Size n1,
+                RandomAccessIterator2 first2, Size n2,
+                Size diag,
+                Compare comp)
+{
+  Size begin = thrust::max<Size>(Size(0), diag - n2);
+  Size end = thrust::min<Size>(diag, n1);
+  
+  while(begin < end)
+  {
+    Size mid = (begin + end) >> 1;
+
+    if(comp(first2[diag - 1 - mid], first1[mid]))
+    {
+      end = mid;
+    } // end if
+    else
+    {
+      begin = mid + 1;
+    } // end else
+  } // end while
+
+  return begin;
+} // end merge_path()
+
+
 template<std::size_t bound,
          typename InputIterator1,
          typename InputIterator2,
