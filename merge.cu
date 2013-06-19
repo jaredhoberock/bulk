@@ -158,30 +158,13 @@ RandomAccessIterator3
 
 #if __CUDA_ARCH__ >= 200
   value_type *buffer = bulk::detail::on_chip_cast(reinterpret_cast<value_type*>(bulk::malloc(exec, groupsize * grainsize * sizeof(value_type))));
+
+  result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer, result, comp);
+
+  bulk::free(exec, buffer);
 #else
   __shared__ value_type buffer[groupsize * grainsize];
-#endif
-
-  typedef int size_type;
-
-  size_type n1 = last1 - first1;
-  size_type n2 = last2 - first2;
-
-  // copy into the buffer
-  bounded_copy_n(exec,
-                 make_join_iterator(first1, n1, first2),
-                 n1 + n2,
-                 buffer);
-
-  // inplace merge in the buffer
-  bounded_inplace_merge(exec, buffer, buffer + n1, buffer + n1 + n2, comp);
-  
-  // copy to the result
-  // XXX this might be slightly faster with a bounded_copy_n
-  result = bulk::copy_n(exec, buffer, n1 + n2, result);
-
-#if __CUDA_ARCH__ >= 200
-  bulk::free(exec, buffer);
+  result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer, result, comp);
 #endif
 
   return result;
@@ -322,6 +305,7 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
 {
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
 
+  // 91/89/100
   const int groupsize = 256 + 32;
   const int grainsize = (sizeof(value_type) == sizeof(int)) ? 7 : 5;
   
