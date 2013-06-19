@@ -160,16 +160,15 @@ inplace_merge(const bulk::bounded_static_execution_group<bound,groupsize,grainsi
   size_type n1 = middle - first;
   size_type n2 = last - middle;
 
-  // Run a merge path to find the start of the serial merge for each thread.
+  // find the start of each local merge
   size_type local_offset = grainsize * g.this_exec.index();
 
   size_type mp = bulk::merge_path(first, n1, middle, n2, local_offset, comp);
   
-  // Compute the ranges of the sources in shared memory.
+  // do a local sequential merge
   size_type local_offset1 = mp;
   size_type local_offset2 = n1 + local_offset - mp;
   
-  // Serial merge into register.
   typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
   value_type local_result[grainsize];
   bulk::merge(bulk::bound<grainsize>(g.this_exec),
@@ -187,6 +186,58 @@ inplace_merge(const bulk::bounded_static_execution_group<bound,groupsize,grainsi
 
   g.wait();
 } // end inplace_merge()
+
+
+template<std::size_t bound, std::size_t groupsize, std::size_t grainsize,
+         typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename RandomAccessIterator3,
+         typename Compare>
+__device__
+typename thrust::detail::enable_if<
+  (bound <= groupsize * grainsize),
+  RandomAccessIterator3
+>::type
+merge(const bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g_,
+      RandomAccessIterator1 first1, RandomAccessIterator1 last1,
+      RandomAccessIterator2 first2, RandomAccessIterator2 last2,
+      RandomAccessIterator3 result,
+      Compare comp)
+{
+  bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g =
+    const_cast<bulk::bounded_static_execution_group<bound,groupsize,grainsize>&>(g_);
+
+  typedef int size_type;
+
+  size_type n1 = last1 - first1;
+  size_type n2 = last2 - first2;
+
+  // find the start of each local merge
+  size_type local_offset = grainsize * g.this_exec.index();
+
+  size_type mp = bulk::merge_path(first, n1, middle, n2, local_offset, comp);
+  
+  // do a local sequential merge
+  size_type local_offset1 = mp;
+  size_type local_offset2 = n1 + local_offset - mp;
+  
+  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
+  value_type local_result[grainsize];
+  bulk::merge(bulk::bound<grainsize>(g.this_exec),
+              first + local_offset1, middle,
+              first + local_offset2, last,
+              local_result,
+              comp);
+
+  // store local result
+  // this is faster than getting the size from merge's result
+  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, n1 + n2 - local_offset));
+  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), local_result, local_size, result + local_offset); 
+
+  g.wait();
+
+  return result + thrust::min<size_type>(groupsize * grainsize, n1 + n2);
+} // end merge()
 
 
 } // end bulk
