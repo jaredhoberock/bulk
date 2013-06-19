@@ -2,6 +2,7 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/sequential_executor.hpp>
+#include <bulk/algorithm/copy.hpp>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 
 
@@ -140,6 +141,52 @@ OutputIterator merge(const bulk::bounded_executor<bound> &e,
 
   return result + i;
 } // end merge
+
+
+template<std::size_t bound, std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename Compare>
+__device__
+typename thrust::detail::enable_if<
+  (bound <= groupsize * grainsize)
+>::type
+inplace_merge(const bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g_,
+              RandomAccessIterator first, RandomAccessIterator middle, RandomAccessIterator last,
+              Compare comp)
+{
+  bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g =
+    const_cast<bulk::bounded_static_execution_group<bound,groupsize,grainsize>&>(g_);
+
+  typedef int size_type;
+
+  size_type n1 = middle - first;
+  size_type n2 = last - middle;
+
+  // Run a merge path to find the start of the serial merge for each thread.
+  size_type local_offset = grainsize * g.this_exec.index();
+
+  size_type mp = bulk::merge_path(first, n1, middle, n2, local_offset, comp);
+  
+  // Compute the ranges of the sources in shared memory.
+  size_type local_offset1 = mp;
+  size_type local_offset2 = n1 + local_offset - mp;
+  
+  // Serial merge into register.
+  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
+  value_type local_result[grainsize];
+  bulk::merge(bulk::bound<grainsize>(g.this_exec),
+              first + local_offset1, middle,
+              first + local_offset2, last,
+              local_result,
+              comp);
+
+  g.wait();
+
+  // copy local result back to source
+  // this is faster than getting the size from merge's result
+  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, n1 + n2 - local_offset));
+  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), local_result, local_size, first + local_offset); 
+
+  g.wait();
+} // end inplace_merge()
 
 
 } // end bulk

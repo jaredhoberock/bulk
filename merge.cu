@@ -9,49 +9,6 @@
 #include "time_invocation_cuda.hpp"
 
 
-template<std::size_t groupsize, std::size_t grainsize,
-         typename RandomAccessIterator,
-         typename Compare>
-__device__
-void bounded_inplace_merge(bulk::static_execution_group<groupsize,grainsize> &g,
-                           RandomAccessIterator first, RandomAccessIterator middle, RandomAccessIterator last, Compare comp)
-{
-  typedef int size_type;
-
-  size_type n1 = middle - first;
-  size_type n2 = last - middle;
-
-  // Run a merge path to find the start of the serial merge for each thread.
-  size_type diag = grainsize * threadIdx.x;
-
-  size_type mp = bulk::merge_path(first, n1, middle, n2, diag, comp);
-  
-  // Compute the ranges of the sources in shared memory.
-  size_type local_offset1 = mp;
-  size_type local_offset2 = n1 + diag - mp;
-  
-  // Serial merge into register.
-  typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
-  value_type local_result[grainsize];
-  bulk::merge(bulk::bound<grainsize>(g.this_exec),
-              first + local_offset1, middle,
-              first + local_offset2, last,
-              local_result,
-              comp);
-
-  g.wait();
-
-  // local result back to source
-  size_type local_offset = grainsize * threadIdx.x;
-
-  // this is faster than getting the size from merge's result
-  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, n1 + n2 - local_offset));
-  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), local_result, local_size, first + local_offset); 
-
-  g.wait();
-}
-
-
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __device__
 RandomAccessIterator4
@@ -62,7 +19,6 @@ RandomAccessIterator4
                             RandomAccessIterator4 result,
                             Compare comp)
 {
-
   typedef int size_type;
 
   size_type n1 = last1 - first1;
@@ -75,7 +31,9 @@ RandomAccessIterator4
                buffer);
 
   // inplace merge in the buffer
-  bounded_inplace_merge(exec, buffer, buffer + n1, buffer + n1 + n2, comp);
+  bulk::inplace_merge(bulk::bound<groupsize * grainsize>(exec),
+                      buffer, buffer + n1, buffer + n1 + n2,
+                      comp);
   
   // copy to the result
   // XXX this might be slightly faster with a bounded copy_n
