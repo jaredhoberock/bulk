@@ -229,6 +229,75 @@ typename enable_if_execution_group<ExecutionGroup, RandomAccessIterator2>::type
 } // end copy_n()
 
 
+template<std::size_t bound, std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2>
+__device__
+typename thrust::detail::enable_if<
+  (bound <= groupsize * grainsize),
+  RandomAccessIterator2 
+>::type
+copy_n(const bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g_,
+       RandomAccessIterator1 first,
+       Size n,
+       RandomAccessIterator2 result)
+{
+  bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g =
+    const_cast<bulk::bounded_static_execution_group<bound,groupsize,grainsize>&>(g_);
+
+  typedef int size_type;
+
+  size_type tid = g.this_exec.index();
+
+  typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
+
+  // XXX make this an uninitialized array
+  value_type stage[grainsize];
+
+  // avoid conditional accesses when possible
+  if(groupsize * grainsize <= n)
+  {
+    #pragma unroll
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type src_idx = g.size() * i + tid;
+      stage[i] = first[src_idx];
+    } // end for i
+
+    #pragma unroll
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type dst_idx = g.size() * i + tid;
+      result[dst_idx] = stage[i];
+    } // end for i
+  } // end if
+  else
+  {
+    #pragma unroll
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type src_idx = g.size() * i + tid;
+      if(src_idx < n)
+      {
+        stage[i] = first[src_idx];
+      } // end if
+    } // end for
+
+    #pragma unroll
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type dst_idx = g.size() * i + tid;
+      if(dst_idx < n)
+      {
+        result[dst_idx] = stage[i];
+      } // end if
+    } // end for
+  } // end else
+
+  g.wait();
+
+  return result + thrust::min<Size>(g.size() * grainsize, n);
+} // end copy_n()
+
+
 } // end bulk
 BULK_NS_SUFFIX
 

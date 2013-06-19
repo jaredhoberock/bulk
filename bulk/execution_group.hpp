@@ -168,6 +168,52 @@ class static_execution_group<0,grainsize_>
 typedef static_execution_group<0,1> execution_group;
 
 
+template<std::size_t bound, std::size_t groupsize, std::size_t grainsize>
+class bounded_static_execution_group
+  : public bulk::detail::bounded_execution<bound, bulk::static_execution_group<groupsize,grainsize> >
+{
+  private:
+    typedef bulk::detail::bounded_execution<bound, bulk::static_execution_group<groupsize,grainsize> > super_t;
+
+  public:
+    __device__
+    bounded_static_execution_group(const bulk::static_execution_group<groupsize,grainsize> &exec)
+      : super_t(exec)
+    {}
+};
+
+
+template<std::size_t b, std::size_t groupsize, std::size_t grainsize>
+__device__
+bounded_static_execution_group<b,groupsize,grainsize> bound(const bulk::static_execution_group<groupsize,grainsize> &exec)
+{
+  return bounded_static_execution_group<b,groupsize,grainsize>(exec);
+} // end bound()
+
+
+template<std::size_t bound>
+class bounded_execution_group
+  : public bulk::detail::bounded_execution<bound,execution_group>
+{
+  private:
+    typedef bulk::detail::bounded_execution<bound,execution_group> super_t;
+
+  public:
+    __device__
+    bounded_execution_group(const bulk::execution_group &exec)
+      : super_t(exec)
+    {}
+};
+
+
+template<std::size_t b>
+__device__
+bounded_execution_group<b> bound(const bulk::execution_group &exec)
+{
+  return bounded_execution_group<b>(exec);
+} // end bound()
+
+
 template<typename T>
 struct is_execution_group : thrust::detail::false_type {};
 
