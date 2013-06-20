@@ -142,6 +142,88 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 } // end reduce
 
 
+template<typename RandomAccessIterator, typename T, typename BinaryFunction>
+__device__
+T reduce(bulk::execution_group &g,
+         RandomAccessIterator first,
+         RandomAccessIterator last,
+         T init,
+         BinaryFunction binary_op)
+{
+  typedef int size_type;
+
+  const size_type groupsize = g.size();
+  const size_type grainsize = bulk::execution_group::static_grainsize;
+  const size_type elements_per_group = groupsize * grainsize;
+
+  size_type tid = g.this_exec.index();
+
+  T this_sum;
+
+  bool this_sum_defined = false;
+
+  typename thrust::iterator_difference<RandomAccessIterator>::type n = last - first;
+
+  T *buffer = reinterpret_cast<T*>(bulk::malloc(g, groupsize * sizeof(T)));
+  
+  for(; first < last; first += elements_per_group)
+  {
+    size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
+    
+    // load input into register
+    T inputs[grainsize];
+
+    // XXX this is a sequential strided copy
+    //     the stride is groupsize
+    if(partition_size >= elements_per_group)
+    {
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        inputs[i] = first[groupsize * i + tid];
+      } // end for
+    } // end if
+    else
+    {
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        size_type index = groupsize * i + tid;
+        if(index < partition_size)
+        {
+          inputs[i] = first[index];
+        } // end if
+      } // end for
+    } // end else
+    
+    // sum sequentially
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type index = groupsize * i + g.this_exec.index();
+      if(index < partition_size)
+      {
+        T x = inputs[i];
+        this_sum = (i || this_sum_defined) ? binary_op(this_sum, x) : x;
+      } // end if
+    } // end for
+
+    this_sum_defined = true;
+  } // end for
+
+  if(this_sum_defined)
+  {
+    buffer[tid] = this_sum;
+  } // end if
+
+  g.wait();
+
+  // reduce across the block
+  T result = detail::reduce_detail::destructive_reduce_n(g, buffer, thrust::min<size_type>(groupsize,n), init, binary_op);
+
+  bulk::free(g,buffer);
+
+  return result;
+} // end reduce
+
+
 } // end bulk
 BULK_NS_SUFFIX
 
