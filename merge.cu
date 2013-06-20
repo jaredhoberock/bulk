@@ -9,125 +9,34 @@
 #include "time_invocation_cuda.hpp"
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size,typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __device__
 RandomAccessIterator4
-  bounded_merge_with_buffer(bulk::static_execution_group<groupsize,grainsize> &exec,
-                            RandomAccessIterator1 first1, RandomAccessIterator1 last1,
-                            RandomAccessIterator2 first2, RandomAccessIterator2 last2,
-                            RandomAccessIterator3 buffer,
-                            RandomAccessIterator4 result,
-                            Compare comp)
+  staged_merge(bulk::static_execution_group<groupsize,grainsize> &exec,
+               RandomAccessIterator1 first1, Size n1,
+               RandomAccessIterator2 first2, Size n2,
+               RandomAccessIterator3 stage,
+               RandomAccessIterator4 result,
+               Compare comp)
 {
-  typedef int size_type;
-
-  size_type n1 = last1 - first1;
-  size_type n2 = last2 - first2;
-
-  // copy into the buffer
+  // copy into the stage
   bulk::copy_n(bulk::bound<groupsize * grainsize>(exec),
                make_join_iterator(first1, n1, first2),
                n1 + n2,
-               buffer);
+               stage);
 
-  // inplace merge in the buffer
+  // inplace merge in the stage
   bulk::inplace_merge(bulk::bound<groupsize * grainsize>(exec),
-                      buffer, buffer + n1, buffer + n1 + n2,
+                      stage, stage + n1, stage + n1 + n2,
                       comp);
   
   // copy to the result
   // XXX this might be slightly faster with a bounded copy_n
-  return bulk::copy_n(exec, buffer, n1 + n2, result);
-}
+  return bulk::copy_n(exec, stage, n1 + n2, result);
+} // end staged_merge()
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename Compare>
-__device__
-RandomAccessIterator3
-  bounded_merge(bulk::static_execution_group<groupsize,grainsize> &exec,
-                RandomAccessIterator1 first1, RandomAccessIterator1 last1,
-                RandomAccessIterator2 first2, RandomAccessIterator2 last2,
-                RandomAccessIterator3 result,
-                Compare comp)
-{
-  typedef typename thrust::iterator_value<RandomAccessIterator3>::type value_type;
-
-#if __CUDA_ARCH__ >= 200
-  value_type *buffer = reinterpret_cast<value_type*>(bulk::malloc(exec, groupsize * grainsize * sizeof(value_type)));
-
-  if(bulk::is_on_chip(buffer))
-  {
-    result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, bulk::on_chip_cast(buffer), result, comp);
-  }
-  else
-  {
-    result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer, result, comp);
-  }
-
-  bulk::free(exec, buffer);
-#else
-  __shared__ thrust::system::cuda::detail::detail::uninitialized_array<value_type, groupsize * grainsize> buffer;
-  result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer.data(), result, comp);
-#endif
-
-  return result;
-}
-
-
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename Compare>
-__device__
-RandomAccessIterator3 merge(bulk::static_execution_group<groupsize,grainsize> &exec,
-                            RandomAccessIterator1 first1, RandomAccessIterator1 last1,
-                            RandomAccessIterator2 first2, RandomAccessIterator2 last2,
-                            RandomAccessIterator3 result,
-                            Compare comp)
-{
-  typedef int size_type;
-
-  typedef typename thrust::iterator_value<RandomAccessIterator3>::type value_type;
-
-  value_type *buffer = reinterpret_cast<value_type*>(bulk::malloc(exec, exec.size() * exec.grainsize() * sizeof(value_type)));
-
-  size_type chunk_size = exec.size() * exec.grainsize();
-
-  size_type n1 = last1 - first1;
-  size_type n2 = last2 - first2;
-
-  // avoid the search & loop when possible
-  if(n1 + n2 <= chunk_size)
-  {
-    result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer, result, comp);
-  } // end if
-  else
-  {
-    while((first1 < last1) || (first2 < last2))
-    {
-      size_type n1 = last1 - first1;
-      size_type n2 = last2 - first2;
-
-      size_type diag = thrust::min<size_type>(chunk_size, n1 + n2);
-
-      size_type mp = bulk::merge_path(first1, n1, first2, n2, diag, comp);
-
-      result = bounded_merge_with_buffer(exec,
-                                         first1, first1 + mp,
-                                         first2, first2 + diag - mp,
-                                         buffer,
-                                         result,
-                                         comp);
-
-      first1 += mp;
-      first2 += diag - mp;
-    } // end while
-  } // end else
-
-  bulk::free(exec, buffer);
-
-  return result;
-} // end merge()
-
-
-struct merge_functor
+struct merge_kernel
 {
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
   __device__
@@ -142,30 +51,49 @@ struct merge_functor
 
     size_type elements_per_group = g.size() * g.grainsize();
 
+    // determine the ranges to merge
     size_type mp0  = merge_paths_first[g.index()];
     size_type mp1  = merge_paths_first[g.index()+1];
     size_type diag = elements_per_group * g.index();
-    
-    bounded_merge(g,
-                  first1 + mp0,        first1 + mp1,
-                  first2 + diag - mp0, first2 + thrust::min<Size>(n1 + n2, diag + elements_per_group) - mp1, // <- surely that can be simplified
-                  result + elements_per_group * g.index(),
-                  comp);
-  }
-};
 
+    size_type local_size1 = mp1 - mp0;
+    size_type local_size2 = thrust::min<size_type>(n1 + n2, diag + elements_per_group) - mp1 - diag + mp0;
 
-template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
-__global__
-void merge_n(RandomAccessIterator1 first1, Size n1,
-             RandomAccessIterator2 first2, Size n2,
-             RandomAccessIterator3 merge_paths_first,
-             RandomAccessIterator4 result,
-             Compare comp)
-{
-  bulk::static_execution_group<groupsize,grainsize> g;
-  merge_functor()(g, first1, n1, first2, n2, merge_paths_first, result, comp);
-}
+    first1 += mp0;
+    first2 += diag - mp0;
+
+    typedef typename thrust::iterator_value<RandomAccessIterator4>::type value_type;
+
+#if __CUDA_ARCH__ >= 200
+    // merge through a stage
+    value_type *stage = reinterpret_cast<value_type*>(bulk::malloc(g, elements_per_group * sizeof(value_type)));
+
+    if(bulk::is_on_chip(stage))
+    {
+      staged_merge(g,
+                   first1, local_size1,
+                   first2, local_size2,
+                   bulk::on_chip_cast(stage),
+                   result + elements_per_group * g.index(),
+                   comp);
+    } // end if
+    else
+    {
+      staged_merge(g,
+                   first1, local_size1,
+                   first2, local_size2,
+                   stage,
+                   result + elements_per_group * g.index(),
+                   comp);
+    } // end else
+
+    bulk::free(g, stage);
+#else
+    thrust::system::cuda::detail::detail::uninitialized_array<value_type, groupsize * grainsize> stage;
+    staged_merge(g, first1, local_size1, first2, local_size2, stage.data(), result + elements_per_group * g.index(), comp);
+#endif
+  } // end operator()
+}; // end merge_kernel
 
 
 template<typename Size, typename RandomAccessIterator1,typename RandomAccessIterator2, typename Compare>
@@ -229,7 +157,7 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
   // merge partitions
   bulk::static_execution_group<groupsize,grainsize> g;
   size_type heap_size = tile_size * sizeof(value_type);
-  bulk::async(bulk::par(g, num_groups, heap_size), merge_functor(), bulk::there, first1, last1 - first1, first2, last2 - first2, merge_paths.begin(), result, comp);
+  bulk::async(bulk::par(g, num_groups, heap_size), merge_kernel(), bulk::there, first1, last1 - first1, first2, last2 - first2, merge_paths.begin(), result, comp);
 
   return result + n;
 } // end merge()
