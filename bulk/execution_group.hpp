@@ -138,7 +138,7 @@ class static_execution_group<0,grainsize_>
     static const size_type static_grainsize = grainsize_;
 
     __host__ __device__
-    static_execution_group(size_type sz)
+    static_execution_group(size_type sz = default_execution_group_size)
       : m_size(sz)
     {}
 
