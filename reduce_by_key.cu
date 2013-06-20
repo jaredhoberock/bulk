@@ -3,32 +3,28 @@
 #include <thrust/tabulate.h>
 #include <thrust/detail/range/tail_flags.h>
 #include <bulk/bulk.hpp>
+#include "tail_flags.hpp"
 #include "time_invocation_cuda.hpp"
 
 
 struct reduce_intervals
 {
-  template<typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename BinaryFunction>
-  __device__ void operator()(bulk::execution_group &this_group,
+  template<typename ExecutionGroup, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename BinaryFunction>
+  __device__ void operator()(ExecutionGroup &this_group,
                              RandomAccessIterator1 first,
                              Size n,
                              Size interval_size,
                              RandomAccessIterator2 result,
                              BinaryFunction binary_op)
   {
-    typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
+    typedef typename thrust::iterator_value<RandomAccessIterator2>::type value_type;
 
     Size start = this_group.index() * interval_size;
     Size end   = thrust::min<Size>(n, start + interval_size);
 
-    value_type sum = 0;
-
     // the last group has zero input and returns a 0 sum
-    if(start != end)
-    {
-      value_type init = first[end-1];
-      sum = bulk::reduce(this_group, first + start, first + end - 1, init, binary_op);
-    } // end if
+    value_type init = 0;
+    value_type sum = bulk::reduce(this_group, first + start, first + end, init, binary_op);
 
     if(this_group.this_exec.index() == 0)
     {
@@ -63,16 +59,70 @@ my_reduce_by_key(InputIterator1 keys_first,
   // the last element stores the total output size
   thrust::device_vector<difference_type> interval_output_offsets(num_intervals + 1);
 
-  thrust::detail::tail_flags<InputIterator1,BinaryPredicate> tail_flags = thrust::detail::make_tail_flags(keys_first, keys_last, pred);
+  tail_flags<InputIterator1,BinaryPredicate> tail_flags(keys_first, keys_last, pred);
 
   // count the number of tail flags in each interval
   // XXX needs tuning
-  bulk::async(bulk::par(num_intervals + 1,256), reduce_intervals(), bulk::there, keys_first, n, interval_size, interval_output_offsets.begin(), thrust::plus<bool>());
+  bulk::static_execution_group<256,5> g;
+  bulk::async(bulk::par(g, num_intervals + 1), reduce_intervals(), bulk::there, tail_flags.begin(), n, interval_size, interval_output_offsets.begin(), thrust::plus<difference_type>());
 
   // scan the interval counts to get output offsets
   thrust::exclusive_scan(interval_output_offsets.begin(), interval_output_offsets.end(), interval_output_offsets.begin(), 0, thrust::plus<difference_type>());
 
-  return thrust::pair<OutputIterator1,OutputIterator2>();
+  typedef typename thrust::iterator_value<InputIterator1>::type key_type;
+  typedef typename thrust::iterator_value<InputIterator2>::type value_type;
+
+  key_type carry_key;
+  value_type carry_value;
+
+  for(int i = 0; i < num_intervals; ++i)
+  {
+    int input_idx = i * interval_size;
+    int input_end = thrust::min(n, input_idx + interval_size);
+    int output_idx = interval_output_offsets[i];
+
+    if(i == 0)
+    {
+      carry_key = keys_first[input_idx];
+      carry_value = values_first[input_idx];
+
+      ++input_idx;
+    } // end if
+
+    for(; input_idx != input_end; ++input_idx)
+    {
+      key_type key = keys_first[input_idx];
+      value_type value = values_first[input_idx];
+
+      if(pred(carry_key, key))
+      {
+        carry_value = binary_op(carry_value, value);
+      } // end if
+      else
+      {
+        // new segment begins
+
+        // store the result of the previous segment
+        keys_result[output_idx] = carry_key;
+        values_result[output_idx] = carry_value;
+
+        ++output_idx;
+
+        carry_key = key;
+        carry_value = value;
+      } // end else
+    } // end for
+
+    // store the final segment's sum
+    // XXX we have to be careful about whether we do this
+    //     we don't want to store this sum unless the next
+    //     interval begins a new segment
+    keys_result[output_idx] = carry_key;
+    values_result[output_idx] = carry_value;
+  } // end for
+
+  difference_type size_of_result = interval_output_offsets.back();
+  return thrust::make_pair(keys_result + size_of_result, values_result + size_of_result);
 } // end my_reduce_by_key()
 
 
@@ -119,7 +169,8 @@ struct hash
     x = (x+0xd3a2646c) ^ (x<<9);
     x = (x+0xfd7046c5) + (x<<3);
     x = (x^0xb55a4f09) ^ (x>>16);
-    return x;
+
+    return x % 10;
   }
 };
 
@@ -163,9 +214,13 @@ void validate(size_t n)
   random_fill(values);
 
   thrust::device_vector<T> keys_ref(n), values_ref(n);
-  thrust::reduce_by_key(keys.begin(), keys.end(), values.begin(), keys_ref.begin(), values_ref.begin());
+  size_t thrust_size = thrust_reduce_by_key(&keys, &values, &keys_ref, &values_ref);
+  keys_ref.resize(thrust_size);
+  values_ref.resize(thrust_size);
 
-  my_reduce_by_key(&keys, &values, &keys_result, &values_result);
+  size_t my_size = my_reduce_by_key(&keys, &values, &keys_result, &values_result);
+  keys_result.resize(my_size);
+  values_result.resize(my_size);
 
   std::cout << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
 
@@ -176,7 +231,8 @@ void validate(size_t n)
 
 int main()
 {
-  size_t n = 123456789;
+  //size_t n = 123456789;
+  size_t n = 10001;
 
   validate<int>(n);
 
