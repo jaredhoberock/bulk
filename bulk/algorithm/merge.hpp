@@ -2,6 +2,7 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/sequential_executor.hpp>
+#include <bulk/malloc.hpp>
 #include <bulk/algorithm/copy.hpp>
 #include <thrust/system/cuda/detail/detail/uninitialized.h>
 
@@ -237,6 +238,101 @@ merge(const bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g_,
   g.wait();
 
   return result + thrust::min<size_type>(groupsize * grainsize, n1 + n2);
+} // end merge()
+
+
+namespace detail
+{
+namespace merge_detail
+{
+
+
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
+__device__
+RandomAccessIterator4
+  bounded_merge_with_buffer(bulk::static_execution_group<groupsize,grainsize> &exec,
+                            RandomAccessIterator1 first1, RandomAccessIterator1 last1,
+                            RandomAccessIterator2 first2, RandomAccessIterator2 last2,
+                            RandomAccessIterator3 buffer,
+                            RandomAccessIterator4 result,
+                            Compare comp)
+{
+  typedef int size_type;
+
+  size_type n1 = last1 - first1;
+  size_type n2 = last2 - first2;
+
+  // copy into the buffer
+  bulk::copy_n(bulk::bound<groupsize * grainsize>(exec),
+               make_join_iterator(first1, n1, first2),
+               n1 + n2,
+               buffer);
+
+  // inplace merge in the buffer
+  bulk::inplace_merge(bulk::bound<groupsize * grainsize>(exec),
+                      buffer, buffer + n1, buffer + n1 + n2,
+                      comp);
+  
+  // copy to the result
+  // XXX this might be slightly faster with a bounded copy_n
+  return bulk::copy_n(exec, buffer, n1 + n2, result);
+} // end bounded_merge_with_buffer()
+
+
+} // end merge_detail
+} // end detail
+
+
+template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename Compare>
+__device__
+RandomAccessIterator3 merge(bulk::static_execution_group<groupsize,grainsize> &exec,
+                            RandomAccessIterator1 first1, RandomAccessIterator1 last1,
+                            RandomAccessIterator2 first2, RandomAccessIterator2 last2,
+                            RandomAccessIterator3 result,
+                            Compare comp)
+{
+  typedef int size_type;
+
+  typedef typename thrust::iterator_value<RandomAccessIterator3>::type value_type;
+
+  value_type *buffer = reinterpret_cast<value_type*>(bulk::malloc(exec, exec.size() * exec.grainsize() * sizeof(value_type)));
+
+  size_type chunk_size = exec.size() * exec.grainsize();
+
+  size_type n1 = last1 - first1;
+  size_type n2 = last2 - first2;
+
+  // avoid the search & loop when possible
+  if(n1 + n2 <= chunk_size)
+  {
+    result = detail::merge_detail::bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer, result, comp);
+  } // end if
+  else
+  {
+    while((first1 < last1) || (first2 < last2))
+    {
+      size_type n1 = last1 - first1;
+      size_type n2 = last2 - first2;
+
+      size_type diag = thrust::min<size_type>(chunk_size, n1 + n2);
+
+      size_type mp = bulk::merge_path(first1, n1, first2, n2, diag, comp);
+
+      result = detail::merge_detail::bounded_merge_with_buffer(exec,
+                                                               first1, first1 + mp,
+                                                               first2, first2 + diag - mp,
+                                                               buffer,
+                                                               result,
+                                                               comp);
+
+      first1 += mp;
+      first2 += diag - mp;
+    } // end while
+  } // end else
+
+  bulk::free(exec, buffer);
+
+  return result;
 } // end merge()
 
 
