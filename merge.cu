@@ -53,9 +53,16 @@ RandomAccessIterator3
   typedef typename thrust::iterator_value<RandomAccessIterator3>::type value_type;
 
 #if __CUDA_ARCH__ >= 200
-  value_type *buffer = bulk::detail::on_chip_cast(reinterpret_cast<value_type*>(bulk::malloc(exec, groupsize * grainsize * sizeof(value_type))));
+  value_type *buffer = reinterpret_cast<value_type*>(bulk::malloc(exec, groupsize * grainsize * sizeof(value_type)));
 
-  result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer, result, comp);
+  if(bulk::detail::is_shared(buffer))
+  {
+    result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, bulk::detail::on_chip_cast(buffer), result, comp);
+  }
+  else
+  {
+    result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, buffer, result, comp);
+  }
 
   bulk::free(exec, buffer);
 #else
@@ -203,9 +210,9 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
   typedef typename thrust::iterator_difference<RandomAccessIterator1>::type difference_type;
   typedef int size_type;
 
-  // 91/89/100% of sean's merge
-  const size_type groupsize = 256 + 32;
-  const size_type grainsize = (sizeof(value_type) == sizeof(int)) ? 7 : 5;
+  // 90/86/97
+  const size_type groupsize = (sizeof(value_type) == sizeof(int)) ? 256 : 256 + 32;
+  const size_type grainsize = (sizeof(value_type) == sizeof(int)) ? 9   : 5;
   
   const size_type tile_size = groupsize * grainsize;
 
