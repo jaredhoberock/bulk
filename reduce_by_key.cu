@@ -21,8 +21,14 @@ struct reduce_intervals
     Size start = this_group.index() * interval_size;
     Size end   = thrust::min<Size>(n, start + interval_size);
 
-    value_type init = first[end-1];
-    value_type sum = bulk::reduce(this_group, first + start, first + end - 1, init, binary_op);
+    value_type sum = 0;
+
+    // the last group has zero input and returns a 0 sum
+    if(start != end)
+    {
+      value_type init = first[end-1];
+      sum = bulk::reduce(this_group, first + start, first + end - 1, init, binary_op);
+    } // end if
 
     if(this_group.this_exec.index() == 0)
     {
@@ -61,7 +67,10 @@ my_reduce_by_key(InputIterator1 keys_first,
 
   // count the number of tail flags in each interval
   // XXX needs tuning
-  bulk::async(bulk::par(num_intervals,256), reduce_intervals(), bulk::there, keys_first, n, interval_size, interval_output_offsets.begin(), thrust::plus<bool>());
+  bulk::async(bulk::par(num_intervals + 1,256), reduce_intervals(), bulk::there, keys_first, n, interval_size, interval_output_offsets.begin(), thrust::plus<bool>());
+
+  // scan the interval counts to get output offsets
+  thrust::exclusive_scan(interval_output_offsets.begin(), interval_output_offsets.end(), interval_output_offsets.begin(), 0, thrust::plus<difference_type>());
 
   return thrust::pair<OutputIterator1,OutputIterator2>();
 } // end my_reduce_by_key()
