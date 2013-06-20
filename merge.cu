@@ -61,6 +61,7 @@ struct merge_kernel
 
     first1 += mp0;
     first2 += diag - mp0;
+    result += elements_per_group * g.index();
 
     typedef typename thrust::iterator_value<RandomAccessIterator4>::type value_type;
 
@@ -74,7 +75,7 @@ struct merge_kernel
                    first1, local_size1,
                    first2, local_size2,
                    bulk::on_chip_cast(stage),
-                   result + elements_per_group * g.index(),
+                   result,
                    comp);
     } // end if
     else
@@ -83,14 +84,14 @@ struct merge_kernel
                    first1, local_size1,
                    first2, local_size2,
                    stage,
-                   result + elements_per_group * g.index(),
+                   result,
                    comp);
     } // end else
 
     bulk::free(g, stage);
 #else
     thrust::system::cuda::detail::detail::uninitialized_array<value_type, groupsize * grainsize> stage;
-    staged_merge(g, first1, local_size1, first2, local_size2, stage.data(), result + elements_per_group * g.index(), comp);
+    staged_merge(g, first1, local_size1, first2, local_size2, stage.data(), result, comp);
 #endif
   } // end operator()
 }; // end merge_kernel
