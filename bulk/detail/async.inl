@@ -167,7 +167,8 @@ struct launcher
     function_attributes_t attr = function_attributes();
 
     // if the kernel's ptx version is < 200, we return 0 because there is no heap
-    if(attr.ptxVersion < 20)
+    // if the user requested no heap, give him no heap
+    if(attr.ptxVersion < 20 || requested_size == 0)
     {
       return 0;
     } // end if
