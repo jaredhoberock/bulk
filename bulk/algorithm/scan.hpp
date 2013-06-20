@@ -292,9 +292,9 @@ __device__ void inclusive_scan(bulk::static_execution_group<groupsize,grainsize>
 #if __CUDA_ARCH__ >= 200
   buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
 
-  if(bulk::detail::is_shared(buffer))
+  if(bulk::is_on_chip(buffer))
   {
-    detail::scan_detail::scan_with_buffer<true>(g, first, last, result, init, binary_op, *bulk::detail::on_chip_cast(buffer));
+    detail::scan_detail::scan_with_buffer<true>(g, first, last, result, init, binary_op, *bulk::on_chip_cast(buffer));
   } // end if
   else
   {
@@ -304,7 +304,7 @@ __device__ void inclusive_scan(bulk::static_execution_group<groupsize,grainsize>
   bulk::free(g, buffer);
 #else
   __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer;
-  detail::scan_detail::scan_with_buffer<true>(g, first, last, result, init, binary_op, *bulk::detail::on_chip_cast(&buffer.get()));
+  detail::scan_detail::scan_with_buffer<true>(g, first, last, result, init, binary_op, buffer.get());
 #endif // __CUDA_ARCH__
 } // end inclusive_scan()
 
@@ -355,9 +355,9 @@ __device__ void exclusive_scan(bulk::static_execution_group<groupsize,grainsize>
 #if __CUDA_ARCH__ >= 200
   buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
 
-  if(bulk::detail::is_shared(buffer))
+  if(bulk::is_on_chip(buffer))
   {
-    detail::scan_detail::scan_with_buffer<false>(g, first, last, result, init, binary_op, *bulk::detail::on_chip_cast(buffer));
+    detail::scan_detail::scan_with_buffer<false>(g, first, last, result, init, binary_op, *bulk::on_chip_cast(buffer));
   } // end if
   else
   {

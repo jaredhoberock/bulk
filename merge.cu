@@ -55,9 +55,9 @@ RandomAccessIterator3
 #if __CUDA_ARCH__ >= 200
   value_type *buffer = reinterpret_cast<value_type*>(bulk::malloc(exec, groupsize * grainsize * sizeof(value_type)));
 
-  if(bulk::detail::is_shared(buffer))
+  if(bulk::is_on_chip(buffer))
   {
-    result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, bulk::detail::on_chip_cast(buffer), result, comp);
+    result = bounded_merge_with_buffer(exec, first1, last1, first2, last2, bulk::on_chip_cast(buffer), result, comp);
   }
   else
   {

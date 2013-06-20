@@ -10,11 +10,12 @@
 BULK_NS_PREFIX
 namespace bulk
 {
-namespace detail
+
+
+inline __device__ bool is_on_chip(void *ptr)
 {
-
-
-extern __shared__ int s_data_segment_begin[];
+  return bulk::detail::is_shared(ptr);
+} // end is_on_chip()
 
 
 template<typename T>
@@ -23,6 +24,13 @@ inline __device__ T *on_chip_cast(T *ptr)
   extern __shared__ char s_begin[];
   return reinterpret_cast<T*>((reinterpret_cast<char*>(ptr) - s_begin) + s_begin);
 } // end on_chip_cast()
+
+
+namespace detail
+{
+
+
+extern __shared__ int s_data_segment_begin[];
 
 
 class os
@@ -467,16 +475,16 @@ inline __device__ void *unsafe_shmalloc(size_t num_bytes)
 inline __device__ void shfree(void *ptr)
 {
 #if __CUDA_ARCH__ >= 200
-  if(bulk::detail::is_shared(ptr))
+  if(bulk::is_on_chip(ptr))
   {
-    bulk::detail::on_chip_free(bulk::detail::on_chip_cast(ptr));
+    bulk::detail::on_chip_free(bulk::on_chip_cast(ptr));
   } // end if
   else
   {
     std::free(ptr);
   } // end else
 #else
-  bulk::detail::on_chip_free(bulk::detail::on_chip_cast(ptr));
+  bulk::detail::on_chip_free(bulk::on_chip_cast(ptr));
 #endif
 } // end shfree()
 
@@ -484,16 +492,16 @@ inline __device__ void shfree(void *ptr)
 inline __device__ void unsafe_shfree(void *ptr)
 {
 #if __CUDA_ARCH__ >= 200
-  if(bulk::detail::is_shared(ptr))
+  if(bulk::is_on_chip(ptr))
   {
-    bulk::detail::unsafe_on_chip_free(bulk::detail::on_chip_cast(ptr));
+    bulk::detail::unsafe_on_chip_free(bulk::on_chip_cast(ptr));
   } // end if
   else
   {
     std::free(ptr);
   } // end else
 #else
-  bulk::detail::unsafe_on_chip_free(bulk::detail::on_chip_cast(ptr));
+  bulk::detail::unsafe_on_chip_free(bulk::on_chip_cast(ptr));
 #endif
 } // end unsafe_shfree()
 
