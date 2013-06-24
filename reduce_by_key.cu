@@ -2,6 +2,7 @@
 #include <thrust/reduce.h>
 #include <thrust/tabulate.h>
 #include <thrust/detail/range/tail_flags.h>
+#include <thrust/iterator/reverse_iterator.h>
 #include <bulk/bulk.hpp>
 #include "tail_flags.hpp"
 #include "time_invocation_cuda.hpp"
@@ -32,6 +33,179 @@ struct reduce_intervals
     } // end if
   } // end operator()
 }; // end reduce_intervals
+
+
+template<typename InputIterator, typename BinaryFunction, typename OutputIterator = void>
+  struct partial_sum_type
+    : thrust::detail::eval_if<
+        thrust::detail::has_result_type<BinaryFunction>::value,
+        thrust::detail::result_type<BinaryFunction>,
+        thrust::detail::eval_if<
+          thrust::detail::is_output_iterator<OutputIterator>::value,
+          thrust::iterator_value<InputIterator>,
+          thrust::iterator_value<OutputIterator>
+        >
+      >
+{};
+
+
+template<typename InputIterator, typename BinaryFunction>
+  struct partial_sum_type<InputIterator,BinaryFunction,void>
+    : thrust::detail::eval_if<
+        thrust::detail::has_result_type<BinaryFunction>::value,
+        thrust::detail::result_type<BinaryFunction>,
+        thrust::iterator_value<InputIterator>
+      >
+{};
+
+
+template<typename InputIterator1,
+         typename InputIterator2,
+         typename BinaryPredicate,
+         typename BinaryFunction>
+__host__ __device__
+  thrust::tuple<
+    InputIterator1,
+    typename InputIterator1::value_type,
+    typename partial_sum_type<InputIterator2,BinaryFunction>::type
+  >
+    reduce_last_segment_backward(InputIterator1 keys_first,
+                                 InputIterator1 keys_last,
+                                 InputIterator2 values_first,
+                                 BinaryPredicate binary_pred,
+                                 BinaryFunction binary_op)
+{
+  typename thrust::iterator_difference<InputIterator1>::type n = keys_last - keys_first;
+
+  // reverse the ranges and consume from the end
+  thrust::reverse_iterator<InputIterator1> keys_first_r(keys_last);
+  thrust::reverse_iterator<InputIterator1> keys_last_r(keys_first);
+  thrust::reverse_iterator<InputIterator2> values_first_r(values_first + n);
+
+  typename InputIterator1::value_type result_key = *keys_first_r;
+  typename partial_sum_type<InputIterator2,BinaryFunction>::type result_value = *values_first_r;
+
+  // consume the entirety of the first key's sequence
+  for(++keys_first_r, ++values_first_r;
+      (keys_first_r != keys_last_r) && binary_pred(*keys_first_r, result_key);
+      ++keys_first_r, ++values_first_r)
+  {
+    result_value = binary_op(result_value, *values_first_r);
+  }
+
+  return thrust::make_tuple(keys_first_r.base(), result_key, result_value);
+}
+
+
+template<typename InputIterator1,
+         typename InputIterator2,
+         typename OutputIterator1,
+         typename OutputIterator2,
+         typename BinaryPredicate,
+         typename BinaryFunction>
+__host__ __device__
+  thrust::tuple<
+    OutputIterator1,
+    OutputIterator2,
+    typename InputIterator1::value_type,
+    typename partial_sum_type<InputIterator2,BinaryFunction>::type
+  >
+    reduce_by_key_with_carry(InputIterator1 keys_first, 
+                             InputIterator1 keys_last,
+                             InputIterator2 values_first,
+                             OutputIterator1 keys_output,
+                             OutputIterator2 values_output,
+                             BinaryPredicate binary_pred,
+                             BinaryFunction binary_op)
+{
+  // first, consume the last sequence to produce the carry
+  // XXX is there an elegant way to pose this such that we don't need to default construct the carries?
+  typename InputIterator1::value_type carry_key;
+  typename partial_sum_type<InputIterator2,BinaryFunction>::type carry_value;
+
+  thrust::tie(keys_last, carry_key, carry_value) = reduce_last_segment_backward(keys_first, keys_last, values_first, binary_pred, binary_op);
+
+  // finish with sequential reduce_by_key
+  thrust::cpp::tag seq;
+  thrust::tie(keys_output, values_output) =
+    thrust::reduce_by_key(seq, keys_first, keys_last, values_first, keys_output, values_output, binary_pred, binary_op);
+  
+  return thrust::make_tuple(keys_output, values_output, carry_key, carry_value);
+}
+
+
+template<typename Iterator>
+__host__ __device__
+  bool interval_has_carry(size_t interval_idx, size_t interval_size, size_t num_intervals, Iterator tail_flags)
+{
+  // to discover whether the interval has a carry, look at the tail_flag corresponding to its last element 
+  // the final interval never has a carry by definition
+  return (interval_idx + 1 < num_intervals) ? !tail_flags[(interval_idx + 1) * interval_size - 1] : false;
+}
+
+
+template<typename InputIterator1,
+         typename Size,
+         typename InputIterator2,
+         typename InputIterator3,
+         typename OutputIterator1,
+         typename OutputIterator2,
+         typename OutputIterator3,
+         typename OutputIterator4,
+         typename BinaryPredicate,
+         typename BinaryFunction>
+__global__ void reduce_by_key_kernel(InputIterator1 keys_first,
+                                     Size n,
+                                     Size num_intervals,
+                                     Size interval_size,
+                                     InputIterator2 values_first,
+                                     InputIterator3 interval_output_offsets,
+                                     OutputIterator1 carry_keys,
+                                     OutputIterator2 carry_values,
+                                     OutputIterator3 keys_result,
+                                     OutputIterator4 values_result,
+                                     BinaryPredicate pred,
+                                     BinaryFunction binary_op)
+{
+  typedef typename thrust::iterator_value<InputIterator1>::type key_type;
+  typedef typename thrust::iterator_value<InputIterator2>::type value_type;
+
+  if(threadIdx.x == 0)
+  {
+    tail_flags<InputIterator1,BinaryPredicate> tail_flags(keys_first, keys_first + n, pred);
+
+    int i = blockIdx.x;
+
+    int input_idx = i * interval_size;
+    int input_end = thrust::min(n, input_idx + interval_size);
+    int output_idx = interval_output_offsets[i];
+    
+    // reduce this interval, and grab the final segment's key & sum
+    OutputIterator1 final_key_result;
+    OutputIterator2 final_value_result;
+    key_type carry_key;
+    value_type carry_value;
+    
+    thrust::tie(final_key_result, final_value_result, carry_key, carry_value) =
+      reduce_by_key_with_carry(keys_first    + input_idx,
+                               keys_first    + input_end,
+                               values_first  + input_idx,
+                               keys_result   + output_idx,
+                               values_result + output_idx,
+                               pred,
+                               binary_op);
+    carry_keys[i] = carry_key;
+    carry_values[i] = carry_value;
+    
+    // XXX another way to do this would be to compare output_idx to interval_output_offsets[i+1]
+    //     if they differ, then this interval's end coincides with the end of a segment
+    if(!interval_has_carry(i, interval_size, num_intervals, tail_flags.begin()))
+    {
+      *final_key_result = carry_key;
+      *final_value_result = carry_value;
+    } // end else
+  } // end if
+} // end reduce_by_key_kernel()
 
 
 template<typename InputIterator1,
@@ -72,54 +246,20 @@ my_reduce_by_key(InputIterator1 keys_first,
   typedef typename thrust::iterator_value<InputIterator1>::type key_type;
   typedef typename thrust::iterator_value<InputIterator2>::type value_type;
 
-  key_type carry_key;
-  value_type carry_value;
+  thrust::device_vector<key_type>   carry_keys(num_intervals);
+  thrust::device_vector<value_type> carry_values(num_intervals);
 
-  for(int i = 0; i < num_intervals; ++i)
+  reduce_by_key_kernel<<<num_intervals,4>>>(keys_first, n, num_intervals, interval_size, values_first, interval_output_offsets.begin(), carry_keys.begin(), carry_values.begin(), keys_result, values_result, pred, binary_op);
+
+  for(int i = 0; i < carry_values.size(); ++i)
   {
-    int input_idx = i * interval_size;
-    int input_end = thrust::min(n, input_idx + interval_size);
-    int output_idx = interval_output_offsets[i];
-
-    if(i == 0)
+    if(interval_has_carry(i, interval_size, num_intervals, tail_flags.begin()))
     {
-      carry_key = keys_first[input_idx];
-      carry_value = values_first[input_idx];
+      int output_idx = interval_output_offsets[i+1];
 
-      ++input_idx;
+      values_result[output_idx] = binary_op(values_result[output_idx], carry_values[i]);
     } // end if
-
-    for(; input_idx != input_end; ++input_idx)
-    {
-      key_type key = keys_first[input_idx];
-      value_type value = values_first[input_idx];
-
-      if(pred(carry_key, key))
-      {
-        carry_value = binary_op(carry_value, value);
-      } // end if
-      else
-      {
-        // new segment begins
-
-        // store the result of the previous segment
-        keys_result[output_idx] = carry_key;
-        values_result[output_idx] = carry_value;
-
-        ++output_idx;
-
-        carry_key = key;
-        carry_value = value;
-      } // end else
-    } // end for
-
-    // store the final segment's sum
-    // XXX we have to be careful about whether we do this
-    //     we don't want to store this sum unless the next
-    //     interval begins a new segment
-    keys_result[output_idx] = carry_key;
-    values_result[output_idx] = carry_value;
-  } // end for
+  } // end for i
 
   difference_type size_of_result = interval_output_offsets.back();
   return thrust::make_pair(keys_result + size_of_result, values_result + size_of_result);
@@ -232,7 +372,8 @@ void validate(size_t n)
 int main()
 {
   //size_t n = 123456789;
-  size_t n = 10001;
+  //size_t n = 10001;
+  size_t n = 100010;
 
   validate<int>(n);
 
