@@ -8,6 +8,49 @@
 #include "time_invocation_cuda.hpp"
 
 
+template<unsigned int CTA_SIZE, unsigned int K, typename T>
+__device__
+T &element_at(T (&sdata)[K][CTA_SIZE], int row, int column)
+{
+  return sdata[row][column];
+}
+
+
+template<unsigned int CTA_SIZE, unsigned int K, typename T>
+__device__
+T *row(T (&sdata)[K][CTA_SIZE], int row)
+{
+  return sdata[row];
+}
+
+
+template<unsigned int CTA_SIZE,
+         unsigned int K,
+         bool FullBlock,
+         typename Context,
+         typename InputIterator2,
+         typename ValueType>
+__device__ __thrust_forceinline__
+void load_values(Context context,
+                 const unsigned int n,
+                 InputIterator2 ivals,
+                 ValueType (&sdata)[K][CTA_SIZE])
+{
+  for(unsigned int k = 0; k < K; k++)
+  {
+    const unsigned int offset = k*CTA_SIZE + context.thread_index();
+
+    if (FullBlock || offset < n)
+    {
+      InputIterator2 temp = ivals + offset;
+      element_at(sdata, offset % K, offset / K) = *temp;
+    }
+  }
+
+  context.barrier();
+}
+
+
 template<unsigned int CTA_SIZE,
          unsigned int K,
          bool FullBlock,
@@ -33,13 +76,12 @@ void reduce_by_key_body(Context context,
                         BinaryFunction   binary_op,
                         FlagIterator     iflags,
                         FlagType  (&sflag)[CTA_SIZE],
-                        ValueType (&sdata)[K][CTA_SIZE + 1],
+                        ValueType (&sdata)[K][CTA_SIZE],
                         bool&      carry_in,
                         IndexType& carry_index,
                         ValueType& carry_value)
 {
   using thrust::system::cuda::detail::reduce_by_key_detail::load_flags;
-  using thrust::system::cuda::detail::reduce_by_key_detail::load_values;
   namespace block = thrust::system::cuda::detail::block;
 
   // load flags
@@ -96,8 +138,10 @@ void reduce_by_key_body(Context context,
 
 
   ValueType ldata[K];
-  for (unsigned int k = 0; k < K; k++)
-      ldata[k] = sdata[k][context.thread_index()];
+  for(unsigned int k = 0; k < K; k++)
+  {
+    ldata[k] = element_at(sdata, k, context.thread_index());
+  }
 
   // carry in (if necessary)
   if (context.thread_index() == 0 && carry_in)
@@ -126,12 +170,20 @@ void reduce_by_key_body(Context context,
   // second level segmented scan
   {
     // use head flags for segmented scan
-    sflag[context.thread_index()] = head_flag;  sdata[K - 1][context.thread_index()] = ldata[K - 1]; context.barrier();
+    sflag[context.thread_index()] = head_flag;
+    element_at(sdata, K - 1, context.thread_index()) = ldata[K - 1];
+    context.barrier();
 
-    if (FullBlock)
-      block::inclusive_scan_by_flag(context, sflag, sdata[K-1], binary_op);
+    if(FullBlock)
+    {
+      //block::inclusive_scan_by_flag(context, sflag, sdata[K-1], binary_op);
+      block::inclusive_scan_by_flag(context, sflag, row(sdata,K-1), binary_op);
+    }
     else
-      block::inclusive_scan_by_flag_n(context, sflag, sdata[K-1], n, binary_op);
+    {
+      //block::inclusive_scan_by_flag_n(context, sflag, sdata[K-1], n, binary_op);
+      block::inclusive_scan_by_flag_n(context, sflag, row(sdata,K-1), n, binary_op);
+    }
   }
 
   // update local values
@@ -148,7 +200,7 @@ void reduce_by_key_body(Context context,
     if (!FullBlock && (K + 1) * context.thread_index() > n)
       update_count = thrust::min(n - K * context.thread_index(), update_count);
 
-    ValueType left = sdata[K - 1][context.thread_index() - 1];
+    ValueType left = element_at(sdata,K - 1,context.thread_index() - 1);
 
     for(unsigned int k = 0; k < K; k++)
     {
@@ -193,7 +245,7 @@ void reduce_by_key_body(Context context,
       {
         if (flag_bits & (FlagType(1) << k))
         {
-          sdata[position / CTA_SIZE][position % CTA_SIZE] = ldata[k];
+          element_at(sdata, position / CTA_SIZE, position % CTA_SIZE) = ldata[k];
           position++;
         }
       }
@@ -211,7 +263,7 @@ void reduce_by_key_body(Context context,
     if (offset < num_outputs)
     {
       OutputIterator2 tmp = ovals + offset;
-      *tmp = sdata[k][context.thread_index()];
+      *tmp = element_at(sdata, k, context.thread_index());
     }
   }
 
@@ -292,7 +344,7 @@ struct reduce_by_key_closure
     const unsigned int K = (BOUND_1 < BOUND_2) ? (BOUND_1 < BOUND_3 ? BOUND_1 : BOUND_3) : (BOUND_2 < BOUND_3 ? BOUND_2 : BOUND_3);
   
     __shared__ uninitialized<FlagType[CTA_SIZE]>         sflag;
-    __shared__ uninitialized<ValueType[K][CTA_SIZE + 1]> sdata;  // padded to avoid bank conflicts
+    __shared__ uninitialized<ValueType[K][CTA_SIZE]> sdata;
   
     __shared__ uninitialized<ValueType> carry_value; // storage for carry in and carry out
     __shared__ uninitialized<IndexType> carry_index;
