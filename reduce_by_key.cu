@@ -34,7 +34,7 @@ thrust::tuple<FlagType,ValueType,bool>
                      FlagIterator     iflags,
                      FlagType  (&sflag)[CTA_SIZE],
                      ValueType (&sdata)[CTA_SIZE * K],
-                     bool      carry_in,
+                     bool      carry,
                      ValueType carry_value)
 {
   using thrust::system::cuda::detail::reduce_by_key_detail::load_flags;
@@ -102,7 +102,8 @@ thrust::tuple<FlagType,ValueType,bool>
   }
 
   // carry in (if necessary)
-  if (context.thread_index() == 0 && carry_in)
+  // XXX we should try to incorporate the carry into the scan
+  if (context.thread_index() == 0 && carry)
   {
     // XXX WAR sm_10 issue
     ValueType tmp1 = carry_value;
@@ -192,10 +193,10 @@ thrust::tuple<FlagType,ValueType,bool>
 
   context.barrier();
 
-  bool carry_out = !iflags[n - 1];
+  carry = !iflags[n - 1];
 
   // the carry is the last value in sdata
-  if(carry_out)
+  if(carry)
   {
     --num_outputs;
 
@@ -216,7 +217,7 @@ thrust::tuple<FlagType,ValueType,bool>
 
   context.barrier();
 
-  return thrust::make_tuple(num_outputs, carry_value, carry_out);
+  return thrust::make_tuple(num_outputs, carry_value, carry);
 }
 
 
