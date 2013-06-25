@@ -110,8 +110,6 @@ void reduce_by_key_body(Context context,
     ldata[0] = binary_op(tmp1, ldata[0]);
   }
 
-  context.barrier();
-
   // sum local values
   // XXX this looks like a sequential in-place inclusive scan by flag
   {
@@ -126,6 +124,8 @@ void reduce_by_key_body(Context context,
       }
     }
   }
+
+  context.barrier();
 
   // second level segmented scan
   // XXX functionally, it doesn't matter which row of sdata we use,
