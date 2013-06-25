@@ -25,6 +25,7 @@
 
 template<typename RandomAccessIterator,
          typename BinaryPredicate = thrust::equal_to<typename thrust::iterator_value<RandomAccessIterator>::type>,
+         typename ValueType = bool,
          typename IndexType = typename thrust::iterator_difference<RandomAccessIterator>::type>
   class tail_flags
 {
@@ -36,7 +37,7 @@ template<typename RandomAccessIterator,
       BinaryPredicate binary_pred; // this must be the first member for performance reasons
       IndexType n;
 
-      typedef bool result_type;
+      typedef ValueType result_type;
 
       __host__ __device__
       tail_flag_functor(IndexType n)
