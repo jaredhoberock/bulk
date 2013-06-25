@@ -22,25 +22,26 @@ template<unsigned int CTA_SIZE,
          typename FlagType,
          typename ValueType>
 __device__ __thrust_forceinline__
-FlagType reduce_by_key_body(Context context,
-                            const unsigned int n,
-                            InputIterator1   ikeys,
-                            InputIterator2   ivals,
-                            OutputIterator1  okeys,
-                            OutputIterator2  ovals,
-                            BinaryPredicate  binary_pred,
-                            BinaryFunction   binary_op,
-                            FlagIterator     iflags,
-                            FlagType  (&sflag)[CTA_SIZE],
-                            ValueType (&sdata)[CTA_SIZE * K],
-                            bool&      carry_in,
-                            ValueType& carry_value)
+thrust::tuple<FlagType,ValueType,bool>
+  reduce_by_key_body(Context context,
+                     const unsigned int n,
+                     InputIterator1   ikeys,
+                     InputIterator2   ivals,
+                     OutputIterator1  okeys,
+                     OutputIterator2  ovals,
+                     BinaryPredicate  binary_pred,
+                     BinaryFunction   binary_op,
+                     FlagIterator     iflags,
+                     FlagType  (&sflag)[CTA_SIZE],
+                     ValueType (&sdata)[CTA_SIZE * K],
+                     bool      carry_in,
+                     ValueType carry_value)
 {
   using thrust::system::cuda::detail::reduce_by_key_detail::load_flags;
   namespace block = thrust::system::cuda::detail::block;
 
   // load flags
-  const FlagType flag_bits  = load_flags<CTA_SIZE,K,FullBlock>(context, n, iflags, sflag);
+  const FlagType flag_bits = load_flags<CTA_SIZE,K,FullBlock>(context, n, ::make_tail_flags(ikeys, ikeys + n, binary_pred).begin(), sflag);
   const FlagType flag_count = __popc(flag_bits); // TODO hide this behind a template
   const FlagType left_flag  = (context.thread_index() == 0) ? 0 : sflag[context.thread_index() - 1];
   const FlagType head_flag  = (context.thread_index() == 0 || flag_bits & ((1 << (K - 1)) - 1) || left_flag & (1 << (K - 1))) ? 1 : 0;
@@ -53,7 +54,7 @@ FlagType reduce_by_key_body(Context context,
   block::inclusive_scan(context, sflag, thrust::plus<FlagType>());
 
   const FlagType output_position = (context.thread_index() == 0) ? 0 : sflag[context.thread_index() - 1];
-  const FlagType num_outputs     = sflag[CTA_SIZE - 1];
+  FlagType num_outputs = sflag[CTA_SIZE - 1];
 
   context.barrier();
 
@@ -169,26 +170,6 @@ FlagType reduce_by_key_body(Context context,
   
   context.barrier();
 
-  // store carry out
-  if (FullBlock)
-  {
-    if (context.thread_index() == CTA_SIZE - 1)
-    {
-      carry_value = ldata[K - 1];
-      carry_in    = (flag_bits & (FlagType(1) << (K - 1))) ? false : true;
-    }
-  }
-  else
-  {
-    if (context.thread_index() == (n - 1) / K)
-    {
-      for (unsigned int k = 0; k < K; k++)
-          if (k == (n - 1) % K)
-              carry_value = ldata[k];
-      carry_in    = (flag_bits & (FlagType(1) << ((n - 1) % K))) ? false : true;
-    }
-  }
-
   // shuffle values
   // XXX this is a sequential copy_if
   {
@@ -211,6 +192,15 @@ FlagType reduce_by_key_body(Context context,
 
   context.barrier();
 
+  bool carry_out = !iflags[n - 1];
+
+  // the carry is the last value in sdata
+  if(carry_out)
+  {
+    --num_outputs;
+
+    carry_value = sdata[num_outputs];
+  }
 
   // write values out
   for(unsigned int k = 0; k < K; k++)
@@ -226,7 +216,7 @@ FlagType reduce_by_key_body(Context context,
 
   context.barrier();
 
-  return num_outputs;
+  return thrust::make_tuple(num_outputs, carry_value, carry_out);
 }
 
 
@@ -304,18 +294,8 @@ struct reduce_by_key_closure
   
     __shared__ uninitialized<FlagType[CTA_SIZE]>      sflag;
     __shared__ uninitialized<ValueType[CTA_SIZE * K]> sdata;
-  
-    __shared__ uninitialized<ValueType> carry_value; // storage for carry in and carry out
-    __shared__ uninitialized<bool>      carry_in; 
 
     typename Decomposition::range_type interval = decomp[context.block_index()];
-    //thrust::system::detail::internal::index_range<IndexType> interval = decomp[context.block_index()];
-  
-
-    if (context.thread_index() == 0)
-    {
-      carry_in = false; // act as though the previous segment terminated just before us
-    }
   
     context.barrier();
   
@@ -336,10 +316,16 @@ struct reduce_by_key_closure
     const unsigned int unit_size = K * CTA_SIZE;
   
     // process full units
+    ValueType carry_value;
+    bool carry_in = false;
+
     while (base + unit_size <= interval.end())
     {
       const unsigned int n = unit_size;
-      FlagType num_outputs = reduce_by_key_body<CTA_SIZE,K,true>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in.get(), carry_value.get());
+      FlagType num_outputs;
+        
+      thrust::tie(num_outputs, carry_value, carry_in) =
+        reduce_by_key_body<CTA_SIZE,K,true>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in, carry_value);
 
       base   += unit_size;
       ikeys  += unit_size;
@@ -354,7 +340,11 @@ struct reduce_by_key_closure
     if (base < interval.end())
     {
       const unsigned int n = interval.end() - base;
-      reduce_by_key_body<CTA_SIZE,K,false>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in.get(), carry_value.get());
+
+      FlagType num_outputs;
+
+      thrust::tie(num_outputs, carry_value, carry_in) =
+        reduce_by_key_body<CTA_SIZE,K,false>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in, carry_value);
     }
   
     if (context.thread_index() == 0)
