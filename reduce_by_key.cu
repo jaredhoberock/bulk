@@ -16,14 +16,6 @@ T &element_at(T *sdata, unsigned int row, unsigned int column)
 }
 
 
-template<unsigned int width, typename T>
-__device__
-T *row(T *sdata, unsigned int row)
-{
-  return sdata + row * width;
-}
-
-
 template<unsigned int CTA_SIZE,
          unsigned int K,
          bool FullBlock,
@@ -129,6 +121,7 @@ void reduce_by_key_body(Context context,
   context.barrier();
 
   // sum local values
+  // XXX this looks like a sequential in-place inclusive scan by flag
   {
     for(unsigned int k = 1; k < K; k++)
     {
@@ -143,19 +136,21 @@ void reduce_by_key_body(Context context,
   }
 
   // second level segmented scan
+  // XXX functionally, it doesn't matter which row of sdata we use,
+  //     but for some reason it's much faster to use the last instead of the first
   {
     // use head flags for segmented scan
     sflag[context.thread_index()] = head_flag;
-    element_at<CTA_SIZE>(sdata, K - 1, context.thread_index()) = ldata[K - 1];
+    sdata[CTA_SIZE * (K - 1) + context.thread_index()] = ldata[K - 1];
     context.barrier();
 
     if(FullBlock)
     {
-      block::inclusive_scan_by_flag(context, sflag, row<CTA_SIZE>(sdata,K-1), binary_op);
+      block::inclusive_scan_by_flag(context, sflag, sdata + CTA_SIZE * (K - 1), binary_op);
     }
     else
     {
-      block::inclusive_scan_by_flag_n(context, sflag, row<CTA_SIZE>(sdata,K-1), n, binary_op);
+      block::inclusive_scan_by_flag_n(context, sflag, sdata + CTA_SIZE * (K - 1), n, binary_op);
     }
   }
 
@@ -173,7 +168,7 @@ void reduce_by_key_body(Context context,
     if (!FullBlock && (K + 1) * context.thread_index() > n)
       update_count = thrust::min(n - K * context.thread_index(), update_count);
 
-    ValueType left = element_at<CTA_SIZE>(sdata,K - 1,context.thread_index() - 1);
+    ValueType left = sdata[CTA_SIZE * (K - 1) + context.thread_index() - 1];
 
     for(unsigned int k = 0; k < K; k++)
     {
@@ -316,8 +311,7 @@ struct reduce_by_key_closure
     // TODO replace this with a static_min<BOUND_1,BOUND_2,BOUND_3>::value
     const unsigned int K = (BOUND_1 < BOUND_2) ? (BOUND_1 < BOUND_3 ? BOUND_1 : BOUND_3) : (BOUND_2 < BOUND_3 ? BOUND_2 : BOUND_3);
   
-    __shared__ uninitialized<FlagType[CTA_SIZE]>         sflag;
-    //__shared__ uninitialized<ValueType[K][CTA_SIZE]> sdata;
+    __shared__ uninitialized<FlagType[CTA_SIZE]>      sflag;
     __shared__ uninitialized<ValueType[CTA_SIZE * K]> sdata;
   
     __shared__ uninitialized<ValueType> carry_value; // storage for carry in and carry out
