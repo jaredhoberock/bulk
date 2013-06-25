@@ -20,23 +20,21 @@ template<unsigned int CTA_SIZE,
          typename BinaryFunction,
          typename FlagIterator,
          typename FlagType,
-         typename IndexType,
          typename ValueType>
 __device__ __thrust_forceinline__
-void reduce_by_key_body(Context context,
-                        const unsigned int n,
-                        InputIterator1   ikeys,
-                        InputIterator2   ivals,
-                        OutputIterator1  okeys,
-                        OutputIterator2  ovals,
-                        BinaryPredicate  binary_pred,
-                        BinaryFunction   binary_op,
-                        FlagIterator     iflags,
-                        FlagType  (&sflag)[CTA_SIZE],
-                        ValueType (&sdata)[CTA_SIZE * K],
-                        bool&      carry_in,
-                        IndexType& carry_index,
-                        ValueType& carry_value)
+FlagType reduce_by_key_body(Context context,
+                            const unsigned int n,
+                            InputIterator1   ikeys,
+                            InputIterator2   ivals,
+                            OutputIterator1  okeys,
+                            OutputIterator2  ovals,
+                            BinaryPredicate  binary_pred,
+                            BinaryFunction   binary_op,
+                            FlagIterator     iflags,
+                            FlagType  (&sflag)[CTA_SIZE],
+                            ValueType (&sdata)[CTA_SIZE * K],
+                            bool&      carry_in,
+                            ValueType& carry_value)
 {
   using thrust::system::cuda::detail::reduce_by_key_detail::load_flags;
   namespace block = thrust::system::cuda::detail::block;
@@ -178,7 +176,6 @@ void reduce_by_key_body(Context context,
     {
       carry_value = ldata[K - 1];
       carry_in    = (flag_bits & (FlagType(1) << (K - 1))) ? false : true;
-      carry_index = num_outputs;
     }
   }
   else
@@ -189,7 +186,6 @@ void reduce_by_key_body(Context context,
           if (k == (n - 1) % K)
               carry_value = ldata[k];
       carry_in    = (flag_bits & (FlagType(1) << ((n - 1) % K))) ? false : true;
-      carry_index = num_outputs;
     }
   }
 
@@ -229,6 +225,8 @@ void reduce_by_key_body(Context context,
   }
 
   context.barrier();
+
+  return num_outputs;
 }
 
 
@@ -308,7 +306,6 @@ struct reduce_by_key_closure
     __shared__ uninitialized<ValueType[CTA_SIZE * K]> sdata;
   
     __shared__ uninitialized<ValueType> carry_value; // storage for carry in and carry out
-    __shared__ uninitialized<IndexType> carry_index;
     __shared__ uninitialized<bool>      carry_in; 
 
     typename Decomposition::range_type interval = decomp[context.block_index()];
@@ -318,16 +315,6 @@ struct reduce_by_key_closure
     if (context.thread_index() == 0)
     {
       carry_in = false; // act as though the previous segment terminated just before us
-  
-      if (context.block_index() == 0)
-      {
-        carry_index = 0;
-      }
-      else
-      {
-        interval_counts += (context.block_index() - 1);
-        carry_index = *interval_counts;
-      }
     }
   
     context.barrier();
@@ -338,8 +325,13 @@ struct reduce_by_key_closure
     ikeys  += base;
     ivals  += base;
     iflags += base;
-    okeys  += carry_index;
-    ovals  += carry_index;
+
+    if(context.block_index() > 0)
+    {
+      IndexType output_offset = interval_counts[context.block_index() - 1];
+      okeys += output_offset;
+      ovals += output_offset;
+    }
   
     const unsigned int unit_size = K * CTA_SIZE;
   
@@ -347,20 +339,22 @@ struct reduce_by_key_closure
     while (base + unit_size <= interval.end())
     {
       const unsigned int n = unit_size;
-      reduce_by_key_body<CTA_SIZE,K,true>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in.get(), carry_index.get(), carry_value.get());
+      FlagType num_outputs = reduce_by_key_body<CTA_SIZE,K,true>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in.get(), carry_value.get());
+
       base   += unit_size;
       ikeys  += unit_size;
       ivals  += unit_size;
       iflags += unit_size;
-      okeys  += carry_index;
-      ovals  += carry_index;
+
+      okeys  += num_outputs;
+      ovals  += num_outputs;
     }
   
     // process partially full unit at end of input (if necessary)
     if (base < interval.end())
     {
       const unsigned int n = interval.end() - base;
-      reduce_by_key_body<CTA_SIZE,K,false>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in.get(), carry_index.get(), carry_value.get());
+      reduce_by_key_body<CTA_SIZE,K,false>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in.get(), carry_value.get());
     }
   
     if (context.thread_index() == 0)
