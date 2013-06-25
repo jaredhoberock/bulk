@@ -8,14 +8,6 @@
 #include "time_invocation_cuda.hpp"
 
 
-template<unsigned int width, typename T>
-__device__
-T &element_at(T *sdata, unsigned int row, unsigned int column)
-{
-  return sdata[row * width + column];
-}
-
-
 template<unsigned int CTA_SIZE,
          unsigned int K,
          bool FullBlock,
@@ -202,6 +194,7 @@ void reduce_by_key_body(Context context,
   }
 
   // shuffle values
+  // XXX this is a sequential copy_if
   {
     FlagType position = output_position;
   
@@ -213,7 +206,7 @@ void reduce_by_key_body(Context context,
       {
         if (flag_bits & (FlagType(1) << k))
         {
-          element_at<CTA_SIZE>(sdata, position / CTA_SIZE, position % CTA_SIZE) = ldata[k];
+          sdata[position] = ldata[k];
           position++;
         }
       }
@@ -231,7 +224,7 @@ void reduce_by_key_body(Context context,
     if (offset < num_outputs)
     {
       OutputIterator2 tmp = ovals + offset;
-      *tmp = element_at<CTA_SIZE>(sdata, k, context.thread_index());
+      *tmp = sdata[offset];
     }
   }
 
