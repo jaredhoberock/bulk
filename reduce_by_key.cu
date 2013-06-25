@@ -28,33 +28,6 @@ template<unsigned int CTA_SIZE,
          unsigned int K,
          bool FullBlock,
          typename Context,
-         typename InputIterator2,
-         typename ValueType>
-__device__ __thrust_forceinline__
-void load_values(Context context,
-                 const unsigned int n,
-                 InputIterator2 ivals,
-                 ValueType (&sdata)[CTA_SIZE * K])
-{
-  for(unsigned int k = 0; k < K; k++)
-  {
-    const unsigned int offset = k*CTA_SIZE + context.thread_index();
-
-    if (FullBlock || offset < n)
-    {
-      InputIterator2 temp = ivals + offset;
-      element_at<CTA_SIZE>(sdata, offset % K, offset / K) = *temp;
-    }
-  }
-
-  context.barrier();
-}
-
-
-template<unsigned int CTA_SIZE,
-         unsigned int K,
-         bool FullBlock,
-         typename Context,
          typename InputIterator1,
          typename InputIterator2,
          typename OutputIterator1,
@@ -134,13 +107,15 @@ void reduce_by_key_body(Context context,
   }
 
   // load values
-  load_values<CTA_SIZE,K,FullBlock> (context, n, ivals, sdata);
+  bulk::static_execution_group<CTA_SIZE,K> g;
+  bulk::copy_n(g, ivals, n, sdata);
 
 
+  // transpose into local array
   ValueType ldata[K];
   for(unsigned int k = 0; k < K; k++)
   {
-    ldata[k] = element_at<CTA_SIZE>(sdata, k, context.thread_index());
+    ldata[k] = sdata[context.thread_index() * K + k]; 
   }
 
   // carry in (if necessary)
