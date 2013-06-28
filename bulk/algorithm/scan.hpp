@@ -137,6 +137,9 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *firs
 } // end small_inplace_exclusive_scan_with_buffer()
 
 
+using thrust::system::cuda::detail::detail::uninitialized_array;
+
+
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename BinaryFunction>
 struct scan_buffer
 {
@@ -150,9 +153,9 @@ struct scan_buffer
 
   union
   {
-    intermediate_type sums[2*groupsize];
-    input_type        inputs[groupsize * grainsize];
-    intermediate_type results[groupsize * grainsize];
+    uninitialized_array<intermediate_type, 2 * groupsize>         sums;
+    uninitialized_array<input_type, groupsize * grainsize>        inputs;
+    uninitialized_array<intermediate_type, groupsize * grainsize> results;
   };
 };
 
@@ -184,7 +187,7 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     intermediate_type *results;
   } stage;
 
-  stage.inputs = buffer.inputs;
+  stage.inputs = buffer.inputs.data();
 
   // XXX int is noticeably faster than ExecutionGroup::size_type
   //typedef typename bulk::static_execution_group<groupsize,grainsize>::size_type size_type;
@@ -246,7 +249,7 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
     // exclusive scan the array of per-thread sums
     // XXX this call is essentially a bounded scan
     //     the bound is groupsize
-    carry_in = small_inplace_exclusive_scan_with_buffer(g, buffer.sums, carry_in, buffer.sums + groupsize, binary_op);
+    carry_in = small_inplace_exclusive_scan_with_buffer(g, buffer.sums.data(), carry_in, buffer.sums.data() + groupsize, binary_op);
 
     if(local_size)
     {
