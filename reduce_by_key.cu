@@ -161,8 +161,8 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
 
   const size_type interval_size = groupsize * grainsize;
 
-  size_type *scanned_flags = reinterpret_cast<size_type*>(bulk::malloc(g, interval_size * sizeof(int)));
-  value_type *scanned_values = reinterpret_cast<value_type*>(bulk::malloc(g, interval_size * sizeof(value_type)));
+  size_type *s_flags = reinterpret_cast<size_type*>(bulk::malloc(g, interval_size * sizeof(int)));
+  value_type *s_values = reinterpret_cast<value_type*>(bulk::malloc(g, interval_size * sizeof(value_type)));
 
   for(; keys_first < keys_last; keys_first += interval_size, values_first += interval_size)
   {
@@ -177,42 +177,50 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
 
     scan_head_flags_functor<size_type, value_type, BinaryFunction> f(binary_op);
 
+    // load input into smem
+    bulk::copy_n(bulk::bound<interval_size>(g),
+                 thrust::make_zip_iterator(thrust::make_tuple(flags.begin(), values_first)),
+                 n,
+                 thrust::make_zip_iterator(thrust::make_tuple(s_flags, s_values)));
+
+    // scan in smem
     bulk::inclusive_scan(bulk::bound<interval_size>(g),
-                         thrust::make_zip_iterator(thrust::make_tuple(flags.begin(), values_first)),
-                         thrust::make_zip_iterator(thrust::make_tuple(flags.end(),   values_first)),
-                         thrust::make_zip_iterator(thrust::make_tuple(scanned_flags, scanned_values)),
+                         thrust::make_zip_iterator(thrust::make_tuple(s_flags,     s_values)),
+                         thrust::make_zip_iterator(thrust::make_tuple(s_flags + n, s_values)),
+                         thrust::make_zip_iterator(thrust::make_tuple(s_flags,     s_values)),
                          thrust::make_tuple(1, init_value),
                          f);
 
     // for each tail element in scanned_values, except the last, which is the carry,
     // scatter to that element's corresponding flag element - 1
     // simultaneously scatter the corresponding key
+    // XXX can we do this scatter in-place in smem?
     bulk::scatter_if(g,
-                     thrust::make_zip_iterator(thrust::make_tuple(scanned_values,         thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
-                     thrust::make_zip_iterator(thrust::make_tuple(scanned_values + n - 1, thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
-                     thrust::make_transform_iterator(scanned_flags, thrust::placeholders::_1 - 1),
-                     make_tail_flags(scanned_flags, scanned_flags + n).begin(),
+                     thrust::make_zip_iterator(thrust::make_tuple(s_values,         thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
+                     thrust::make_zip_iterator(thrust::make_tuple(s_values + n - 1, thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
+                     thrust::make_transform_iterator(s_flags, thrust::placeholders::_1 - 1),
+                     make_tail_flags(s_flags, s_flags + n).begin(),
                      thrust::make_zip_iterator(thrust::make_tuple(values_result, keys_result)));
 
     // if the init was not a carry, we need to insert it at the beginning of the result
-    if(g.this_exec.index() == 0 && scanned_flags[0] > 1)
+    if(g.this_exec.index() == 0 && s_flags[0] > 1)
     {
       keys_result[0]   = init_key;
       values_result[0] = init_value;
     }
 
-    size_type result_size = scanned_flags[n - 1] - 1;
+    size_type result_size = s_flags[n - 1] - 1;
     
     keys_result    += result_size;
     values_result  += result_size;
     init_key        = keys_first[n-1];
-    init_value      = scanned_values[n - 1];
+    init_value      = s_values[n - 1];
 
     g.wait();
   } // end for
 
-  bulk::free(g, scanned_flags);
-  bulk::free(g, scanned_values);
+  bulk::free(g, s_flags);
+  bulk::free(g, s_values);
 
   return thrust::make_tuple(keys_result, values_result, init_key, init_value);
 }
