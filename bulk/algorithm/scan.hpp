@@ -87,8 +87,8 @@ struct scan_intermediate
 {};
 
 
-template<typename ExecutionGroup, typename T, typename BinaryFunction>
-__device__ T small_inplace_exclusive_scan(ExecutionGroup &g, T *first, T init, BinaryFunction binary_op)
+template<typename ExecutionGroup, typename RandomAccessIterator, typename T, typename BinaryFunction>
+__device__ T small_inplace_exclusive_scan(ExecutionGroup &g, RandomAccessIterator first, T init, BinaryFunction binary_op)
 {
   typedef int size_type;
 
