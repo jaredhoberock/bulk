@@ -106,6 +106,8 @@ void scatter_if(bulk::static_execution_group<groupsize,grainsize_> &g,
       } // end else
     } // end for
   } // end else
+
+  g.wait();
 } // end scatter_if
 
 
