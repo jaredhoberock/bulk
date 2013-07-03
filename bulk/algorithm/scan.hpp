@@ -88,6 +88,50 @@ struct scan_intermediate
 
 
 template<typename ExecutionGroup, typename T, typename BinaryFunction>
+__device__ T small_inplace_exclusive_scan(ExecutionGroup &g, T *first, T init, BinaryFunction binary_op)
+{
+  typedef int size_type;
+
+  size_type tid = g.this_exec.index();
+
+  if(tid == 0)
+  {
+    first[0] = binary_op(init, first[0]);
+  }
+
+  T x = first[tid];
+
+  g.wait();
+
+  for(size_type offset = 1; offset < g.size(); offset += offset)
+  {
+    if(tid >= offset)
+    {
+      x = binary_op(first[tid - offset], x);
+    }
+
+    g.wait();
+
+    first[tid] = x;
+
+    g.wait();
+  }
+
+  T result = first[g.size() - 1];
+
+  x = (tid == 0) ? init : first[tid - 1];
+
+  g.wait();
+
+  first[tid] = x;
+
+  g.wait();
+
+  return result;
+}
+
+
+template<typename ExecutionGroup, typename T, typename BinaryFunction>
 __device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *first, T init, T *buffer, BinaryFunction binary_op)
 {
   // XXX int is noticeably faster than ExecutionGroup::size_type
@@ -140,6 +184,97 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *firs
 using thrust::system::cuda::detail::detail::uninitialized_array;
 
 
+template<bool inclusive,
+         std::size_t b, std::size_t groupsize, std::size_t grainsize,
+         typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename T,
+         typename BinaryFunction>
+__device__
+typename thrust::detail::enable_if<
+  b <= groupsize * grainsize,
+  T
+>::type
+scan(const bulk::bounded_static_execution_group<b,groupsize,grainsize> &g_,
+     RandomAccessIterator1 first, RandomAccessIterator1 last,
+     RandomAccessIterator2 result,
+     T carry_in,
+     BinaryFunction binary_op)
+{
+  bulk::bounded_static_execution_group<b,groupsize,grainsize> &g =
+    const_cast<bulk::bounded_static_execution_group<b,groupsize,grainsize>&>(g_);
+
+  typedef typename thrust::iterator_value<RandomAccessIterator1>::type input_type;
+  typedef int size_type;
+
+  size_type tid = g.this_exec.index();
+  size_type n = last - first;
+
+  // make a local copy from the input
+  input_type local_inputs[grainsize];
+  
+  size_type local_offset = grainsize * tid;
+  size_type local_size = thrust::max<size_type>(0,thrust::min<size_type>(grainsize, n - grainsize * tid));
+  
+  bulk::copy_n(bound<grainsize>(g.this_exec), first + local_offset, local_size, local_inputs);
+  
+  // XXX this should be uninitialized<input_type>
+  input_type x;
+  
+  // this loop is a sequential accumulate
+  #pragma unroll
+  for(size_type i = 0; i < grainsize; ++i)
+  {
+    if(i < local_size)
+    {
+      x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
+    } // end if
+  } // end for
+  
+  // XXX RFE 1307230
+  //     this code yields a 30% speed down
+  //if(local_size)
+  //{
+  //  x = local_inputs[0];
+  //  x = bulk::accumulate(bound<grainsize-1>(g.this_exec), local_inputs + 1, local_inputs + local_size, x, binary_op);
+  //} // end if
+  
+  g.wait();
+  
+  if(local_size)
+  {
+    result[tid] = x;
+  } // end if
+  
+  g.wait();
+  
+  // exclusive scan the array of per-thread sums
+  // XXX this call is another bounded scan
+  //     the bound is groupsize
+  carry_in = small_inplace_exclusive_scan(g, result, carry_in, binary_op);
+  
+  if(local_size)
+  {
+    x = result[tid];
+  } // end if
+  
+  g.wait();
+  
+  if(inclusive)
+  {
+    bulk::inclusive_scan(bound<grainsize>(g.this_exec), local_inputs, local_inputs + local_size, result + local_offset, x, binary_op);
+  } // end if
+  else
+  {
+    bulk::exclusive_scan(bound<grainsize>(g.this_exec), local_inputs, local_inputs + local_size, result + local_offset, x, binary_op);
+  } // end else
+  
+  g.wait();
+
+  return carry_in;
+} // end scan()
+
+
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename BinaryFunction>
 struct scan_buffer
 {
@@ -153,7 +288,6 @@ struct scan_buffer
 
   union
   {
-    uninitialized_array<intermediate_type, 2 * groupsize>         sums;
     uninitialized_array<input_type, groupsize * grainsize>        inputs;
     uninitialized_array<intermediate_type, groupsize * grainsize> results;
   };
@@ -195,80 +329,22 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
 
   size_type tid = g.this_exec.index();
 
-  size_type elements_per_group = groupsize * grainsize;
+  const size_type elements_per_group = groupsize * grainsize;
 
   for(; first < last; first += elements_per_group, result += elements_per_group)
   {
-    // XXX each iteration is essentially a bounded scan and could be abstracted
-    //     the bound is groupsize * grainsize
-    //     it's not clear how we could exploit the bound in a hypothetical abstraction
-
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
     
     // stage data through shared memory
     bulk::copy_n(g, first, partition_size, stage.inputs);
 
-    // make a local copy from the stage
-    input_type local_inputs[grainsize];
-
-    size_type local_offset = grainsize * tid;
-    size_type local_size = thrust::max<size_type>(0,thrust::min<size_type>(grainsize, partition_size - grainsize * tid));
-
-    bulk::copy_n(bound<grainsize>(g.this_exec), stage.inputs + local_offset, local_size, local_inputs);
-
-    // XXX this should be uninitialized<input_type>
-    input_type x;
-
-    // this loop is a sequential accumulate
-    #pragma unroll
-    for(size_type i = 0; i < grainsize; ++i)
-    {
-      if(i < local_size)
-      {
-        x = i ? binary_op(x, local_inputs[i]) : local_inputs[i];
-      } // end if
-    } // end for
-
-    // XXX RFE 1307230
-    //     this code yields a 30% speed down
-    //if(local_size)
-    //{
-    //  x = local_inputs[0];
-    //  x = bulk::accumulate(bound<grainsize-1>(g.this_exec), local_inputs + 1, local_inputs + local_size, x, binary_op);
-    //} // end if
-
-    g.wait();
-
-    if(local_size)
-    {
-      buffer.sums[tid] = x;
-    } // end if
-
-    g.wait();
+    carry_in = scan<inclusive>(bulk::bound<elements_per_group>(g),
+                               stage.inputs, stage.inputs + partition_size,
+                               stage.results,
+                               carry_in,
+                               binary_op);
     
-    // exclusive scan the array of per-thread sums
-    // XXX this call is essentially a bounded scan
-    //     the bound is groupsize
-    carry_in = small_inplace_exclusive_scan_with_buffer(g, buffer.sums.data(), carry_in, buffer.sums.data() + groupsize, binary_op);
-
-    if(local_size)
-    {
-      x = buffer.sums[tid];
-    } // end if
-
-    g.wait();
-
-    if(inclusive)
-    {
-      bulk::inclusive_scan(bound<grainsize>(g.this_exec), local_inputs, local_inputs + local_size, stage.results + local_offset, x, binary_op);
-    } // end if
-    else
-    {
-      bulk::exclusive_scan(bound<grainsize>(g.this_exec), local_inputs, local_inputs + local_size, stage.results + local_offset, x, binary_op);
-    } // end else
-
-    g.wait();
-    
+    // copy to result 
     bulk::copy_n(g, stage.results, partition_size, result);
   } // end for
 } // end scan_with_buffer()
@@ -276,6 +352,29 @@ __device__ void scan_with_buffer(bulk::static_execution_group<groupsize,grainsiz
 
 } // end scan_detail
 } // end detail
+
+
+template<std::size_t b,
+         std::size_t groupsize,
+         std::size_t grainsize,
+         typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename T,
+         typename BinaryFunction>
+__device__
+typename thrust::detail::enable_if<
+  b <= groupsize * grainsize,
+  RandomAccessIterator2
+>::type
+inclusive_scan(const bulk::bounded_static_execution_group<b,groupsize,grainsize> &g,
+               RandomAccessIterator1 first, RandomAccessIterator1 last,
+               RandomAccessIterator2 result,
+               T carry_in,
+               BinaryFunction binary_op)
+{
+  detail::scan_detail::scan<true>(g, first, last, result, carry_in, binary_op);
+  return result + (last - first);
+} // end inclusive_scan()
 
 
 template<std::size_t groupsize,
@@ -318,11 +417,15 @@ template<std::size_t size,
          typename RandomAccessIterator2,
          typename BinaryFunction>
 __device__
-RandomAccessIterator2 inclusive_scan(static_execution_group<size,grainsize> &this_group,
-                                     RandomAccessIterator1 first,
-                                     RandomAccessIterator1 last,
-                                     RandomAccessIterator2 result,
-                                     BinaryFunction binary_op)
+typename bulk::enable_if_static_execution_group<
+  static_execution_group<size,grainsize>,
+  RandomAccessIterator2
+>::type
+inclusive_scan(static_execution_group<size,grainsize> &this_group,
+               RandomAccessIterator1 first,
+               RandomAccessIterator1 last,
+               RandomAccessIterator2 result,
+               BinaryFunction binary_op)
 {
   if(first < last)
   {
@@ -341,17 +444,43 @@ RandomAccessIterator2 inclusive_scan(static_execution_group<size,grainsize> &thi
 } // end inclusive_scan()
 
 
+template<std::size_t b, std::size_t groupsize, std::size_t grainsize,
+         typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename T,
+         typename BinaryFunction>
+__device__
+typename thrust::detail::enable_if<
+  b <= groupsize * grainsize,
+  RandomAccessIterator2
+>::type
+exclusive_scan(const bulk::bounded_static_execution_group<b,groupsize,grainsize> &g,
+               RandomAccessIterator1 first, RandomAccessIterator1 last,
+               RandomAccessIterator2 result,
+               T carry_in,
+               BinaryFunction binary_op)
+{
+  detail::scan_detail::scan<true>(g, first, last, result, carry_in, binary_op);
+  return result + (last - first);
+} // end exclusive_scan()
+
+
 template<std::size_t groupsize,
          std::size_t grainsize,
          typename RandomAccessIterator1,
          typename RandomAccessIterator2,
          typename T,
          typename BinaryFunction>
-__device__ void exclusive_scan(bulk::static_execution_group<groupsize,grainsize> &g,
-                               RandomAccessIterator1 first, RandomAccessIterator1 last,
-                               RandomAccessIterator2 result,
-                               T init,
-                               BinaryFunction binary_op)
+__device__
+typename bulk::enable_if_static_execution_group<
+  static_execution_group<groupsize,grainsize>,
+  RandomAccessIterator2
+>::type
+exclusive_scan(bulk::static_execution_group<groupsize,grainsize> &g,
+               RandomAccessIterator1 first, RandomAccessIterator1 last,
+               RandomAccessIterator2 result,
+               T init,
+               BinaryFunction binary_op)
 {
   typedef detail::scan_detail::scan_buffer<groupsize,grainsize,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> buffer_type;
 
@@ -372,6 +501,8 @@ __device__ void exclusive_scan(bulk::static_execution_group<groupsize,grainsize>
   __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer;
   detail::scan_detail::scan_with_buffer<false>(g, first, last, result, init, binary_op, buffer.get());
 #endif
+
+  return result + (last - first);
 } // end exclusive_scan()
 
 
