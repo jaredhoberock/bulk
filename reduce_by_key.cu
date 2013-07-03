@@ -1,526 +1,459 @@
 #include <thrust/device_vector.h>
-#include <thrust/reduce.h>
+#include <thrust/sequence.h>
+#include <thrust/reverse.h>
 #include <thrust/tabulate.h>
-#include <thrust/detail/range/tail_flags.h>
-#include <thrust/iterator/reverse_iterator.h>
+#include <thrust/functional.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 #include <bulk/bulk.hpp>
+#include "head_flags.hpp"
 #include "tail_flags.hpp"
 #include "time_invocation_cuda.hpp"
+#include "reduce_intervals.hpp"
 
 
-template<unsigned int CTA_SIZE,
-         unsigned int K,
-         bool FullBlock,
-         typename Context,
+template<typename FlagType, typename ValueType, typename BinaryFunction>
+struct scan_head_flags_functor
+{
+  BinaryFunction binary_op;
+
+  typedef thrust::tuple<FlagType,ValueType> result_type;
+  typedef result_type first_argument_type;
+  typedef result_type second_argument_type;
+
+  __host__ __device__
+  scan_head_flags_functor(BinaryFunction binary_op)
+    : binary_op(binary_op)
+  {}
+
+  __host__ __device__
+  result_type operator()(const first_argument_type &a, const second_argument_type &b)
+  {
+    ValueType val = thrust::get<0>(b) ? thrust::get<1>(b) : binary_op(thrust::get<1>(a), thrust::get<1>(b));
+    FlagType flag = thrust::get<0>(a) + thrust::get<0>(b);
+    return result_type(flag, val);
+  }
+};
+
+
+template<std::size_t groupsize,
+         std::size_t grainsize,
          typename InputIterator1,
          typename InputIterator2,
          typename OutputIterator1,
          typename OutputIterator2,
-         typename BinaryPredicate,
-         typename BinaryFunction,
-         typename FlagIterator,
-         typename FlagType,
-         typename ValueType>
-__device__ __thrust_forceinline__
-thrust::tuple<FlagType,ValueType,bool>
-  reduce_by_key_body(Context context,
-                     const unsigned int n,
-                     InputIterator1   ikeys,
-                     InputIterator2   ivals,
-                     OutputIterator1  okeys,
-                     OutputIterator2  ovals,
-                     BinaryPredicate  binary_pred,
-                     BinaryFunction   binary_op,
-                     FlagIterator     iflags,
-                     FlagType  (&sflag)[CTA_SIZE],
-                     ValueType (&sdata)[CTA_SIZE * K],
-                     bool      carry,
-                     ValueType carry_value)
+         typename BinaryFunction>
+__device__
+void scan_head_flags_and_values(bulk::static_execution_group<groupsize,grainsize> &exec,
+                                InputIterator1 head_flags_first,
+                                InputIterator1 head_flags_last,
+                                InputIterator2 values_first,
+                                OutputIterator1 head_flags_result,
+                                OutputIterator2 values_result,
+                                BinaryFunction binary_op)
 {
-  using thrust::system::cuda::detail::reduce_by_key_detail::load_flags;
-  namespace block = thrust::system::cuda::detail::block;
+  typedef typename thrust::iterator_value<InputIterator1>::type flag_type;
+  typedef typename thrust::iterator_value<InputIterator2>::type value_type;
 
-  // load flags
-  const FlagType flag_bits = load_flags<CTA_SIZE,K,FullBlock>(context, n, ::make_tail_flags(ikeys, ikeys + n, binary_pred).begin(), sflag);
-  const FlagType flag_count = __popc(flag_bits); // TODO hide this behind a template
-  const FlagType left_flag  = (context.thread_index() == 0) ? 0 : sflag[context.thread_index() - 1];
-  const FlagType head_flag  = (context.thread_index() == 0 || flag_bits & ((1 << (K - 1)) - 1) || left_flag & (1 << (K - 1))) ? 1 : 0;
-  
-  context.barrier();
+  scan_head_flags_functor<flag_type, value_type, BinaryFunction> f(binary_op);
 
-  // scan flag counts
-  sflag[context.thread_index()] = flag_count; context.barrier();
-
-  block::inclusive_scan(context, sflag, thrust::plus<FlagType>());
-
-  const FlagType output_position = (context.thread_index() == 0) ? 0 : sflag[context.thread_index() - 1];
-  FlagType num_outputs = sflag[CTA_SIZE - 1];
-
-  context.barrier();
-
-  // shuffle keys and write keys out
-  if (!thrust::detail::is_discard_iterator<OutputIterator1>::value)
-  {
-    // XXX this could be improved
-    for (unsigned int i = 0; i < num_outputs; i += CTA_SIZE)
-    {
-      FlagType position = output_position;
-
-      for(unsigned int k = 0; k < K; k++)
-      {
-        if (flag_bits & (FlagType(1) << k))
-        {
-          if (i <= position && position < i + CTA_SIZE)
-            sflag[position - i] = K * context.thread_index() + k;
-          position++;
-        }
-      }
-
-      context.barrier();
-
-      if (i + context.thread_index() < num_outputs)
-      {
-        InputIterator1  tmp1 = ikeys + sflag[context.thread_index()];
-        OutputIterator1 tmp2 = okeys + (i + context.thread_index());
-        *tmp2 = *tmp1; 
-      }
-      
-      context.barrier();
-    }
-  }
-
-  // load values
-  bulk::static_execution_group<CTA_SIZE,K> g;
-  bulk::copy_n(g, ivals, n, sdata);
-
-
-  // transpose into local array
-  ValueType ldata[K];
-  for(unsigned int k = 0; k < K; k++)
-  {
-    ldata[k] = sdata[context.thread_index() * K + k]; 
-  }
-
-  // carry in (if necessary)
-  // XXX we should try to incorporate the carry into the scan
-  if (context.thread_index() == 0 && carry)
-  {
-    // XXX WAR sm_10 issue
-    ValueType tmp1 = carry_value;
-    ldata[0] = binary_op(tmp1, ldata[0]);
-  }
-
-  // sum local values
-  // XXX this looks like a sequential in-place inclusive scan by flag
-  {
-    for(unsigned int k = 1; k < K; k++)
-    {
-      const unsigned int offset = K * context.thread_index() + k;
-
-      if (FullBlock || offset < n)
-      {
-        if (!(flag_bits & (FlagType(1) << (k - 1))))
-          ldata[k] = binary_op(ldata[k - 1], ldata[k]);
-      }
-    }
-  }
-
-  context.barrier();
-
-  // second level segmented scan
-  // XXX functionally, it doesn't matter which row of sdata we use,
-  //     but for some reason it's much faster to use the last instead of the first
-  {
-    // use head flags for segmented scan
-    sflag[context.thread_index()] = head_flag;
-    sdata[CTA_SIZE * (K - 1) + context.thread_index()] = ldata[K - 1];
-    context.barrier();
-
-    if(FullBlock)
-    {
-      block::inclusive_scan_by_flag(context, sflag, sdata + CTA_SIZE * (K - 1), binary_op);
-    }
-    else
-    {
-      block::inclusive_scan_by_flag_n(context, sflag, sdata + CTA_SIZE * (K - 1), n, binary_op);
-    }
-  }
-
-  // update local values
-  if (context.thread_index() > 0)
-  {
-    unsigned int update_bits  = (flag_bits << 1) | (left_flag >> (K - 1));
-// TODO remove guard
-#if THRUST_DEVICE_COMPILER == THRUST_DEVICE_COMPILER_NVCC
-    unsigned int update_count = __ffs(update_bits) - 1u; // NB: this might wrap around to UINT_MAX
-#else
-    unsigned int update_count = 0;
-#endif // THRUST_DEVICE_COMPILER_NVCC
-
-    if (!FullBlock && (K + 1) * context.thread_index() > n)
-      update_count = thrust::min(n - K * context.thread_index(), update_count);
-
-    ValueType left = sdata[CTA_SIZE * (K - 1) + context.thread_index() - 1];
-
-    for(unsigned int k = 0; k < K; k++)
-    {
-      if (k < update_count)
-        ldata[k] = binary_op(left, ldata[k]);
-    }
-  }
-  
-  context.barrier();
-
-  // shuffle values
-  // XXX this is a sequential copy_if
-  {
-    FlagType position = output_position;
-  
-    for(unsigned int k = 0; k < K; k++)
-    {
-      const unsigned int offset = K * context.thread_index() + k;
-  
-      if (FullBlock || offset < n)
-      {
-        if (flag_bits & (FlagType(1) << k))
-        {
-          sdata[position] = ldata[k];
-          position++;
-        }
-      }
-    }
-  }
-
-  context.barrier();
-
-  carry = !iflags[n - 1];
-
-  // the carry is the last value in sdata
-  if(carry)
-  {
-    --num_outputs;
-
-    carry_value = sdata[num_outputs];
-  }
-
-  // write values out
-  for(unsigned int k = 0; k < K; k++)
-  {
-    const unsigned int offset = CTA_SIZE * k + context.thread_index();
-
-    if (offset < num_outputs)
-    {
-      OutputIterator2 tmp = ovals + offset;
-      *tmp = sdata[offset];
-    }
-  }
-
-  context.barrier();
-
-  return thrust::make_tuple(num_outputs, carry_value, carry);
+  bulk::inclusive_scan(exec,
+                       thrust::make_zip_iterator(thrust::make_tuple(head_flags_first,  values_first)),
+                       thrust::make_zip_iterator(thrust::make_tuple(head_flags_last,   values_first)),
+                       thrust::make_zip_iterator(thrust::make_tuple(head_flags_result, values_result)),
+                       f);
 }
 
 
-template<typename InputIterator1,
-         typename InputIterator2,
-         typename OutputIterator1,
-         typename OutputIterator2,
-         typename BinaryPredicate,
-         typename BinaryFunction,
-         typename FlagIterator,
-         typename IndexIterator,
-         typename ValueIterator,
-         typename BoolIterator,
-         typename Decomposition,
-         typename Context>
-struct reduce_by_key_closure
-{
-  InputIterator1   ikeys;
-  InputIterator2   ivals;
-  OutputIterator1  okeys;
-  OutputIterator2  ovals;
-  BinaryPredicate  binary_pred;
-  BinaryFunction   binary_op;
-  FlagIterator     iflags;
-  IndexIterator    interval_counts;
-  ValueIterator    interval_values;
-  BoolIterator     interval_carry;
-  Decomposition    decomp;
-  Context          context;
-
-  typedef Context context_type;
-
-  __host__ __device__
-  reduce_by_key_closure(InputIterator1   ikeys,
-                        InputIterator2   ivals,
-                        OutputIterator1  okeys,
-                        OutputIterator2  ovals,
-                        BinaryPredicate  binary_pred,
-                        BinaryFunction   binary_op,
-                        FlagIterator     iflags,
-                        IndexIterator    interval_counts,
-                        ValueIterator    interval_values,
-                        BoolIterator     interval_carry,
-                        Decomposition    decomp,
-                        Context          context = Context())
-    : ikeys(ikeys), ivals(ivals), okeys(okeys), ovals(ovals), binary_pred(binary_pred), binary_op(binary_op),
-      iflags(iflags), interval_counts(interval_counts), interval_values(interval_values), interval_carry(interval_carry),
-      decomp(decomp), context(context) {}
-
-  __device__ __thrust_forceinline__
-  void operator()(void)
-  {
-    using thrust::system::cuda::detail::detail::uninitialized;
-
-    typedef typename thrust::iterator_value<InputIterator1>::type KeyType;
-    typedef typename thrust::iterator_value<InputIterator2>::type ValueType;
-    typedef typename Decomposition::index_type                    IndexType;
-    typedef typename thrust::iterator_value<FlagIterator>::type   FlagType;
-
-    const unsigned int CTA_SIZE = context_type::ThreadsPerBlock::value;
-
-// TODO centralize this mapping (__CUDA_ARCH__ -> smem bytes)
-#if __CUDA_ARCH__ >= 200
-    const unsigned int SMEM = (48 * 1024);
-#else
-    const unsigned int SMEM = (16 * 1024) - 256;
-#endif
-    const unsigned int SMEM_FIXED = CTA_SIZE * sizeof(FlagType) + sizeof(ValueType) + sizeof(IndexType) + sizeof(bool);
-    const unsigned int BOUND_1 = (SMEM - SMEM_FIXED) / ((CTA_SIZE + 1) * sizeof(ValueType));
-    const unsigned int BOUND_2 = 8 * sizeof(FlagType);
-    const unsigned int BOUND_3 = 6;
-  
-    // TODO replace this with a static_min<BOUND_1,BOUND_2,BOUND_3>::value
-    const unsigned int K = (BOUND_1 < BOUND_2) ? (BOUND_1 < BOUND_3 ? BOUND_1 : BOUND_3) : (BOUND_2 < BOUND_3 ? BOUND_2 : BOUND_3);
-  
-    __shared__ uninitialized<FlagType[CTA_SIZE]>      sflag;
-    __shared__ uninitialized<ValueType[CTA_SIZE * K]> sdata;
-
-    typename Decomposition::range_type interval = decomp[context.block_index()];
-  
-    context.barrier();
-  
-    IndexType base = interval.begin();
-  
-    // advance input and output iterators
-    ikeys  += base;
-    ivals  += base;
-    iflags += base;
-
-    if(context.block_index() > 0)
-    {
-      IndexType output_offset = interval_counts[context.block_index() - 1];
-      okeys += output_offset;
-      ovals += output_offset;
-    }
-  
-    const unsigned int unit_size = K * CTA_SIZE;
-  
-    // process full units
-    ValueType carry_value;
-    bool carry_in = false;
-
-    while (base + unit_size <= interval.end())
-    {
-      const unsigned int n = unit_size;
-      FlagType num_outputs;
-        
-      thrust::tie(num_outputs, carry_value, carry_in) =
-        reduce_by_key_body<CTA_SIZE,K,true>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in, carry_value);
-
-      base   += unit_size;
-      ikeys  += unit_size;
-      ivals  += unit_size;
-      iflags += unit_size;
-
-      okeys  += num_outputs;
-      ovals  += num_outputs;
-    }
-  
-    // process partially full unit at end of input (if necessary)
-    if (base < interval.end())
-    {
-      const unsigned int n = interval.end() - base;
-
-      FlagType num_outputs;
-
-      thrust::tie(num_outputs, carry_value, carry_in) =
-        reduce_by_key_body<CTA_SIZE,K,false>(context, n, ikeys, ivals, okeys, ovals, binary_pred, binary_op, iflags, sflag.get(), sdata.get(), carry_in, carry_value);
-    }
-  
-    if (context.thread_index() == 0)
-    {
-      interval_values += context.block_index();
-      interval_carry  += context.block_index();
-      *interval_values = carry_value;
-      *interval_carry  = carry_in;
-    }
-  }
-}; // end reduce_by_key_closure
-
-
-template<typename DerivedPolicy,
+template<std::size_t groupsize,
+         std::size_t grainsize,
          typename InputIterator1,
          typename InputIterator2,
          typename OutputIterator1,
          typename OutputIterator2,
-         typename IndexIterator,
-         typename ValueIterator,
-         typename BoolIterator,
          typename BinaryPredicate,
          typename BinaryFunction>
-void reduce_by_key_each(thrust::cuda::execution_policy<DerivedPolicy> &exec,
-                        InputIterator1  keys_first,
-                        InputIterator1  keys_last,
-                        InputIterator2  values_first,
-                        OutputIterator1 keys_result,
-                        OutputIterator2 values_result,
-                        IndexIterator   interval_counts_first,
-                        IndexIterator   interval_counts_last,
-                        ValueIterator   interval_values,
-                        BoolIterator    interval_carry,
-                        BinaryPredicate binary_pred,
-                        BinaryFunction  binary_op)
+__device__
+thrust::pair<OutputIterator1,OutputIterator2>
+reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &exec,
+              InputIterator1 keys_first, InputIterator1 keys_last,
+              InputIterator2 values_first,
+              OutputIterator1 keys_result,
+              OutputIterator2 values_result,
+              BinaryPredicate pred,
+              BinaryFunction binary_op)
 {
-  namespace ns = thrust::system::cuda::detail::reduce_by_key_detail;
+  typename thrust::iterator_difference<InputIterator1>::type n = keys_last - keys_first;
 
-  typedef ns::DefaultPolicy<InputIterator1,InputIterator2,OutputIterator1,OutputIterator2,BinaryPredicate,BinaryFunction> Policy;
-  typedef typename Policy::Decomposition Decomposition;
+  typedef typename thrust::iterator_value<InputIterator1>::type key_type;
+  typedef typename thrust::iterator_value<InputIterator2>::type value_type;
 
-  typedef typename Policy::IndexType IndexType;
-  typedef typename Policy::FlagType  FlagType;
+  int *scanned_flags = reinterpret_cast<int*>(bulk::malloc(exec, n * sizeof(int)));
 
-  Policy policy(keys_first, keys_last);
-  Decomposition decomp = policy.decomp;
+  if(exec.this_exec.index() == 0 && !scanned_flags)
+  {
+    printf("malloc failed\n");
+  }
 
-  typedef tail_flags<InputIterator1,BinaryPredicate,FlagType,IndexType> TailFlags;
-  typedef typename TailFlags::iterator FlagIterator;
-  TailFlags tail_flags(keys_first, keys_last, binary_pred);
-  
-  // count number of tail flags per interval
-  thrust::system::cuda::detail::reduce_intervals(exec, tail_flags.begin(), interval_counts_first, thrust::plus<IndexType>(), decomp);
-  
-  thrust::inclusive_scan(exec,
-                         interval_counts_first, interval_counts_last,
-                         interval_counts_first,
-                         thrust::plus<IndexType>());
-  
-  const unsigned int ThreadsPerBlock = Policy::ThreadsPerBlock;
-  typedef thrust::system::cuda::detail::detail::statically_blocked_thread_array<ThreadsPerBlock> Context;
-  typedef reduce_by_key_closure<InputIterator1,InputIterator2,OutputIterator1,OutputIterator2,BinaryPredicate,BinaryFunction,
-                                FlagIterator,IndexIterator,ValueIterator,BoolIterator,Decomposition,Context> Closure;
-  Closure closure
-    (keys_first,  values_first,
-     keys_result, values_result,
-     binary_pred, binary_op,
-     tail_flags.begin(),
-     interval_counts_first,
-     interval_values,
-     interval_carry,
-     decomp);
-  thrust::system::cuda::detail::detail::launch_closure(closure, decomp.size(), ThreadsPerBlock);
-} // end reduce_by_key_each()
+  value_type *scanned_values = reinterpret_cast<value_type*>(bulk::malloc(exec, n * sizeof(value_type)));
+
+  if(exec.this_exec.index() == 0 && !scanned_flags)
+  {
+    printf("malloc failed\n");
+  }
+
+  head_flags<
+    InputIterator1,
+    thrust::equal_to<key_type>,
+    int
+  > flags(keys_first, keys_last);
+
+  scan_head_flags_and_values(exec, flags.begin(), flags.end(), values_first, scanned_flags, scanned_values, binary_op);
+
+  // for each tail element in scanned_flags, the corresponding elements of scanned_values scatters to that flag element - 1
+  bulk::scatter_if(exec,
+                   thrust::make_zip_iterator(thrust::make_tuple(thrust::reinterpret_tag<thrust::cpp::tag>(keys_first), scanned_values)),
+                   thrust::make_zip_iterator(thrust::make_tuple(thrust::reinterpret_tag<thrust::cpp::tag>(keys_last), scanned_values)),
+                   thrust::make_transform_iterator(scanned_flags, thrust::placeholders::_1 - 1),
+                   make_tail_flags(scanned_flags, scanned_flags + n).begin(),
+                   thrust::make_zip_iterator(thrust::make_tuple(keys_result, values_result)));
+
+  int result_size = scanned_flags[n-1];
+
+  bulk::free(exec, scanned_flags);
+  bulk::free(exec, scanned_values);
+
+  return thrust::make_pair(keys_result + result_size, values_result + result_size);
+}
 
 
-template<typename InputIterator1,
+template<std::size_t groupsize,
+         std::size_t grainsize,
+         typename InputIterator1,
          typename InputIterator2,
          typename OutputIterator1,
          typename OutputIterator2,
+         typename T1,
+         typename T2,
          typename BinaryPredicate,
          typename BinaryFunction>
-thrust::pair<OutputIterator1,OutputIterator2>
-my_reduce_by_key(InputIterator1 keys_first, 
-                 InputIterator1 keys_last,
-                 InputIterator2 values_first,
-                 OutputIterator1 keys_result,
-                 OutputIterator2 values_result,
-                 BinaryPredicate pred,
-                 BinaryFunction binary_op)
+thrust::tuple<
+  OutputIterator1,
+  OutputIterator2,
+  typename thrust::iterator_value<InputIterator1>::type,
+  typename thrust::iterator_value<OutputIterator2>::type
+>
+__device__
+reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
+              InputIterator1 keys_first, InputIterator1 keys_last,
+              InputIterator2 values_first,
+              OutputIterator1 keys_result,
+              OutputIterator2 values_result,
+              T1 init_key,
+              T2 init_value,
+              BinaryPredicate pred,
+              BinaryFunction binary_op)
 {
-  typedef thrust::cuda::tag DerivedPolicy;
-  DerivedPolicy exec;
-  namespace ns = thrust::system::cuda::detail::reduce_by_key_detail;
+  typedef typename thrust::iterator_value<InputIterator1>::type key_type;
+  typedef typename thrust::iterator_value<InputIterator2>::type value_type; // XXX this should be the type returned by BinaryFunction
 
-  typedef ns::DefaultPolicy<InputIterator1,InputIterator2,OutputIterator1,OutputIterator2,BinaryPredicate,BinaryFunction> Policy;
-  
-  Policy policy(keys_first, keys_last);
-  
-  typedef typename Policy::FlagType       FlagType;
-  typedef typename Policy::Decomposition  Decomposition;
-  typedef typename Policy::IndexType      IndexType;
-  typedef typename Policy::KeyType        KeyType;
-  typedef typename Policy::ValueType      ValueType;
-  
-  // temporary arrays
-  typedef thrust::detail::temporary_array<IndexType,DerivedPolicy> IndexArray;
-  typedef thrust::detail::temporary_array<ValueType,DerivedPolicy> ValueArray;
-  typedef thrust::detail::temporary_array<bool,DerivedPolicy>      BoolArray;
-  
-  Decomposition decomp = policy.decomp;
-  
-  // input size
-  IndexType n = keys_last - keys_first;
-  
-  if(n == 0)
+  typedef int size_type;
+
+  const size_type interval_size = groupsize * grainsize;
+
+  size_type *scanned_flags = reinterpret_cast<size_type*>(bulk::malloc(g, interval_size * sizeof(int)));
+  value_type *scanned_values = reinterpret_cast<value_type*>(bulk::malloc(g, interval_size * sizeof(value_type)));
+
+  for(; keys_first < keys_last; keys_first += interval_size, values_first += interval_size)
   {
-    return thrust::make_pair(keys_result, values_result);
-  } // end if
-  
-  IndexArray interval_counts(exec, decomp.size());
-  ValueArray interval_values(exec, decomp.size());
-  BoolArray  interval_carry(exec, decomp.size());
+    // upper bound on n is interval_size
+    size_type n = thrust::min<size_type>(interval_size, keys_last - keys_first);
 
-  // run reduce_by_key over each interval
-  reduce_by_key_each(exec,
-                     keys_first, keys_last,
-                     values_first,
-                     keys_result,
-                     values_result,
-                     interval_counts.begin(),
-                     interval_counts.end(),
-                     interval_values.begin(),
-                     interval_carry.begin(),
-                     pred,
-                     binary_op);
-  
-  if(decomp.size() > 1)
+    head_flags_with_init<
+      InputIterator1,
+      thrust::equal_to<key_type>,
+      size_type
+    > flags(keys_first, keys_first + n, init_key);
+
+    scan_head_flags_functor<size_type, value_type, BinaryFunction> f(binary_op);
+
+    bulk::inclusive_scan(bulk::bound<interval_size>(g),
+                         thrust::make_zip_iterator(thrust::make_tuple(flags.begin(), values_first)),
+                         thrust::make_zip_iterator(thrust::make_tuple(flags.end(),   values_first)),
+                         thrust::make_zip_iterator(thrust::make_tuple(scanned_flags, scanned_values)),
+                         thrust::make_tuple(1, init_value),
+                         f);
+
+    // for each tail element in scanned_values, except the last, which is the carry,
+    // scatter to that element's corresponding flag element - 1
+    // simultaneously scatter the corresponding key
+    bulk::scatter_if(g,
+                     thrust::make_zip_iterator(thrust::make_tuple(scanned_values,         thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
+                     thrust::make_zip_iterator(thrust::make_tuple(scanned_values + n - 1, thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
+                     thrust::make_transform_iterator(scanned_flags, thrust::placeholders::_1 - 1),
+                     make_tail_flags(scanned_flags, scanned_flags + n).begin(),
+                     thrust::make_zip_iterator(thrust::make_tuple(values_result, keys_result)));
+
+    // if the init was not a carry, we need to insert it at the beginning of the result
+    if(g.this_exec.index() == 0 && scanned_flags[0] > 1)
+    {
+      keys_result[0]   = init_key;
+      values_result[0] = init_value;
+    }
+
+    size_type result_size = scanned_flags[n - 1] - 1;
+    
+    keys_result    += result_size;
+    values_result  += result_size;
+    init_key        = keys_first[n-1];
+    init_value      = scanned_values[n - 1];
+
+    g.wait();
+  } // end for
+
+  bulk::free(g, scanned_flags);
+  bulk::free(g, scanned_values);
+
+  return thrust::make_tuple(keys_result, values_result, init_key, init_value);
+}
+
+
+struct reduce_by_key_kernel
+{
+  template<std::size_t groupsize,
+           std::size_t grainsize,
+           typename RandomAccessIterator1,
+           typename RandomAccessIterator2,
+           typename RandomAccessIterator3,
+           typename RandomAccessIterator4,
+           typename BinaryPredicate,
+           typename BinaryFunction,
+           typename Iterator>
+  __device__
+  void operator()(bulk::static_execution_group<groupsize,grainsize> &g,
+                  RandomAccessIterator1 keys_first,
+                  RandomAccessIterator1 keys_last,
+                  RandomAccessIterator2 values_first,
+                  RandomAccessIterator3 keys_result,
+                  RandomAccessIterator4 values_result,
+                  BinaryPredicate       pred,
+                  BinaryFunction        binary_op,
+                  Iterator result_size)
   {
-    ValueArray interval_values2(exec, decomp.size());
-    IndexArray interval_counts2(exec, decomp.size());
-    BoolArray  interval_carry2(exec, decomp.size());
+    *result_size = ::reduce_by_key(g, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op).first - keys_result;
+  }
+};
 
-    // XXX we should try to eliminate this
-    IndexArray interval_counts3(exec, decomp.size());
-  
-    IndexType N2 = decomp.size();
 
-    reduce_by_key_each(exec,
-                       thrust::make_zip_iterator(thrust::make_tuple(interval_counts.begin(), interval_carry.begin())),
-                       thrust::make_zip_iterator(thrust::make_tuple(interval_counts.end(),   interval_carry.end())),
-                       interval_values.begin(),
-                       thrust::make_zip_iterator(thrust::make_tuple(interval_counts2.begin(), interval_carry2.begin())),
-                       interval_values2.begin(),
-                       interval_counts3.begin(), interval_counts3.end(),
-                       thrust::discard_iterator<>(),
-                       thrust::discard_iterator<>(),
-                       thrust::equal_to<thrust::tuple<IndexType,bool> >(),
-                       binary_op);
-  
-    thrust::transform_if
-      (exec,
-       interval_values2.begin(), interval_values2.begin() + N2,
-       thrust::make_permutation_iterator(values_result, interval_counts2.begin()),
-       interval_carry2.begin(),
-       thrust::make_permutation_iterator(values_result, interval_counts2.begin()),
-       binary_op,
-       thrust::identity<bool>());
+struct reduce_by_key_with_carry_kernel
+{
+  template<std::size_t groupsize,
+           std::size_t grainsize,
+           typename RandomAccessIterator1,
+           typename RandomAccessIterator2,
+           typename RandomAccessIterator3,
+           typename RandomAccessIterator4,
+           typename RandomAccessIterator5,
+           typename RandomAccessIterator6,
+           typename RandomAccessIterator7,
+           typename BinaryPredicate,
+           typename BinaryFunction>
+  __device__
+  void operator()(bulk::static_execution_group<groupsize,grainsize> &g,
+                  RandomAccessIterator1 keys_first,
+                  //int n,
+                  //int interval_size,
+                  thrust::tuple<int,int> n_and_interval_size,
+                  RandomAccessIterator2 values_first,
+                  RandomAccessIterator3 keys_result,
+                  RandomAccessIterator4 values_result,
+                  RandomAccessIterator5 interval_output_offsets,
+                  RandomAccessIterator6 interval_values,
+                  RandomAccessIterator7 is_carry,
+                  //BinaryPredicate pred,
+                  //BinaryFunction binary_op)
+                  thrust::tuple<BinaryPredicate,BinaryFunction> pred_and_binary_op)
+  {
+    typedef typename thrust::iterator_value<RandomAccessIterator1>::type key_type;
+    typedef typename thrust::iterator_value<RandomAccessIterator2>::type value_type;
+
+    int n = thrust::get<0>(n_and_interval_size);
+    int interval_size = thrust::get<1>(n_and_interval_size);
+
+    BinaryPredicate pred = thrust::get<0>(pred_and_binary_op);
+    BinaryFunction binary_op = thrust::get<1>(pred_and_binary_op);
+
+    tail_flags<RandomAccessIterator1> tail_flags(keys_first, keys_first + n, pred);
+
+    int interval_idx = g.index();
+
+    int input_first = interval_idx * interval_size;
+    int input_last = thrust::min(n, input_first + interval_size);
+
+    int output_first = interval_idx == 0 ? 0 : interval_output_offsets[interval_idx - 1];
+
+    key_type init_key     = keys_first[input_first];
+    value_type init_value = values_first[input_first];
+
+    // the inits become the carries
+    thrust::tie(keys_result, values_result, init_key, init_value) =
+      reduce_by_key(g,
+                    keys_first + input_first + 1,
+                    keys_first + input_last,
+                    values_first + input_first + 1,
+                    keys_result + output_first,
+                    values_result + output_first,
+                    init_key,
+                    init_value,
+                    pred,
+                    binary_op);
+
+    if(g.this_exec.index() == 0)
+    {
+      bool interval_has_carry = !tail_flags[input_last-1];
+
+      if(interval_has_carry)
+      {
+        interval_values[interval_idx] = init_value;
+      } // end if
+      else
+      {
+        *keys_result   = init_key;
+        *values_result = init_value;
+      } // end else
+
+      is_carry[interval_idx] = interval_has_carry;
+    } // end if
+  }
+};
+
+
+struct tuple_and
+{
+  typedef bool result_type;
+
+  template<typename Tuple>
+  __host__ __device__
+  bool operator()(Tuple t)
+  {
+    return thrust::get<0>(t) && thrust::get<1>(t);
+  }
+};
+
+
+template<typename Iterator1,
+         typename Iterator2,
+         typename Iterator3,
+         typename Iterator4,
+         typename BinaryFunction>
+void sum_tail_carries(Iterator1 interval_values_first,
+                      Iterator1 interval_values_last,
+                      Iterator2 interval_output_offsets_first,
+                      Iterator2 interval_output_offsets_last,
+                      Iterator3 is_carry,
+                      Iterator4 values_result,
+                      BinaryFunction binary_op)
+{
+  typedef thrust::zip_iterator<thrust::tuple<Iterator2,Iterator3> > zip_iterator;
+
+  tail_flags<zip_iterator> tail_flags(thrust::make_zip_iterator(thrust::make_tuple(interval_output_offsets_first, is_carry)),
+                                      thrust::make_zip_iterator(thrust::make_tuple(interval_output_offsets_last,  is_carry)));
+
+  // for each value in the array of interval values
+  //   if it is a carry and it is the tail value in its segment
+  //     scatter it to its location in the output array, but sum it together with the value there previously
+  thrust::transform_if(interval_values_first, interval_values_last,
+                       thrust::make_permutation_iterator(values_result, interval_output_offsets_first),
+                       thrust::make_transform_iterator(thrust::make_zip_iterator(thrust::make_tuple(tail_flags.begin(), is_carry)), tuple_and()),
+                       thrust::make_permutation_iterator(values_result, interval_output_offsets_first),
+                       binary_op,
+                       thrust::identity<bool>());
+}
+
+
+template<typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename RandomAccessIterator3,
+         typename RandomAccessIterator4,
+         typename BinaryPredicate,
+         typename BinaryFunction>
+thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
+  my_reduce_by_key(RandomAccessIterator1 keys_first, RandomAccessIterator1 keys_last,
+                   RandomAccessIterator2 values_first,
+                   RandomAccessIterator3 keys_result,
+                   RandomAccessIterator4 values_result,
+                   BinaryPredicate pred,
+                   BinaryFunction binary_op)
+{
+  const int n = keys_last - keys_first;
+  const int threshold_of_parallelism = 20000;
+
+  if(n <= threshold_of_parallelism)
+  {
+    thrust::device_vector<int> result_size(1);
+
+    // good for 32b types
+    bulk::static_execution_group<512,3> g;
+    typedef bulk::detail::scan_detail::scan_buffer<512,3,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type;
+    int heap_size = sizeof(heap_type);
+    bulk::async(bulk::par(g,1,heap_size), reduce_by_key_kernel(), bulk::there, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op, result_size.begin());
+
+    return thrust::make_pair(keys_result + result_size.front(), values_result + result_size.front());
   } // end if
 
-  // determine output size
-  const IndexType N = interval_counts[interval_counts.size() - 1];
-  
-  return thrust::make_pair(keys_result + N, values_result + N); 
-} // end my_reduce_by_key()
+  typedef typename thrust::iterator_value<RandomAccessIterator1>::type  key_type;
+  typedef typename thrust::iterator_value<RandomAccessIterator2>::type  value_type;
+
+  // XXX this should be the result of BinaryFunction
+  typedef typename thrust::iterator_value<RandomAccessIterator4>::type intermediate_type;
+
+  const int interval_size = threshold_of_parallelism; 
+
+  int num_intervals = (n + (interval_size - 1)) / interval_size;
+
+  // count the number of tail flags in each interval
+  tail_flags<
+    RandomAccessIterator1,
+    thrust::equal_to<typename thrust::iterator_value<RandomAccessIterator1>::type>,
+    int
+  > tail_flags(keys_first, keys_last, pred);
+
+  thrust::device_vector<int> interval_output_offsets(num_intervals);
+
+  reduce_intervals(tail_flags.begin(), tail_flags.end(), interval_size, interval_output_offsets.begin(), thrust::plus<int>());
+
+  // scan the interval counts
+  thrust::inclusive_scan(interval_output_offsets.begin(), interval_output_offsets.end(), interval_output_offsets.begin());
+
+  // reduce each interval
+  thrust::device_vector<bool>              is_carry(num_intervals);
+  thrust::device_vector<intermediate_type> interval_values(num_intervals);
+
+  bulk::static_execution_group<512,3> g;
+  int tile_size = g.size() * g.grainsize();
+  int heap_size = tile_size * (sizeof(int) + sizeof(value_type));
+  bulk::async(bulk::par(g,num_intervals,heap_size), reduce_by_key_with_carry_kernel(),
+    bulk::there, keys_first, thrust::make_tuple(n, interval_size), values_first, keys_result, values_result, interval_output_offsets.begin(), interval_values.begin(), is_carry.begin(), thrust::make_tuple(pred, binary_op)
+  );
+
+  // scan by key the carries
+  thrust::inclusive_scan_by_key(thrust::make_zip_iterator(thrust::make_tuple(interval_output_offsets.begin(), is_carry.begin())),
+                                thrust::make_zip_iterator(thrust::make_tuple(interval_output_offsets.end(),   is_carry.end())),
+                                interval_values.begin(),
+                                interval_values.begin(),
+                                thrust::equal_to<thrust::tuple<int,bool> >(),
+                                binary_op);
+
+  // sum each tail carry value into the result 
+  sum_tail_carries(interval_values.begin(), interval_values.end(),
+                   interval_output_offsets.begin(), interval_output_offsets.end(),
+                   is_carry.begin(),
+                   values_result,
+                   binary_op);
+  int result_size = interval_output_offsets.back();
+
+  return thrust::make_pair(keys_result + result_size, values_result + result_size);
+}
 
 
 template<typename T>
@@ -608,6 +541,7 @@ void compare(size_t n)
   double gigabytes = (in_bytes + out_bytes) / (1 << 30);
 
   std::cout << gigabytes / my_secs << "GB/s" << std::endl;
+  std::cout << "Output ratio: " << double(my_size) / double(n) << std::endl;
 }
 
 
@@ -629,7 +563,7 @@ void validate(size_t n)
   keys_result.resize(my_size);
   values_result.resize(my_size);
 
-  std::cout << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
+  std::cerr << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
 
   assert(keys_result == keys_ref);
   assert(values_result == values_ref);
@@ -639,6 +573,7 @@ void validate(size_t n)
 int main()
 {
   size_t n = 12345678;
+  //size_t n = 20001;
 
   validate<int>(n);
 
