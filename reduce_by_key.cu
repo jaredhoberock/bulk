@@ -128,6 +128,100 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &exec,
 
 
 template<std::size_t groupsize,
+         std::size_t grainsize_,
+         typename RandomAccessIterator1, 
+         typename RandomAccessIterator2,
+         typename RandomAccessIterator3,
+         typename RandomAccessIterator4>
+__device__
+void inplace_scatter_if(bulk::static_execution_group<groupsize,grainsize_> &g,
+                        RandomAccessIterator1 first,
+                        RandomAccessIterator1 last,
+                        RandomAccessIterator2 map,
+                        RandomAccessIterator3 stencil,
+                        RandomAccessIterator4 result)
+{
+  typedef int size_type;
+
+  const size_type grainsize = bulk::static_execution_group<groupsize,grainsize_>::static_grainsize;
+
+  size_type chunk_size = g.size() * grainsize;
+
+  size_type tid = g.this_exec.index();
+
+  bool local_stencil[grainsize_];
+  typename thrust::iterator_value<RandomAccessIterator1>::type local_values[grainsize_];
+
+  RandomAccessIterator2 map_last = map + (last - first);
+
+  for(;
+      first < last;
+      first += chunk_size, stencil += chunk_size)
+  {
+    if((last - first) >= chunk_size)
+    {
+      // avoid conditional accesses when possible
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        size_type src_idx = g.size() * i + tid;
+
+        local_stencil[i] = stencil[src_idx];
+        local_values[i]  = first[src_idx];
+      } // end for
+    } // end if
+    else
+    {
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        size_type src_idx = g.size() * i + tid;
+
+        if(src_idx < (last - first))
+        {
+          local_stencil[i] = stencil[src_idx];
+          local_values[i]  = first[src_idx];
+        } // end if
+      } // end for
+    } // end else
+  } // end for
+
+  g.wait();
+
+  for(;
+      map < map_last;
+      map += chunk_size)
+  {
+    if((map_last - map) >= chunk_size)
+    {
+      // avoid conditional accesses when possible
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        size_type idx = g.size() * i + tid;
+
+        if(local_stencil[i])
+        {
+          result[map[idx]] = local_values[i];
+        } // end if
+      } // end for
+    } // end if
+    else
+    {
+      for(size_type i = 0; i < grainsize; ++i)
+      {
+        size_type idx = g.size() * i + tid;
+
+        if(idx < (map_last - map) && local_stencil[i])
+        {
+          result[map[idx]] = local_values[i];
+        } // end if
+      } // end for
+    } // end else
+  } // end for
+
+  g.wait();
+} // end inplace_scatter_if
+
+
+template<std::size_t groupsize,
          std::size_t grainsize,
          typename InputIterator1,
          typename InputIterator2,
@@ -210,7 +304,7 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
     }
 
     size_type result_size = s_flags[n - 1] - 1;
-    
+
     keys_result    += result_size;
     values_result  += result_size;
     init_key        = keys_first[n-1];
@@ -437,7 +531,7 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
   thrust::device_vector<bool>              is_carry(num_intervals);
   thrust::device_vector<intermediate_type> interval_values(num_intervals);
 
-  bulk::static_execution_group<512,3> g;
+  bulk::static_execution_group<128,5> g;
   int tile_size = g.size() * g.grainsize();
   int heap_size = tile_size * (sizeof(int) + sizeof(value_type));
   bulk::async(bulk::par(g,num_intervals,heap_size), reduce_by_key_with_carry_kernel(),
@@ -572,6 +666,18 @@ void validate(size_t n)
   values_result.resize(my_size);
 
   std::cerr << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
+
+  if(values_result != values_ref && n < 20)
+  {
+    std::cout << "values_result: ";
+    thrust::copy(values_result.begin(), values_result.end(), std::ostream_iterator<int>(std::cout, " "));
+    std::cout << std::endl << std::endl;
+
+
+    std::cout << "values_ref:    ";
+    thrust::copy(values_ref.begin(), values_ref.end(), std::ostream_iterator<int>(std::cout, " "));
+    std::cout << std::endl << std::endl;
+  }
 
   assert(keys_result == keys_ref);
   assert(values_result == values_ref);
