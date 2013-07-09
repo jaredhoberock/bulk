@@ -8,4 +8,5 @@
 #include <bulk/algorithm/accumulate.hpp>
 #include <bulk/algorithm/merge.hpp>
 #include <bulk/algorithm/scatter.hpp>
+#include <bulk/algorithm/adjacent_difference.hpp>
 
