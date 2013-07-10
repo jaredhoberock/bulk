@@ -88,7 +88,7 @@ struct scan_intermediate
 
 
 template<typename ExecutionGroup, typename RandomAccessIterator, typename T, typename BinaryFunction>
-__device__ T small_inplace_exclusive_scan(ExecutionGroup &g, RandomAccessIterator first, T init, BinaryFunction binary_op)
+__device__ T inplace_exclusive_scan(ExecutionGroup &g, RandomAccessIterator first, T init, BinaryFunction binary_op)
 {
   typedef int size_type;
 
@@ -131,16 +131,10 @@ __device__ T small_inplace_exclusive_scan(ExecutionGroup &g, RandomAccessIterato
 }
 
 
-template<typename ExecutionGroup, typename T, typename BinaryFunction>
-__device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *first, T init, T *buffer, BinaryFunction binary_op)
+template<typename ExecutionGroup, typename RandomAccessIterator, typename Size, typename T, typename BinaryFunction>
+__device__ T small_inplace_exclusive_scan(ExecutionGroup &g, RandomAccessIterator first, Size n, T init, BinaryFunction binary_op)
 {
-  // XXX int is noticeably faster than ExecutionGroup::size_type
   typedef int size_type;
-  //typedef typename ExecutionGroup::size_type size_type;
-
-  // ping points to the most current data
-  T *ping = first;
-  T *pong = buffer;
 
   size_type tid = g.this_exec.index();
 
@@ -149,36 +143,54 @@ __device__ T small_inplace_exclusive_scan_with_buffer(ExecutionGroup &g, T *firs
     first[0] = binary_op(init, first[0]);
   }
 
-  T x = first[tid];
+  T x = tid < n ? first[tid] : init;
 
   g.wait();
 
   for(size_type offset = 1; offset < g.size(); offset += offset)
   {
-    if(tid >= offset)
+    if(tid >= offset && tid - offset < n)
     {
-      x = binary_op(ping[tid - offset], x);
+      x = binary_op(first[tid - offset], x);
     }
 
-    thrust::swap(ping, pong);
+    g.wait();
 
-    ping[tid] = x;
+    if(tid < n)
+    {
+      first[tid] = x;
+    }
 
     g.wait();
   }
 
-  T result = ping[g.size() - 1];
+  T result = first[n - 1];
 
-  x = (tid == 0) ? init : ping[tid - 1];
+  if(tid < n)
+  {
+    x = (tid == 0) ? init : first[tid - 1];
+  }
 
   g.wait();
 
-  first[tid] = x;
+  if(tid < n)
+  {
+    first[tid] = x;
+  }
 
   g.wait();
 
   return result;
-} // end small_inplace_exclusive_scan_with_buffer()
+}
+
+
+template<typename ExecutionGroup, typename RandomAccessIterator, typename Size, typename T, typename BinaryFunction>
+__device__ T bounded_inplace_exclusive_scan(ExecutionGroup &g, RandomAccessIterator first, Size n, T init, BinaryFunction binary_op)
+{
+  return (n == g.size()) ?
+    inplace_exclusive_scan(g, first, init, binary_op) :
+    small_inplace_exclusive_scan(g, first, n, init, binary_op);
+}
 
 
 using thrust::system::cuda::detail::detail::uninitialized_array;
@@ -247,11 +259,14 @@ scan(const bulk::bounded_static_execution_group<b,groupsize,grainsize> &g_,
   } // end if
   
   g.wait();
+
+  // count the number of spine elements
+  const size_type spine_n = (n >= g.size()) ? g.size() : (n + g.grainsize() - 1) / g.grainsize();
   
   // exclusive scan the array of per-thread sums
   // XXX this call is another bounded scan
   //     the bound is groupsize
-  carry_in = small_inplace_exclusive_scan(g, result, carry_in, binary_op);
+  carry_in = bounded_inplace_exclusive_scan(g, result, spine_n, carry_in, binary_op);
   
   if(local_size)
   {
@@ -377,6 +392,42 @@ inclusive_scan(const bulk::bounded_static_execution_group<b,groupsize,grainsize>
 } // end inclusive_scan()
 
 
+template<std::size_t b,
+         std::size_t groupsize,
+         std::size_t grainsize,
+         typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename T,
+         typename BinaryFunction>
+__device__
+typename thrust::detail::enable_if<
+  b <= groupsize * grainsize,
+  RandomAccessIterator2
+>::type
+inclusive_scan(const bulk::bounded_static_execution_group<b,groupsize,grainsize> &g,
+               RandomAccessIterator1 first, RandomAccessIterator1 last,
+               RandomAccessIterator2 result,
+               BinaryFunction binary_op)
+{
+  if(b > 0 && first < last)
+  {
+    typename thrust::iterator_value<RandomAccessIterator1>::type init = *first;
+
+    // we need to wait because first may be the same as result
+    g.wait();
+
+    if(g.this_exec.index() == 0)
+    {
+      *result = init;
+    }
+
+    detail::scan_detail::scan<true>(g, first + 1, last, result + 1, init, binary_op);
+  }
+
+  return result + (last - first);
+} // end inclusive_scan()
+
+
 template<std::size_t groupsize,
          std::size_t grainsize,
          typename RandomAccessIterator1,
@@ -431,6 +482,9 @@ inclusive_scan(static_execution_group<size,grainsize> &this_group,
   {
     // the first input becomes the init
     typename thrust::iterator_value<RandomAccessIterator1>::type init = *first;
+
+    // we need to wait because first may be the same as result
+    this_group.wait();
 
     if(this_group.this_exec.index() == 0)
     {
