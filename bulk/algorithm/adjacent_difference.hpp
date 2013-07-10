@@ -104,7 +104,13 @@ RandomAccessIterator2 adjacent_difference(bulk::static_execution_group<groupsize
   {
     typename thrust::iterator_value<RandomAccessIterator1>::type init = *first;
 
-    *result = init;
+    // we need to wait because first may be the same as result
+    g.wait();
+
+    if(g.this_exec.index() == 0)
+    {
+      *result = init;
+    }
 
     result = bulk::adjacent_difference(g, first + 1, last, result + 1, init, binary_op); 
   } // end if
