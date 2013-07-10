@@ -512,6 +512,10 @@ inline void *malloc(ThreadGroup &g, size_t num_bytes)
 {
   __shared__ void *s_result;
 
+  // we need to guard access to s_result from other
+  // invocations of malloc, so we put a wait at the beginning
+  g.wait();
+
   if(g.this_exec.index() == 0)
   {
     s_result = bulk::unsafe_shmalloc(num_bytes);
