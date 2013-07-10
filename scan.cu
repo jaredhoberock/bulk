@@ -148,8 +148,10 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
   } // end if
   else
   {
-    // Run the parallel raking reduce as an upsweep.
-    bulk::static_execution_group<128,7> group1;
+    // determined from empirical testing on k20c
+    const int groupsize = sizeof(intermediate_type) <= sizeof(int) ? 128 : 256;
+    const int grainsize = sizeof(intermediate_type) <= sizeof(int) ?   9 :   5;
+    bulk::static_execution_group<groupsize,grainsize> group1;
 
     const Size partition_size = group1.size() * group1.grainsize();
     
@@ -166,6 +168,7 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     thrust::cuda::tag t;
     thrust::detail::temporary_array<intermediate_type,thrust::cuda::tag> carries(t, num_groups);
     	
+    // Run the parallel raking reduce as an upsweep.
     // n loads + num_groups stores
     Size heap_size = group1.size() * sizeof(intermediate_type);
     bulk::async(bulk::par(group1,num_groups,heap_size), accumulate_tiles(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), binary_op);
@@ -178,7 +181,11 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     bulk::async(bulk::par(group2,1,heap_size), exclusive_scan_n(), bulk::there, carries.begin(), num_groups, carries.begin(), init, binary_op);
 
     // do the downsweep - n loads, n stores
-    typedef bulk::detail::scan_detail::scan_buffer<128,7,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type3;
+    typedef bulk::detail::scan_detail::scan_buffer<
+      groupsize,
+      grainsize,
+      RandomAccessIterator1,RandomAccessIterator2,BinaryFunction
+    > heap_type3;
     heap_size = sizeof(heap_type3);
     bulk::async(bulk::par(group1,num_groups,heap_size), inclusive_downsweep(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), result, binary_op);
   } // end else
