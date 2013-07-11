@@ -6,39 +6,7 @@
 #include <cassert>
 #include <iostream>
 #include "time_invocation_cuda.hpp"
-
-// compute the indices of the first and last (exclusive) partitions the group will consume
-template<typename Size>
-__device__
-thrust::pair<Size,Size> tile_range_in_partitions(Size tile_index,
-                                                 Size num_partitions_per_tile,
-                                                 Size last_partial_partition_size)
-{
-  thrust::pair<Size,Size> result;
-
-  result.first = num_partitions_per_tile * tile_index;
-  result.first += thrust::min<Size>(tile_index, last_partial_partition_size);
-
-  result.second = result.first + num_partitions_per_tile + (tile_index < last_partial_partition_size);
-
-  return result;
-} // end tile_range_in_partitions()
-
-
-// compute the indices of the first and last (exclusive) elements the group will consume
-template<typename Size>
-__device__
-thrust::pair<Size,Size> tile_range(Size tile_index,
-                                   Size num_partitions_per_tile,
-                                   Size last_partial_partition_size,
-                                   Size partition_size,
-                                   Size n)
-{
-  thrust::pair<Size,Size> result = tile_range_in_partitions(tile_index, num_partitions_per_tile, last_partial_partition_size);
-  result.first *= partition_size;
-  result.second = thrust::min<Size>(n, result.second * partition_size);
-  return result;
-} // end tile_range()
+#include "decomposition.hpp"
 
 
 struct reduce_partitions
@@ -65,13 +33,13 @@ struct reduce_partitions
   }
 
 
-  template<typename ExecutionGroup, typename Iterator1, typename Size, typename Iterator2, typename T, typename BinaryFunction>
+  template<typename ExecutionGroup, typename Iterator1, typename Decomposition, typename Iterator2, typename T, typename BinaryFunction>
   __device__
-  void operator()(ExecutionGroup &this_group, Iterator1 first, Iterator1 last, Size num_partitions_per_tile, Size partition_size, Size last_partial_partition_size, Iterator2 result, T init, BinaryFunction binary_op)
+  void operator()(ExecutionGroup &this_group, Iterator1 first, Decomposition decomp, Iterator2 result, T init, BinaryFunction binary_op)
   {
-    thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), num_partitions_per_tile, last_partial_partition_size, partition_size, last - first);
+    typename Decomposition::range range = decomp[this_group.index()];
 
-    last = first + range.second;
+    Iterator1 last = first + range.second;
     first += range.first;
 
     if(this_group.index() != 0)
@@ -97,20 +65,20 @@ T my_reduce(RandomAccessIterator first, RandomAccessIterator last, T init, Binar
 
   if(n <= 0) return init;
 
-  const size_type subscription = 10;
   bulk::static_execution_group<128,9> g;
 
-  const size_type partition_size = g.size() * g.grainsize();
-  const size_type num_partitions = (n + partition_size - 1) / partition_size;
-  const size_type num_tiles = thrust::min<size_type>(num_partitions, subscription * g.hardware_concurrency());
-  const size_type num_partitions_per_tile = num_partitions / num_tiles;
-  const size_type last_partial_partition_size = num_partitions % num_tiles;
+  const size_type tile_size = g.size() * g.grainsize();
+  const size_type num_tiles = (n + tile_size - 1) / tile_size;
+  const size_type subscription = 10;
+  const size_type num_groups = thrust::min<size_type>(subscription * g.hardware_concurrency(), num_tiles);
+
+  aligned_decomposition<size_type> decomp(n, num_groups, tile_size);
 
   thrust::cuda::tag t;
-  thrust::detail::temporary_array<T,thrust::cuda::tag> partial_sums(t, num_tiles);
+  thrust::detail::temporary_array<T,thrust::cuda::tag> partial_sums(t, decomp.size());
 
   // reduce into partial sums
-  bulk::async(bulk::par(g, partial_sums.size()), reduce_partitions(), bulk::there, first, last, num_partitions_per_tile, partition_size, last_partial_partition_size, partial_sums.begin(), init, binary_op);
+  bulk::async(bulk::par(g, decomp.size()), reduce_partitions(), bulk::there, first, decomp, partial_sums.begin(), init, binary_op);
 
   if(partial_sums.size() > 1)
   {
