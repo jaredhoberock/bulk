@@ -36,6 +36,65 @@ void scatter_if(const bounded_executor<bound> &exec,
 } // end scatter_if()
 
 
+template<std::size_t b,
+         std::size_t groupsize,
+         std::size_t grainsize_,
+         typename RandomAccessIterator1, 
+         typename RandomAccessIterator2,
+         typename RandomAccessIterator3,
+         typename RandomAccessIterator4>
+__device__
+typename thrust::detail::enable_if<
+  b <= groupsize * grainsize_
+>::type
+scatter_if(const bulk::bounded_static_execution_group<b,groupsize,grainsize_> &g_,
+           RandomAccessIterator1 first,
+           RandomAccessIterator1 last,
+           RandomAccessIterator2 map,
+           RandomAccessIterator3 stencil,
+           RandomAccessIterator4 result)
+{
+  bulk::bounded_static_execution_group<b,groupsize,grainsize_> &g =
+    const_cast<bulk::bounded_static_execution_group<b,groupsize,grainsize_>&>(g_);
+
+  typedef int size_type;
+
+  const size_type grainsize = bulk::static_execution_group<groupsize,grainsize_>::static_grainsize;
+
+  size_type n = last - first;
+
+  size_type tid = g.this_exec.index();
+
+  // avoid branches when possible
+  if(n == b)
+  {
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type idx = g.size() * i + tid;
+
+      if(stencil[idx])
+      {
+        result[map[idx]] = first[idx];
+      } // end if
+    } // end for
+  } // end if
+  else if(n < b)
+  {
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type idx = g.size() * i + tid;
+
+      if(idx < (last - first) && stencil[idx])
+      {
+        result[map[idx]] = first[idx];
+      } // end if
+    } // end for
+  } // end if
+
+  g.wait();
+} // end scatter_if()
+
+
 template<std::size_t groupsize,
          std::size_t grainsize_,
          typename RandomAccessIterator1, 
@@ -68,6 +127,18 @@ void scatter_if(bulk::static_execution_group<groupsize,grainsize_> &g,
       size_type idx = g.size() * i + tid;
 
       if(stencil[idx])
+      {
+        result[map[idx]] = first[idx];
+      } // end if
+    } // end for
+  } // end if
+  else if(n < chunk_size)
+  {
+    for(size_type i = 0; i < grainsize; ++i)
+    {
+      size_type idx = g.size() * i + tid;
+
+      if(idx < (last - first) && stencil[idx])
       {
         result[map[idx]] = first[idx];
       } // end if
