@@ -185,7 +185,7 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
     // scatter to that element's corresponding flag element - 1
     // simultaneously scatter the corresponding key
     // XXX can we do this scatter in-place in smem?
-    bulk::scatter_if(g,
+    bulk::scatter_if(bulk::bound<interval_size>(g),
                      thrust::make_zip_iterator(thrust::make_tuple(s_values,         thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
                      thrust::make_zip_iterator(thrust::make_tuple(s_values + n - 1, thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
                      thrust::make_transform_iterator(s_flags, thrust::placeholders::_1 - 1),
