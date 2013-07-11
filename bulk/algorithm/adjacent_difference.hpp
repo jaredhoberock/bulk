@@ -54,34 +54,35 @@ RandomAccessIterator2 adjacent_difference(bulk::static_execution_group<groupsize
 
   const size_type tile_size = g.size() * g.grainsize();
 
-  // advance iterators
-  first  += g.grainsize() * g.this_exec.index();
-  result += g.grainsize() * g.this_exec.index();
-
   // set the first iteration's init
-  init = (g.this_exec.index()) == 0 ? init : first[-1];
-
+  RandomAccessIterator1 first_init = first + g.grainsize() * g.this_exec.index() - 1;
+  if(first <= first_init && first_init < last)
+  {
+    init = *first_init;
+  }
+  
   g.wait();
 
-  for(;
-      first < last;
-      first += tile_size, result += tile_size)
+  for(; first < last; first += tile_size, result += tile_size)
   {
+    size_type local_offset = g.grainsize() * g.this_exec.index();
+    size_type local_size = thrust::max(0, thrust::min<size_type>(g.grainsize(), last - (first + local_offset)));
+
     // get the init for the next iteration
-    T next_init = (first + tile_size - 1 < last) ? first[tile_size-1] : init;
+    T next_init = (first + local_offset + tile_size - 1 < last) ? first[tile_size-1] : init;
 
     g.wait();
 
     // consume grainsize elements
     bulk::adjacent_difference(g.this_exec,
-                              first,
-                              first + thrust::min<size_type>(g.grainsize(), last - first),
-                              result,
+                              first + local_offset,
+                              first + local_offset + local_size,
+                              result + local_offset,
                               init,
                               binary_op);
 
     init = next_init;
-  } // end for
+  }
 
   g.wait();
 
