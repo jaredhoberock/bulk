@@ -10,6 +10,7 @@
 #include <thrust/detail/temporary_array.h>
 #include <thrust/detail/type_traits/function_traits.h>
 #include <bulk/bulk.hpp>
+#include "decomposition.hpp"
 
 
 struct inclusive_scan_n
@@ -31,55 +32,17 @@ struct exclusive_scan_n
 };
 
 
-// compute the indices of the first and last (exclusive) partitions the group will consume
-template<typename Size>
-__device__
-thrust::pair<Size,Size> tile_range_in_partitions(Size tile_index,
-                                                 Size num_partitions_per_tile,
-                                                 Size last_partial_partition_size)
-{
-  thrust::pair<Size,Size> result;
-
-  result.first = num_partitions_per_tile * tile_index;
-  result.first += thrust::min<Size>(tile_index, last_partial_partition_size);
-
-  result.second = result.first + num_partitions_per_tile + (tile_index < last_partial_partition_size);
-
-  return result;
-} // end tile_range_in_partitions()
-
-
-// compute the indices of the first and last (exclusive) elements the group will consume
-template<typename Size>
-__device__
-thrust::pair<Size,Size> tile_range(Size tile_index,
-                                   Size num_partitions_per_group,
-                                   Size last_partial_partition_size,
-                                   Size partition_size,
-                                   Size n)
-{
-  thrust::pair<Size,Size> result = tile_range_in_partitions(tile_index, num_partitions_per_group, last_partial_partition_size);
-  result.first *= partition_size;
-  result.second = thrust::min<Size>(n, result.second * partition_size);
-  return result;
-} // end tile_range()
-
-
 struct inclusive_downsweep
 {
-  template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename RandomAccessIterator3, typename BinaryFunction>
+  template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Decomposition, typename RandomAccessIterator2, typename RandomAccessIterator3, typename BinaryFunction>
   __device__ void operator()(bulk::static_execution_group<groupsize,grainsize> &this_group,
                              RandomAccessIterator1 first,
-                             Size n,
-                             Size num_partitions_per_tile,
-                             Size last_partial_partition_size,
+                             Decomposition decomp,
                              RandomAccessIterator2 carries_first,
                              RandomAccessIterator3 result,
                              BinaryFunction binary_op)
   {
-    const Size partition_size = groupsize * grainsize;
-  
-    thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), num_partitions_per_tile, last_partial_partition_size, partition_size, n);
+    typename Decomposition::range range = decomp[this_group.index()];
   
     RandomAccessIterator1 last = first + range.second;
     first += range.first;
@@ -94,18 +57,16 @@ struct inclusive_downsweep
 
 struct accumulate_tiles
 {
-  template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename BinaryFunction>
+  template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Decomposition, typename RandomAccessIterator2, typename BinaryFunction>
   __device__ void operator()(bulk::static_execution_group<groupsize,grainsize> &this_group,
                              RandomAccessIterator1 first,
-                             Size n,
-                             Size num_partitions_per_tile,
-                             Size last_partial_partition_size,
+                             Decomposition decomp,
                              RandomAccessIterator2 result,
                              BinaryFunction binary_op)
   {
     typedef typename thrust::iterator_value<RandomAccessIterator1>::type value_type;
     
-    thrust::pair<Size,Size> range = tile_range<Size>(this_group.index(), num_partitions_per_tile, last_partial_partition_size, groupsize * grainsize, n);
+    typename Decomposition::range range = decomp[this_group.index()];
 
     const bool commutative = thrust::detail::is_commutative<BinaryFunction>::value;
 
@@ -153,25 +114,22 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     const int grainsize = sizeof(intermediate_type) <= sizeof(int) ?   9 :   5;
     bulk::static_execution_group<groupsize,grainsize> group1;
 
-    const Size partition_size = group1.size() * group1.grainsize();
-    
-    Size num_partitions = (n + partition_size - 1) / partition_size;
+    const Size tile_size = group1.size() * group1.grainsize();
+    int num_tiles = (n + tile_size - 1) / tile_size;
 
     // 20 determined from empirical testing on k20c & GTX 480
     int subscription = 20;
-    Size num_groups = thrust::min<Size>(subscription * group1.hardware_concurrency(), num_partitions);
+    Size num_groups = thrust::min<Size>(subscription * group1.hardware_concurrency(), num_tiles);
 
-    // each group consumes one tile of data
-    Size num_partitions_per_tile = num_partitions / num_groups;
-    Size last_partial_partition_size = num_partitions % num_groups;
-    
+    aligned_decomposition<Size> decomp(n, num_groups, tile_size);
+
     thrust::cuda::tag t;
     thrust::detail::temporary_array<intermediate_type,thrust::cuda::tag> carries(t, num_groups);
     	
     // Run the parallel raking reduce as an upsweep.
     // n loads + num_groups stores
     Size heap_size = group1.size() * sizeof(intermediate_type);
-    bulk::async(bulk::par(group1,num_groups,heap_size), accumulate_tiles(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), binary_op);
+    bulk::async(bulk::par(group1,num_groups,heap_size), accumulate_tiles(), bulk::there, first, decomp, carries.begin(), binary_op);
     
     // scan the sums to get the carries
     // num_groups loads + num_groups stores
@@ -187,7 +145,7 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
       RandomAccessIterator1,RandomAccessIterator2,BinaryFunction
     > heap_type3;
     heap_size = sizeof(heap_type3);
-    bulk::async(bulk::par(group1,num_groups,heap_size), inclusive_downsweep(), bulk::there, first, n, num_partitions_per_tile, last_partial_partition_size, carries.begin(), result, binary_op);
+    bulk::async(bulk::par(group1,num_groups,heap_size), inclusive_downsweep(), bulk::there, first, decomp, carries.begin(), result, binary_op);
   } // end else
 
   return result + n;
