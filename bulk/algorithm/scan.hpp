@@ -397,18 +397,20 @@ template<std::size_t b,
          std::size_t grainsize,
          typename RandomAccessIterator1,
          typename RandomAccessIterator2,
-         typename T,
          typename BinaryFunction>
 __device__
 typename thrust::detail::enable_if<
   b <= groupsize * grainsize,
   RandomAccessIterator2
 >::type
-inclusive_scan(const bulk::bounded_static_execution_group<b,groupsize,grainsize> &g,
+inclusive_scan(const bulk::bounded_static_execution_group<b,groupsize,grainsize> &g_,
                RandomAccessIterator1 first, RandomAccessIterator1 last,
                RandomAccessIterator2 result,
                BinaryFunction binary_op)
 {
+  bulk::bounded_static_execution_group<b,groupsize,grainsize> &g =
+    const_cast<bulk::bounded_static_execution_group<b,groupsize,grainsize>&>(g_);
+
   if(b > 0 && first < last)
   {
     typename thrust::iterator_value<RandomAccessIterator1>::type init = *first;
