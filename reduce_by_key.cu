@@ -90,17 +90,7 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &exec,
 
   int *scanned_flags = reinterpret_cast<int*>(bulk::malloc(exec, n * sizeof(int)));
 
-  if(exec.this_exec.index() == 0 && !scanned_flags)
-  {
-    printf("malloc failed\n");
-  }
-
   value_type *scanned_values = reinterpret_cast<value_type*>(bulk::malloc(exec, n * sizeof(value_type)));
-
-  if(exec.this_exec.index() == 0 && !scanned_flags)
-  {
-    printf("malloc failed\n");
-  }
 
   head_flags<
     InputIterator1,
@@ -125,100 +115,6 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &exec,
 
   return thrust::make_pair(keys_result + result_size, values_result + result_size);
 }
-
-
-template<std::size_t groupsize,
-         std::size_t grainsize_,
-         typename RandomAccessIterator1, 
-         typename RandomAccessIterator2,
-         typename RandomAccessIterator3,
-         typename RandomAccessIterator4>
-__device__
-void inplace_scatter_if(bulk::static_execution_group<groupsize,grainsize_> &g,
-                        RandomAccessIterator1 first,
-                        RandomAccessIterator1 last,
-                        RandomAccessIterator2 map,
-                        RandomAccessIterator3 stencil,
-                        RandomAccessIterator4 result)
-{
-  typedef int size_type;
-
-  const size_type grainsize = bulk::static_execution_group<groupsize,grainsize_>::static_grainsize;
-
-  size_type chunk_size = g.size() * grainsize;
-
-  size_type tid = g.this_exec.index();
-
-  bool local_stencil[grainsize_];
-  typename thrust::iterator_value<RandomAccessIterator1>::type local_values[grainsize_];
-
-  RandomAccessIterator2 map_last = map + (last - first);
-
-  for(;
-      first < last;
-      first += chunk_size, stencil += chunk_size)
-  {
-    if((last - first) >= chunk_size)
-    {
-      // avoid conditional accesses when possible
-      for(size_type i = 0; i < grainsize; ++i)
-      {
-        size_type src_idx = g.size() * i + tid;
-
-        local_stencil[i] = stencil[src_idx];
-        local_values[i]  = first[src_idx];
-      } // end for
-    } // end if
-    else
-    {
-      for(size_type i = 0; i < grainsize; ++i)
-      {
-        size_type src_idx = g.size() * i + tid;
-
-        if(src_idx < (last - first))
-        {
-          local_stencil[i] = stencil[src_idx];
-          local_values[i]  = first[src_idx];
-        } // end if
-      } // end for
-    } // end else
-  } // end for
-
-  g.wait();
-
-  for(;
-      map < map_last;
-      map += chunk_size)
-  {
-    if((map_last - map) >= chunk_size)
-    {
-      // avoid conditional accesses when possible
-      for(size_type i = 0; i < grainsize; ++i)
-      {
-        size_type idx = g.size() * i + tid;
-
-        if(local_stencil[i])
-        {
-          result[map[idx]] = local_values[i];
-        } // end if
-      } // end for
-    } // end if
-    else
-    {
-      for(size_type i = 0; i < grainsize; ++i)
-      {
-        size_type idx = g.size() * i + tid;
-
-        if(idx < (map_last - map) && local_stencil[i])
-        {
-          result[map[idx]] = local_values[i];
-        } // end if
-      } // end for
-    } // end else
-  } // end for
-
-  g.wait();
-} // end inplace_scatter_if
 
 
 template<std::size_t groupsize,
@@ -667,7 +563,7 @@ void validate(size_t n)
 
   std::cerr << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
 
-  if(values_result != values_ref && n < 20)
+  if(values_result != values_ref && n < 30)
   {
     std::cout << "values_result: ";
     thrust::copy(values_result.begin(), values_result.end(), std::ostream_iterator<int>(std::cout, " "));
@@ -687,7 +583,6 @@ void validate(size_t n)
 int main()
 {
   size_t n = 12345678;
-  //size_t n = 20001;
 
   validate<int>(n);
 
