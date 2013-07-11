@@ -248,6 +248,7 @@ struct reduce_by_key_with_carry_kernel
   template<std::size_t groupsize,
            std::size_t grainsize,
            typename RandomAccessIterator1,
+           typename Decomposition,
            typename RandomAccessIterator2,
            typename RandomAccessIterator3,
            typename RandomAccessIterator4,
@@ -259,9 +260,7 @@ struct reduce_by_key_with_carry_kernel
   __device__
   void operator()(bulk::static_execution_group<groupsize,grainsize> &g,
                   RandomAccessIterator1 keys_first,
-                  //int n,
-                  //int interval_size,
-                  thrust::tuple<int,int> n_and_interval_size,
+                  Decomposition decomp,
                   RandomAccessIterator2 values_first,
                   RandomAccessIterator3 keys_result,
                   RandomAccessIterator4 values_result,
@@ -275,20 +274,15 @@ struct reduce_by_key_with_carry_kernel
     typedef typename thrust::iterator_value<RandomAccessIterator1>::type key_type;
     typedef typename thrust::iterator_value<RandomAccessIterator2>::type value_type;
 
-    int n = thrust::get<0>(n_and_interval_size);
-    int interval_size = thrust::get<1>(n_and_interval_size);
-
     BinaryPredicate pred = thrust::get<0>(pred_and_binary_op);
     BinaryFunction binary_op = thrust::get<1>(pred_and_binary_op);
 
-    tail_flags<RandomAccessIterator1> tail_flags(keys_first, keys_first + n, pred);
+    tail_flags<RandomAccessIterator1> tail_flags(keys_first, keys_first + decomp.n(), pred);
 
-    int interval_idx = g.index();
+    typename Decomposition::size_type input_first, input_last;
+    thrust::tie(input_first,input_last) = decomp[g.index()];
 
-    int input_first = interval_idx * interval_size;
-    int input_last = thrust::min(n, input_first + interval_size);
-
-    int output_first = interval_idx == 0 ? 0 : interval_output_offsets[interval_idx - 1];
+    typename Decomposition::size_type output_first = g.index() == 0 ? 0 : interval_output_offsets[g.index() - 1];
 
     key_type init_key     = keys_first[input_first];
     value_type init_value = values_first[input_first];
@@ -312,7 +306,7 @@ struct reduce_by_key_with_carry_kernel
 
       if(interval_has_carry)
       {
-        interval_values[interval_idx] = init_value;
+        interval_values[g.index()] = init_value;
       } // end if
       else
       {
@@ -320,7 +314,7 @@ struct reduce_by_key_with_carry_kernel
         *values_result = init_value;
       } // end else
 
-      is_carry[interval_idx] = interval_has_carry;
+      is_carry[g.index()] = interval_has_carry;
     } // end if
   }
 };
@@ -383,20 +377,25 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
                    BinaryPredicate pred,
                    BinaryFunction binary_op)
 {
-  const int n = keys_last - keys_first;
-  const int threshold_of_parallelism = 20000;
+  typedef typename thrust::iterator_difference<RandomAccessIterator1>::type difference_type;
+  typedef int size_type;
+
+  const difference_type n = keys_last - keys_first;
+  const size_type threshold_of_parallelism = 20000;
 
   if(n <= threshold_of_parallelism)
   {
-    thrust::device_vector<int> result_size(1);
+    thrust::device_vector<size_type> result_size_storage(1);
 
     // good for 32b types
     bulk::static_execution_group<512,3> g;
     typedef bulk::detail::scan_detail::scan_buffer<512,3,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type;
-    int heap_size = sizeof(heap_type);
-    bulk::async(bulk::par(g,1,heap_size), reduce_by_key_kernel(), bulk::there, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op, result_size.begin());
+    size_type heap_size = sizeof(heap_type);
+    bulk::async(bulk::par(g,1,heap_size), reduce_by_key_kernel(), bulk::there, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op, result_size_storage.begin());
 
-    return thrust::make_pair(keys_result + result_size.front(), values_result + result_size.front());
+    size_type result_size = result_size_storage.front();
+
+    return thrust::make_pair(keys_result + result_size, values_result + result_size);
   } // end if
 
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  key_type;
@@ -405,33 +404,36 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
   // XXX this should be the result of BinaryFunction
   typedef typename thrust::iterator_value<RandomAccessIterator4>::type intermediate_type;
 
-  const int interval_size = threshold_of_parallelism; 
+  bulk::static_execution_group<128,5> g;
+  size_type tile_size = g.size() * g.grainsize();
 
-  int num_intervals = (n + (interval_size - 1)) / interval_size;
+  const size_type interval_size = threshold_of_parallelism; 
+
+  size_type subscription = 100;
+  size_type num_groups = thrust::min<size_type>(subscription * g.hardware_concurrency(), (n + interval_size - 1) / interval_size);
+  uniform_decomposition<size_type> decomp(n, num_groups);
 
   // count the number of tail flags in each interval
   tail_flags<
     RandomAccessIterator1,
     thrust::equal_to<typename thrust::iterator_value<RandomAccessIterator1>::type>,
-    int
+    size_type
   > tail_flags(keys_first, keys_last, pred);
 
-  thrust::device_vector<int> interval_output_offsets(num_intervals);
+  thrust::device_vector<size_type> interval_output_offsets(decomp.size());
 
-  reduce_intervals(tail_flags.begin(), tail_flags.end(), interval_size, interval_output_offsets.begin(), thrust::plus<int>());
+  reduce_intervals(tail_flags.begin(), decomp, interval_output_offsets.begin(), thrust::plus<size_type>());
 
   // scan the interval counts
   thrust::inclusive_scan(interval_output_offsets.begin(), interval_output_offsets.end(), interval_output_offsets.begin());
 
   // reduce each interval
-  thrust::device_vector<bool>              is_carry(num_intervals);
-  thrust::device_vector<intermediate_type> interval_values(num_intervals);
+  thrust::device_vector<bool>              is_carry(decomp.size());
+  thrust::device_vector<intermediate_type> interval_values(decomp.size());
 
-  bulk::static_execution_group<128,5> g;
-  int tile_size = g.size() * g.grainsize();
-  int heap_size = tile_size * (sizeof(int) + sizeof(value_type));
-  bulk::async(bulk::par(g,num_intervals,heap_size), reduce_by_key_with_carry_kernel(),
-    bulk::there, keys_first, thrust::make_tuple(n, interval_size), values_first, keys_result, values_result, interval_output_offsets.begin(), interval_values.begin(), is_carry.begin(), thrust::make_tuple(pred, binary_op)
+  size_type heap_size = tile_size * (sizeof(size_type) + sizeof(value_type));
+  bulk::async(bulk::par(g,decomp.size(),heap_size), reduce_by_key_with_carry_kernel(),
+    bulk::there, keys_first, decomp, values_first, keys_result, values_result, interval_output_offsets.begin(), interval_values.begin(), is_carry.begin(), thrust::make_tuple(pred, binary_op)
   );
 
   // scan by key the carries
@@ -439,7 +441,7 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
                                 thrust::make_zip_iterator(thrust::make_tuple(interval_output_offsets.end(),   is_carry.end())),
                                 interval_values.begin(),
                                 interval_values.begin(),
-                                thrust::equal_to<thrust::tuple<int,bool> >(),
+                                thrust::equal_to<thrust::tuple<size_type,bool> >(),
                                 binary_op);
 
   // sum each tail carry value into the result 
@@ -448,7 +450,8 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
                    is_carry.begin(),
                    values_result,
                    binary_op);
-  int result_size = interval_output_offsets.back();
+
+  difference_type result_size = interval_output_offsets.back();
 
   return thrust::make_pair(keys_result + result_size, values_result + result_size);
 }
