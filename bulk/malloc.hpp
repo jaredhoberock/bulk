@@ -2,8 +2,8 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/detail/pointer_traits.hpp>
+#include <bulk/uninitialized.hpp>
 #include <thrust/detail/config.h>
-#include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include <cstdlib>
 
 
@@ -402,7 +402,7 @@ class singleton_on_chip_allocator
 }; // end singleton_on_chip_allocator
 
 
-__shared__  thrust::system::cuda::detail::detail::uninitialized<singleton_on_chip_allocator> s_on_chip_allocator;
+__shared__  uninitialized<singleton_on_chip_allocator> s_on_chip_allocator;
 
 
 inline __device__ void init_on_chip_malloc(size_t max_data_segment_size)

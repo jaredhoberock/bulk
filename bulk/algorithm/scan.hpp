@@ -5,13 +5,13 @@
 #include <bulk/malloc.hpp>
 #include <bulk/algorithm/copy.hpp>
 #include <bulk/algorithm/accumulate.hpp>
+#include <bulk/uninitialized.hpp>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/execution_policy.h>
 #include <thrust/detail/type_traits.h>
 #include <thrust/detail/type_traits/function_traits.h>
 #include <thrust/detail/type_traits/iterator/is_output_iterator.h>
-#include <thrust/system/cuda/detail/detail/uninitialized.h>
 
 
 BULK_NS_PREFIX
@@ -191,9 +191,6 @@ __device__ T bounded_inplace_exclusive_scan(ExecutionGroup &g, RandomAccessItera
     inplace_exclusive_scan(g, first, init, binary_op) :
     small_inplace_exclusive_scan(g, first, n, init, binary_op);
 }
-
-
-using thrust::system::cuda::detail::detail::uninitialized_array;
 
 
 template<bool inclusive,
@@ -458,7 +455,7 @@ __device__ void inclusive_scan(bulk::static_execution_group<groupsize,grainsize>
 
   bulk::free(g, buffer);
 #else
-  __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer;
+  __shared__ uninitialized<buffer_type> buffer;
   detail::scan_detail::scan_with_buffer<true>(g, first, last, result, init, binary_op, buffer.get());
 #endif // __CUDA_ARCH__
 } // end inclusive_scan()
@@ -554,7 +551,7 @@ exclusive_scan(bulk::static_execution_group<groupsize,grainsize> &g,
 
   bulk::free(g, buffer);
 #else
-  __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer;
+  __shared__ uninitialized<buffer_type> buffer;
   detail::scan_detail::scan_with_buffer<false>(g, first, last, result, init, binary_op, buffer.get());
 #endif
 

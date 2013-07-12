@@ -7,4 +7,5 @@
 #include <bulk/async.hpp>
 #include <bulk/malloc.hpp>
 #include <bulk/algorithm.hpp>
+#include <bulk/uninitialized.hpp>
 

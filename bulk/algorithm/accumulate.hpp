@@ -3,6 +3,7 @@
 #include <bulk/detail/config.hpp>
 #include <bulk/algorithm/reduce.hpp>
 #include <bulk/sequential_executor.hpp>
+#include <bulk/uninitialized.hpp>
 #include <thrust/detail/type_traits/function_traits.h>
 
 BULK_NS_PREFIX
@@ -88,7 +89,7 @@ T accumulate(bulk::static_execution_group<groupsize,grainsize> &g,
 #if __CUDA_ARCH__ >= 200
   buffer_type *buffer = reinterpret_cast<buffer_type*>(bulk::malloc(g, sizeof(buffer_type)));
 #else
-  __shared__ thrust::system::cuda::detail::detail::uninitialized<buffer_type> buffer_impl;
+  __shared__ uninitialized<buffer_type> buffer_impl;
   buffer_type *buffer = &buffer_impl.get();
 #endif
   
@@ -162,4 +163,5 @@ T accumulate(bulk::static_execution_group<groupsize,grainsize> &g,
 
 
 } // end bulk
+BULK_NS_SUFFIX
 

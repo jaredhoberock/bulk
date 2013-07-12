@@ -3,10 +3,10 @@
 #include <bulk/detail/closure.hpp>
 #include <bulk/detail/group_task.hpp>
 #include <bulk/detail/throw_on_error.hpp>
+#include <bulk/uninitialized.hpp>
 
 #include <thrust/detail/config.h>
 #include <thrust/detail/minmax.h>
-#include <thrust/system/cuda/detail/detail/uninitialized.h>
 #include <thrust/system/cuda/detail/runtime_introspection.h>
 #include <thrust/system/cuda/detail/cuda_launch_config.h>
 #include <thrust/system/cuda/detail/synchronize.h>
@@ -31,8 +31,6 @@ size_t maximum_potential_occupancy(Function kernel, size_t num_threads, size_t n
                                                                              num_threads,
                                                                              0);
 }
-
-using thrust::system::cuda::detail::detail::uninitialized;
 
 
 // XXX uninitialized is a performance hazard

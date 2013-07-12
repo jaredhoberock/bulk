@@ -3,6 +3,7 @@
 #include <bulk/detail/config.hpp>
 #include <bulk/algorithm/copy.hpp>
 #include <bulk/malloc.hpp>
+#include <bulk/uninitialized.hpp>
 #include <thrust/iterator/iterator_traits.h>
 #include <thrust/detail/minmax.h>
 
@@ -78,7 +79,7 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 #if __CUDA_ARCH__ >= 200
   T *buffer = reinterpret_cast<T*>(bulk::malloc(g, groupsize * sizeof(T)));
 #else
-  __shared__ thrust::system::cuda::detail::detail::uninitialized_array<T,groupsize> buffer_impl;
+  __shared__ uninitialized_array<T,groupsize> buffer_impl;
   T *buffer = buffer_impl.data();
 #endif
   

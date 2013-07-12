@@ -4,7 +4,7 @@
 #include <bulk/sequential_executor.hpp>
 #include <bulk/malloc.hpp>
 #include <bulk/algorithm/copy.hpp>
-#include <thrust/system/cuda/detail/detail/uninitialized.h>
+#include <bulk/uninitialized.hpp>
 
 
 BULK_NS_PREFIX
@@ -62,8 +62,6 @@ OutputIterator merge(const bulk::bounded_executor<bound> &e,
 
   size_type n2 = last2 - first2;
   size_type idx2 = 0;
-
-  using thrust::system::cuda::detail::detail::uninitialized;
 
   uninitialized<value_type1> a;
   uninitialized<value_type2> b;
