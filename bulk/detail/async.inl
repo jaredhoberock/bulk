@@ -33,22 +33,23 @@ size_t maximum_potential_occupancy(Function kernel, size_t num_threads, size_t n
 }
 
 
+#if BULK_ASYNC_USE_UNINITIALIZED
 // XXX uninitialized is a performance hazard
 //     disable it for the moment
-//template<typename Function>
-//__global__
-//void launch_by_value(uninitialized<Function> f)
-//{
-//  f.get()();
-//}
-
-
+template<typename Function>
+__global__
+void launch_by_value(uninitialized<Function> f)
+{
+  f.get()();
+}
+#else
 template<typename Function>
 __global__
 void launch_by_value(Function f)
 {
   f();
 }
+#endif
 
 
 template<typename Function>
@@ -69,8 +70,11 @@ struct launcher
 {
   typedef group_task<ThreadGroup, Closure> task_type;
 
-  //typedef void (*global_function_t)(uninitialized<task_type>);
+#if BULK_ASYNC_USE_UNINITIALIZED
+  typedef void (*global_function_t)(uninitialized<task_type>);
+#else
   typedef void (*global_function_t)(task_type);
+#endif
 
   template<typename LaunchConfig>
   future<void> go(LaunchConfig l, Closure c)
@@ -83,8 +87,10 @@ struct launcher
     {
       task_type task(c, heap_size);
 
-      //uninitialized<task_type> wrapped_task;
-      //wrapped_task.construct(task);
+#if BULK_ASYNC_USE_UNINITIALIZED
+      uninitialized<task_type> wrapped_task;
+      wrapped_task.construct(task);
+#endif
 
       // XXX this business is pretty expensive
       //     try to avoid it or speed it up or something
@@ -101,8 +107,11 @@ struct launcher
         static_cast<unsigned int>(group_size),
         heap_size,
         l.stream()
+#if BULK_ASYNC_USE_UNINITIALIZED
+      >>>(wrapped_task);
+#else
       >>>(task);
-      //>>>(wrapped_task);
+#endif
 
       thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
 
