@@ -6,8 +6,8 @@
 #include <bulk/algorithm/scan.hpp>
 #include <bulk/algorithm/scatter.hpp>
 #include <bulk/malloc.hpp>
-#include <bulk/algorithm/detail/head_flags.hpp>
-#include <bulk/algorithm/detail/tail_flags.hpp>
+#include <bulk/detail/head_flags.hpp>
+#include <bulk/detail/tail_flags.hpp>
 #include <thrust/detail/type_traits/function_traits.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/detail/minmax.h>
@@ -20,6 +20,32 @@ namespace detail
 {
 namespace reduce_by_key_detail
 {
+
+
+template<typename FlagType, typename ValueType, typename BinaryFunction>
+struct scan_head_flags_functor
+{
+  BinaryFunction binary_op;
+
+  typedef thrust::tuple<FlagType,ValueType> result_type;
+  typedef result_type first_argument_type;
+  typedef result_type second_argument_type;
+
+  __host__ __device__
+  scan_head_flags_functor(BinaryFunction binary_op)
+    : binary_op(binary_op)
+  {}
+
+  __host__ __device__
+  result_type operator()(const first_argument_type &a, const second_argument_type &b)
+  {
+    ValueType val = thrust::get<0>(b) ? thrust::get<1>(b) : binary_op(thrust::get<1>(a), thrust::get<1>(b));
+    FlagType flag = thrust::get<0>(a) + thrust::get<0>(b);
+    return result_type(flag, val);
+  }
+};
+
+
 } // end reduce_by_key_detail
 } // end detail
 
@@ -66,13 +92,13 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
     // upper bound on n is interval_size
     size_type n = thrust::min<size_type>(interval_size, keys_last - keys_first);
 
-    head_flags_with_init<
+    bulk::detail::head_flags_with_init<
       InputIterator1,
       thrust::equal_to<key_type>,
       size_type
     > flags(keys_first, keys_first + n, init_key);
 
-    scan_head_flags_functor<size_type, value_type, BinaryFunction> f(binary_op);
+    detail::reduce_by_key_detail::scan_head_flags_functor<size_type, value_type, BinaryFunction> f(binary_op);
 
     // load input into smem
     bulk::copy_n(bulk::bound<interval_size>(g),
@@ -96,7 +122,7 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
                      thrust::make_zip_iterator(thrust::make_tuple(s_values,         thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
                      thrust::make_zip_iterator(thrust::make_tuple(s_values + n - 1, thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
                      thrust::make_transform_iterator(s_flags, thrust::placeholders::_1 - 1),
-                     make_tail_flags(s_flags, s_flags + n).begin(),
+                     bulk::detail::make_tail_flags(s_flags, s_flags + n).begin(),
                      thrust::make_zip_iterator(thrust::make_tuple(values_result, keys_result)));
 
     // if the init was not a carry, we need to insert it at the beginning of the result

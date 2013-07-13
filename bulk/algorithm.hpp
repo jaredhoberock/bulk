@@ -9,4 +9,5 @@
 #include <bulk/algorithm/merge.hpp>
 #include <bulk/algorithm/scatter.hpp>
 #include <bulk/algorithm/adjacent_difference.hpp>
+#include <bulk/algorithm/reduce_by_key.hpp>
 
