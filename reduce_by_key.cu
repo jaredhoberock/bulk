@@ -5,6 +5,8 @@
 #include <thrust/functional.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/random.h>
 #include <bulk/bulk.hpp>
 #include "head_flags.hpp"
 #include "tail_flags.hpp"
@@ -12,212 +14,88 @@
 #include "reduce_intervals.hpp"
 
 
-template<typename FlagType, typename ValueType, typename BinaryFunction>
-struct scan_head_flags_functor
-{
-  BinaryFunction binary_op;
-
-  typedef thrust::tuple<FlagType,ValueType> result_type;
-  typedef result_type first_argument_type;
-  typedef result_type second_argument_type;
-
-  __host__ __device__
-  scan_head_flags_functor(BinaryFunction binary_op)
-    : binary_op(binary_op)
-  {}
-
-  __host__ __device__
-  result_type operator()(const first_argument_type &a, const second_argument_type &b)
-  {
-    ValueType val = thrust::get<0>(b) ? thrust::get<1>(b) : binary_op(thrust::get<1>(a), thrust::get<1>(b));
-    FlagType flag = thrust::get<0>(a) + thrust::get<0>(b);
-    return result_type(flag, val);
-  }
-};
-
-
-template<std::size_t groupsize,
-         std::size_t grainsize,
-         typename InputIterator1,
-         typename InputIterator2,
-         typename OutputIterator1,
-         typename OutputIterator2,
-         typename BinaryFunction>
-__device__
-void scan_head_flags_and_values(bulk::static_execution_group<groupsize,grainsize> &exec,
-                                InputIterator1 head_flags_first,
-                                InputIterator1 head_flags_last,
-                                InputIterator2 values_first,
-                                OutputIterator1 head_flags_result,
-                                OutputIterator2 values_result,
-                                BinaryFunction binary_op)
-{
-  typedef typename thrust::iterator_value<InputIterator1>::type flag_type;
-  typedef typename thrust::iterator_value<InputIterator2>::type value_type;
-
-  scan_head_flags_functor<flag_type, value_type, BinaryFunction> f(binary_op);
-
-  bulk::inclusive_scan(exec,
-                       thrust::make_zip_iterator(thrust::make_tuple(head_flags_first,  values_first)),
-                       thrust::make_zip_iterator(thrust::make_tuple(head_flags_last,   values_first)),
-                       thrust::make_zip_iterator(thrust::make_tuple(head_flags_result, values_result)),
-                       f);
-}
-
-
-template<std::size_t groupsize,
-         std::size_t grainsize,
-         typename InputIterator1,
-         typename InputIterator2,
-         typename OutputIterator1,
-         typename OutputIterator2,
-         typename BinaryPredicate,
-         typename BinaryFunction>
-__device__
-thrust::pair<OutputIterator1,OutputIterator2>
-reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &exec,
-              InputIterator1 keys_first, InputIterator1 keys_last,
-              InputIterator2 values_first,
-              OutputIterator1 keys_result,
-              OutputIterator2 values_result,
-              BinaryPredicate pred,
-              BinaryFunction binary_op)
-{
-  typename thrust::iterator_difference<InputIterator1>::type n = keys_last - keys_first;
-
-  typedef typename thrust::iterator_value<InputIterator1>::type key_type;
-  typedef typename thrust::iterator_value<InputIterator2>::type value_type;
-
-  int *scanned_flags = reinterpret_cast<int*>(bulk::malloc(exec, n * sizeof(int)));
-
-  value_type *scanned_values = reinterpret_cast<value_type*>(bulk::malloc(exec, n * sizeof(value_type)));
-
-  head_flags<
-    InputIterator1,
-    thrust::equal_to<key_type>,
-    int
-  > flags(keys_first, keys_last);
-
-  scan_head_flags_and_values(exec, flags.begin(), flags.end(), values_first, scanned_flags, scanned_values, binary_op);
-
-  // for each tail element in scanned_flags, the corresponding elements of scanned_values scatters to that flag element - 1
-  bulk::scatter_if(exec,
-                   thrust::make_zip_iterator(thrust::make_tuple(thrust::reinterpret_tag<thrust::cpp::tag>(keys_first), scanned_values)),
-                   thrust::make_zip_iterator(thrust::make_tuple(thrust::reinterpret_tag<thrust::cpp::tag>(keys_last), scanned_values)),
-                   thrust::make_transform_iterator(scanned_flags, thrust::placeholders::_1 - 1),
-                   make_tail_flags(scanned_flags, scanned_flags + n).begin(),
-                   thrust::make_zip_iterator(thrust::make_tuple(keys_result, values_result)));
-
-  int result_size = scanned_flags[n-1];
-
-  bulk::free(exec, scanned_flags);
-  bulk::free(exec, scanned_values);
-
-  return thrust::make_pair(keys_result + result_size, values_result + result_size);
-}
-
-
-template<std::size_t groupsize,
-         std::size_t grainsize,
-         typename InputIterator1,
-         typename InputIterator2,
-         typename OutputIterator1,
-         typename OutputIterator2,
-         typename T1,
-         typename T2,
-         typename BinaryPredicate,
-         typename BinaryFunction>
-thrust::tuple<
-  OutputIterator1,
-  OutputIterator2,
-  typename thrust::iterator_value<InputIterator1>::type,
-  typename thrust::iterator_value<OutputIterator2>::type
->
-__device__
-reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
-              InputIterator1 keys_first, InputIterator1 keys_last,
-              InputIterator2 values_first,
-              OutputIterator1 keys_result,
-              OutputIterator2 values_result,
-              T1 init_key,
-              T2 init_value,
-              BinaryPredicate pred,
-              BinaryFunction binary_op)
-{
-  typedef typename thrust::iterator_value<InputIterator1>::type key_type;
-  typedef typename thrust::iterator_value<InputIterator2>::type value_type; // XXX this should be the type returned by BinaryFunction
-
-  typedef int size_type;
-
-  const size_type interval_size = groupsize * grainsize;
-
-  size_type *s_flags = reinterpret_cast<size_type*>(bulk::malloc(g, interval_size * sizeof(int)));
-  value_type *s_values = reinterpret_cast<value_type*>(bulk::malloc(g, interval_size * sizeof(value_type)));
-
-  for(; keys_first < keys_last; keys_first += interval_size, values_first += interval_size)
-  {
-    // upper bound on n is interval_size
-    size_type n = thrust::min<size_type>(interval_size, keys_last - keys_first);
-
-    head_flags_with_init<
-      InputIterator1,
-      thrust::equal_to<key_type>,
-      size_type
-    > flags(keys_first, keys_first + n, init_key);
-
-    scan_head_flags_functor<size_type, value_type, BinaryFunction> f(binary_op);
-
-    // load input into smem
-    bulk::copy_n(bulk::bound<interval_size>(g),
-                 thrust::make_zip_iterator(thrust::make_tuple(flags.begin(), values_first)),
-                 n,
-                 thrust::make_zip_iterator(thrust::make_tuple(s_flags, s_values)));
-
-    // scan in smem
-    bulk::inclusive_scan(bulk::bound<interval_size>(g),
-                         thrust::make_zip_iterator(thrust::make_tuple(s_flags,     s_values)),
-                         thrust::make_zip_iterator(thrust::make_tuple(s_flags + n, s_values)),
-                         thrust::make_zip_iterator(thrust::make_tuple(s_flags,     s_values)),
-                         thrust::make_tuple(1, init_value),
-                         f);
-
-    // for each tail element in scanned_values, except the last, which is the carry,
-    // scatter to that element's corresponding flag element - 1
-    // simultaneously scatter the corresponding key
-    // XXX can we do this scatter in-place in smem?
-    bulk::scatter_if(bulk::bound<interval_size>(g),
-                     thrust::make_zip_iterator(thrust::make_tuple(s_values,         thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
-                     thrust::make_zip_iterator(thrust::make_tuple(s_values + n - 1, thrust::reinterpret_tag<thrust::cpp::tag>(keys_first))),
-                     thrust::make_transform_iterator(s_flags, thrust::placeholders::_1 - 1),
-                     make_tail_flags(s_flags, s_flags + n).begin(),
-                     thrust::make_zip_iterator(thrust::make_tuple(values_result, keys_result)));
-
-    // if the init was not a carry, we need to insert it at the beginning of the result
-    if(g.this_exec.index() == 0 && s_flags[0] > 1)
-    {
-      keys_result[0]   = init_key;
-      values_result[0] = init_value;
-    }
-
-    size_type result_size = s_flags[n - 1] - 1;
-
-    keys_result    += result_size;
-    values_result  += result_size;
-    init_key        = keys_first[n-1];
-    init_value      = s_values[n - 1];
-
-    g.wait();
-  } // end for
-
-  bulk::free(g, s_flags);
-  bulk::free(g, s_values);
-
-  return thrust::make_tuple(keys_result, values_result, init_key, init_value);
-}
-
-
 struct reduce_by_key_kernel
 {
+  template<std::size_t groupsize,
+           std::size_t grainsize,
+           typename RandomAccessIterator1,
+           typename Decomposition,
+           typename RandomAccessIterator2,
+           typename RandomAccessIterator3,
+           typename RandomAccessIterator4,
+           typename RandomAccessIterator5,
+           typename RandomAccessIterator6,
+           typename RandomAccessIterator7,
+           typename BinaryPredicate,
+           typename BinaryFunction>
+  __device__
+  thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
+  operator()(bulk::static_execution_group<groupsize,grainsize> &g,
+             RandomAccessIterator1 keys_first,
+             Decomposition decomp,
+             RandomAccessIterator2 values_first,
+             RandomAccessIterator3 keys_result,
+             RandomAccessIterator4 values_result,
+             RandomAccessIterator5 interval_output_offsets,
+             RandomAccessIterator6 interval_values,
+             RandomAccessIterator7 is_carry,
+             //BinaryPredicate pred,
+             //BinaryFunction binary_op)
+             thrust::tuple<BinaryPredicate,BinaryFunction> pred_and_binary_op)
+  {
+    typedef typename thrust::iterator_value<RandomAccessIterator1>::type key_type;
+    typedef typename thrust::iterator_value<RandomAccessIterator2>::type value_type;
+
+    BinaryPredicate pred = thrust::get<0>(pred_and_binary_op);
+    BinaryFunction binary_op = thrust::get<1>(pred_and_binary_op);
+
+    tail_flags<RandomAccessIterator1> tail_flags(keys_first, keys_first + decomp.n(), pred);
+
+    typename Decomposition::size_type input_first, input_last;
+    thrust::tie(input_first,input_last) = decomp[g.index()];
+
+    typename Decomposition::size_type output_first = g.index() == 0 ? 0 : interval_output_offsets[g.index() - 1];
+
+    key_type init_key     = keys_first[input_first];
+    value_type init_value = values_first[input_first];
+
+    // the inits become the carries
+    thrust::tie(keys_result, values_result, init_key, init_value) =
+      bulk::reduce_by_key(g,
+                          keys_first + input_first + 1,
+                          keys_first + input_last,
+                          values_first + input_first + 1,
+                          keys_result + output_first,
+                          values_result + output_first,
+                          init_key,
+                          init_value,
+                          pred,
+                          binary_op);
+
+    if(g.this_exec.index() == 0)
+    {
+      bool interval_has_carry = !tail_flags[input_last-1];
+
+      if(interval_has_carry)
+      {
+        interval_values[g.index()] = init_value;
+      } // end if
+      else
+      {
+        *keys_result   = init_key;
+        *values_result = init_value;
+
+        ++keys_result;
+        ++values_result;
+      } // end else
+
+      is_carry[g.index()] = interval_has_carry;
+    } // end if
+
+    return thrust::make_pair(keys_result, values_result);
+  }
+
+
   template<std::size_t groupsize,
            std::size_t grainsize,
            typename RandomAccessIterator1,
@@ -238,84 +116,19 @@ struct reduce_by_key_kernel
                   BinaryFunction        binary_op,
                   Iterator result_size)
   {
-    *result_size = ::reduce_by_key(g, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op).first - keys_result;
-  }
-};
+    RandomAccessIterator3 old_keys_result = keys_result;
 
-
-struct reduce_by_key_with_carry_kernel
-{
-  template<std::size_t groupsize,
-           std::size_t grainsize,
-           typename RandomAccessIterator1,
-           typename Decomposition,
-           typename RandomAccessIterator2,
-           typename RandomAccessIterator3,
-           typename RandomAccessIterator4,
-           typename RandomAccessIterator5,
-           typename RandomAccessIterator6,
-           typename RandomAccessIterator7,
-           typename BinaryPredicate,
-           typename BinaryFunction>
-  __device__
-  void operator()(bulk::static_execution_group<groupsize,grainsize> &g,
-                  RandomAccessIterator1 keys_first,
-                  Decomposition decomp,
-                  RandomAccessIterator2 values_first,
-                  RandomAccessIterator3 keys_result,
-                  RandomAccessIterator4 values_result,
-                  RandomAccessIterator5 interval_output_offsets,
-                  RandomAccessIterator6 interval_values,
-                  RandomAccessIterator7 is_carry,
-                  //BinaryPredicate pred,
-                  //BinaryFunction binary_op)
-                  thrust::tuple<BinaryPredicate,BinaryFunction> pred_and_binary_op)
-  {
-    typedef typename thrust::iterator_value<RandomAccessIterator1>::type key_type;
-    typedef typename thrust::iterator_value<RandomAccessIterator2>::type value_type;
-
-    BinaryPredicate pred = thrust::get<0>(pred_and_binary_op);
-    BinaryFunction binary_op = thrust::get<1>(pred_and_binary_op);
-
-    tail_flags<RandomAccessIterator1> tail_flags(keys_first, keys_first + decomp.n(), pred);
-
-    typename Decomposition::size_type input_first, input_last;
-    thrust::tie(input_first,input_last) = decomp[g.index()];
-
-    typename Decomposition::size_type output_first = g.index() == 0 ? 0 : interval_output_offsets[g.index() - 1];
-
-    key_type init_key     = keys_first[input_first];
-    value_type init_value = values_first[input_first];
-
-    // the inits become the carries
-    thrust::tie(keys_result, values_result, init_key, init_value) =
-      reduce_by_key(g,
-                    keys_first + input_first + 1,
-                    keys_first + input_last,
-                    values_first + input_first + 1,
-                    keys_result + output_first,
-                    values_result + output_first,
-                    init_key,
-                    init_value,
-                    pred,
-                    binary_op);
+    thrust::tie(keys_result, values_result) =
+      operator()(g, keys_first, make_trivial_decomposition(keys_last - keys_first), values_first, keys_result, values_result,
+                 thrust::make_constant_iterator<int>(0),
+                 thrust::make_discard_iterator(),
+                 thrust::make_discard_iterator(),
+                 thrust::make_tuple(pred,binary_op));
 
     if(g.this_exec.index() == 0)
     {
-      bool interval_has_carry = !tail_flags[input_last-1];
-
-      if(interval_has_carry)
-      {
-        interval_values[g.index()] = init_value;
-      } // end if
-      else
-      {
-        *keys_result   = init_key;
-        *values_result = init_value;
-      } // end else
-
-      is_carry[g.index()] = interval_has_carry;
-    } // end if
+      *result_size = keys_result - old_keys_result;
+    }
   }
 };
 
@@ -564,7 +377,11 @@ void validate(size_t n)
   keys_result.resize(my_size);
   values_result.resize(my_size);
 
-  std::cerr << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
+  cudaError_t error = cudaDeviceSynchronize();
+  if(error)
+  {
+    std::cerr << "CUDA error: " << cudaGetErrorString(error) << std::endl;
+  }
 
   if(values_result != values_ref && n < 30)
   {
@@ -585,9 +402,23 @@ void validate(size_t n)
 
 int main()
 {
-  size_t n = 12345678;
+  for(size_t n = 1; n <= 1 << 20; n <<= 1)
+  {
+    std::cout << "Testing n = " << n << std::endl;
+    validate<int>(n);
+  }
 
-  validate<int>(n);
+  thrust::default_random_engine rng;
+  for(int i = 0; i < 20; ++i)
+  {
+    size_t n = rng() % (1 << 20);
+   
+    std::cout << "Testing n = " << n << std::endl;
+    validate<int>(n);
+  }
+
+  //size_t n = 12345678;
+  size_t n = 19999;
 
   std::cout << "Large input: " << std::endl;
   std::cout << "int: " << std::endl;
