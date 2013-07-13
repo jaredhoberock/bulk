@@ -191,6 +191,7 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
                    BinaryFunction binary_op)
 {
   typedef typename thrust::iterator_difference<RandomAccessIterator1>::type difference_type;
+  typedef typename thrust::iterator_value<RandomAccessIterator2>::type      value_type;
   typedef int size_type;
 
   const difference_type n = keys_last - keys_first;
@@ -202,8 +203,7 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
 
     // good for 32b types
     bulk::static_execution_group<512,3> g;
-    typedef bulk::detail::scan_detail::scan_buffer<512,3,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type;
-    size_type heap_size = sizeof(heap_type);
+    size_type heap_size = g.size() * g.grainsize() * (sizeof(size_type) + sizeof(value_type));
     bulk::async(bulk::par(g,1,heap_size), reduce_by_key_kernel(), bulk::there, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op, result_size_storage.begin());
 
     size_type result_size = result_size_storage.front();
@@ -212,7 +212,6 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
   } // end if
 
   typedef typename thrust::iterator_value<RandomAccessIterator1>::type  key_type;
-  typedef typename thrust::iterator_value<RandomAccessIterator2>::type  value_type;
 
   // XXX this should be the result of BinaryFunction
   typedef typename thrust::iterator_value<RandomAccessIterator4>::type intermediate_type;
@@ -245,7 +244,7 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
   thrust::device_vector<intermediate_type> interval_values(decomp.size());
 
   size_type heap_size = tile_size * (sizeof(size_type) + sizeof(value_type));
-  bulk::async(bulk::par(g,decomp.size(),heap_size), reduce_by_key_with_carry_kernel(),
+  bulk::async(bulk::par(g,decomp.size(),heap_size), reduce_by_key_kernel(),
     bulk::there, keys_first, decomp, values_first, keys_result, values_result, interval_output_offsets.begin(), interval_values.begin(), is_carry.begin(), thrust::make_tuple(pred, binary_op)
   );
 
@@ -417,10 +416,22 @@ int main()
     validate<int>(n);
   }
 
-  //size_t n = 12345678;
-  size_t n = 19999;
-
+  size_t n = 12345678;
   std::cout << "Large input: " << std::endl;
+  std::cout << "int: " << std::endl;
+  compare<int>(n);
+  std::cout << std::endl;
+
+  std::cout << "float: " << std::endl;
+  compare<float>(n);
+  std::cout << std::endl;
+
+  std::cout << "double: " << std::endl;
+  compare<double>(n);
+  std::cout << std::endl << std::endl;
+
+  n = 19999;
+  std::cout << "Small input: " << std::endl;
   std::cout << "int: " << std::endl;
   compare<int>(n);
   std::cout << std::endl;
