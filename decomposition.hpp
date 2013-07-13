@@ -3,6 +3,51 @@
 #include <thrust/pair.h>
 
 template<typename Size>
+class trivial_decomposition
+{
+  public:
+    typedef Size size_type;
+
+    typedef thrust::pair<size_type,size_type> range;
+
+    __host__ __device__
+    trivial_decomposition(size_type n)
+      : m_n(n)
+    {}
+
+    __host__ __device__
+    range operator[](size_type) const
+    {
+      return range(0, n());
+    }
+
+    __host__ __device__
+    size_type size() const
+    {
+      return 1;
+    }
+
+    // XXX think of a better name for this
+    __host__ __device__
+    size_type n() const
+    {
+      return m_n;
+    }
+
+  private:
+    Size m_n;
+};
+
+
+template<typename Size>
+__host__ __device__
+trivial_decomposition<Size> make_trivial_decomposition(Size n)
+{
+  return trivial_decomposition<Size>(n);
+}
+
+
+template<typename Size>
 class blocked_decomposition
 {
   public:
