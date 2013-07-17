@@ -3,6 +3,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/merge.h>
 #include <thrust/sort.h>
+#include <thrust/detail/temporary_array.h>
 #include <bulk/bulk.hpp>
 #include "join_iterator.hpp"
 #include "time_invocation_cuda.hpp"
@@ -150,7 +151,8 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
 
   difference_type num_groups = (n + tile_size - 1) / tile_size;
 
-  thrust::device_vector<size_type> merge_paths(num_groups + 1);
+  thrust::cuda::tag t;
+  thrust::detail::temporary_array<size_type,thrust::cuda::tag> merge_paths(num_groups + 1);
 
   thrust::tabulate(merge_paths.begin(), merge_paths.end(), locate_merge_path<size_type,RandomAccessIterator1,RandomAccessIterator2,Compare>(tile_size,first1,last1,first2,last2,comp));
 

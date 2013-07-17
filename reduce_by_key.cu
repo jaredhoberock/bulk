@@ -6,6 +6,7 @@
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/iterator/constant_iterator.h>
+#include <thrust/detail/temporary_array.h>
 #include <thrust/random.h>
 #include <bulk/bulk.hpp>
 #include "head_flags.hpp"
@@ -199,14 +200,15 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
 
   if(n <= threshold_of_parallelism)
   {
-    thrust::device_vector<size_type> result_size_storage(1);
+    thrust::cuda::tag t;
+    thrust::detail::temporary_array<size_type,thrust::cuda::tag> result_size_storage(t, 1);
 
     // good for 32b types
     bulk::static_execution_group<512,3> g;
     size_type heap_size = g.size() * g.grainsize() * (sizeof(size_type) + sizeof(value_type));
     bulk::async(bulk::par(g,1,heap_size), reduce_by_key_kernel(), bulk::there, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op, result_size_storage.begin());
 
-    size_type result_size = result_size_storage.front();
+    size_type result_size = result_size_storage[0];
 
     return thrust::make_pair(keys_result + result_size, values_result + result_size);
   } // end if
@@ -232,7 +234,8 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
     size_type
   > tail_flags(keys_first, keys_last, pred);
 
-  thrust::device_vector<size_type> interval_output_offsets(decomp.size());
+  thrust::cuda::tag t;
+  thrust::detail::temporary_array<size_type,thrust::cuda::tag> interval_output_offsets(t, decomp.size());
 
   reduce_intervals(tail_flags.begin(), decomp, interval_output_offsets.begin(), thrust::plus<size_type>());
 
@@ -240,8 +243,8 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
   thrust::inclusive_scan(interval_output_offsets.begin(), interval_output_offsets.end(), interval_output_offsets.begin());
 
   // reduce each interval
-  thrust::device_vector<bool>              is_carry(decomp.size());
-  thrust::device_vector<intermediate_type> interval_values(decomp.size());
+  thrust::detail::temporary_array<bool,thrust::cuda::tag> is_carry(t, decomp.size());
+  thrust::detail::temporary_array<intermediate_type,thrust::cuda::tag> interval_values(t, decomp.size());
 
   size_type heap_size = tile_size * (sizeof(size_type) + sizeof(value_type));
   bulk::async(bulk::par(g,decomp.size(),heap_size), reduce_by_key_kernel(),
@@ -263,7 +266,7 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
                    values_result,
                    binary_op);
 
-  difference_type result_size = interval_output_offsets.back();
+  difference_type result_size = interval_output_offsets[interval_output_offsets.size() - 1];
 
   return thrust::make_pair(keys_result + result_size, values_result + result_size);
 }
