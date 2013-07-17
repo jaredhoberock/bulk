@@ -9,9 +9,9 @@
 struct reduce_kernel
 {
   template<typename Iterator, typename Pointer>
-  __device__ void operator()(volatile bool wait_for_me, Iterator first, Iterator last, Pointer result)
+  __device__ void operator()(volatile bool *wait_for_me, Iterator first, Iterator last, Pointer result)
   {
-    while(!wait_for_me){}
+    while(!*wait_for_me){}
 
     *result = thrust::reduce(thrust::device, first, last);
   }
@@ -50,10 +50,10 @@ int main()
   cudaStreamDestroy(s1);
   cudaStreamDestroy(s2);
 
-  assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
-
   std::cout << "result: " << thrust::reduce(vec.begin(), vec.end()) << std::endl;
   std::cout << "asynchronous result: " << result[0] << std::endl;
+
+  assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 
   return 0;
 }
