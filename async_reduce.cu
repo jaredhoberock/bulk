@@ -11,7 +11,10 @@ struct reduce_kernel
   template<typename Iterator, typename Pointer>
   __device__ void operator()(volatile bool *wait_for_me, Iterator first, Iterator last, Pointer result)
   {
-    while(!*wait_for_me){}
+    while(!*wait_for_me)
+    {
+      printf("waiting...\n");
+    }
 
     *result = thrust::reduce(thrust::device, first, last);
   }
