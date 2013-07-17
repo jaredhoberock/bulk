@@ -79,9 +79,11 @@ struct launcher
   template<typename LaunchConfig>
   future<void> go(LaunchConfig l, Closure c)
   {
-    size_t num_groups = l.num_groups();
-    size_t group_size = choose_group_size(l.num_threads_per_group());
-    size_t heap_size = choose_heap_size(group_size, l.num_smem_bytes_per_group());
+    size_t num_groups = 0, group_size = 0, heap_size = 0;
+    cudaStream_t stream;
+
+    thrust::tie(num_groups, group_size, heap_size, stream) =
+      configure(l);
 
     if(num_groups > 0 && group_size > 0)
     {
@@ -94,11 +96,11 @@ struct launcher
 
       // XXX this business is pretty expensive
       //     try to avoid it or speed it up or something
-      if(l.stream() != 0)
+      if(stream != 0)
       {
         cudaEvent_t before_event;
         throw_on_error(cudaEventCreateWithFlags(&before_event, cudaEventDisableTiming | cudaEventBlockingSync), "cudaEventCreateWithFlags in launcher::go");
-        throw_on_error(cudaStreamWaitEvent(l.stream(), before_event, 0), "cudaStreamWaitEvent in launcher::go");
+        throw_on_error(cudaStreamWaitEvent(stream, before_event, 0), "cudaStreamWaitEvent in launcher::go");
         throw_on_error(cudaEventDestroy(before_event), "cudaEventDestroy in launcher::go");
       } // end if
 
@@ -106,7 +108,7 @@ struct launcher
         static_cast<unsigned int>(num_groups),
         static_cast<unsigned int>(group_size),
         heap_size,
-        l.stream()
+        stream
 #if BULK_ASYNC_USE_UNINITIALIZED
       >>>(wrapped_task);
 #else
@@ -117,14 +119,14 @@ struct launcher
 
       if(verbose)
       {
-        std::cout << "async(): occupancy: " << maximum_potential_occupancy(get_global_function(), l.num_threads_per_group(), l.num_smem_bytes_per_group()) << std::endl;
+        std::cout << "async(): occupancy: " << maximum_potential_occupancy(get_global_function(), group_size, heap_size) << std::endl;
       } // end if
     } // end if
 
     // XXX this business is pretty expensive
     //     try to avoid it or speed it up or something
     // XXX we need to think more carefully about how the events get created here
-    return (l.stream() != 0) ? future_core_access::create_in_stream(l.stream()) : future<void>();
+    return (stream != 0) ? future_core_access::create_in_stream(stream) : future<void>();
   } // end go()
 
 
@@ -214,6 +216,25 @@ struct launcher
 
     return result;
   } // end choose_group_size()
+
+
+  template<typename LaunchConfig>
+  static thrust::tuple<size_t, size_t, size_t, cudaStream_t> configure(LaunchConfig lc)
+  {
+    size_t group_size = choose_group_size(lc.num_threads_per_group());
+
+    group_size = thrust::min(group_size, lc.num_threads());
+
+    size_t heap_size  = choose_heap_size(group_size, lc.num_smem_bytes_per_group());
+    size_t num_groups = lc.num_groups();
+
+    if(num_groups == bulk::group_launch_config<ThreadGroup>::use_default)
+    {
+      num_groups = (lc.num_threads() + (group_size - 1)) / group_size;
+    } // end if
+
+    return thrust::make_tuple(num_groups, group_size, heap_size, lc.stream());
+  } // end configure()
 }; // end launcher
 
 
