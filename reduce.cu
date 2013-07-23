@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <bulk/bulk.hpp>
 #include <thrust/device_vector.h>
 #include <thrust/sequence.h>
@@ -11,9 +12,9 @@
 
 struct reduce_partitions
 {
-  template<typename ExecutionGroup, typename Iterator1, typename Iterator2, typename T, typename BinaryOperation>
+  template<typename ConcurrentGroup, typename Iterator1, typename Iterator2, typename T, typename BinaryOperation>
   __device__
-  void operator()(ExecutionGroup &this_group, Iterator1 first, Iterator1 last, Iterator2 result, T init, BinaryOperation binary_op)
+  void operator()(ConcurrentGroup &this_group, Iterator1 first, Iterator1 last, Iterator2 result, T init, BinaryOperation binary_op)
   {
     T sum = bulk::reduce(this_group, first, last, init, binary_op);
 
@@ -23,9 +24,9 @@ struct reduce_partitions
     }
   }
 
-  template<typename ExecutionGroup, typename Iterator1, typename Iterator2, typename BinaryOperation>
+  template<typename ConcurrentGroup, typename Iterator1, typename Iterator2, typename BinaryOperation>
   __device__
-  void operator()(ExecutionGroup &this_group, Iterator1 first, Iterator1 last, Iterator2 result, BinaryOperation binary_op)
+  void operator()(ConcurrentGroup &this_group, Iterator1 first, Iterator1 last, Iterator2 result, BinaryOperation binary_op)
   {
     // noticeably faster to pass the last element as the init
     typename thrust::iterator_value<Iterator2>::type init = last[-1];
@@ -33,9 +34,9 @@ struct reduce_partitions
   }
 
 
-  template<typename ExecutionGroup, typename Iterator1, typename Decomposition, typename Iterator2, typename T, typename BinaryFunction>
+  template<typename ConcurrentGroup, typename Iterator1, typename Decomposition, typename Iterator2, typename T, typename BinaryFunction>
   __device__
-  void operator()(ExecutionGroup &this_group, Iterator1 first, Decomposition decomp, Iterator2 result, T init, BinaryFunction binary_op)
+  void operator()(ConcurrentGroup &this_group, Iterator1 first, Decomposition decomp, Iterator2 result, T init, BinaryFunction binary_op)
   {
     typename Decomposition::range range = decomp[this_group.index()];
 
@@ -65,11 +66,17 @@ T my_reduce(RandomAccessIterator first, RandomAccessIterator last, T init, Binar
 
   if(n <= 0) return init;
 
-  bulk::static_execution_group<128,9> g;
-
-  const size_type tile_size = g.size() * g.grainsize();
+  const size_type groupsize = 128;
+  const size_type grainsize = 9;
+  const size_type tile_size = groupsize * grainsize;
   const size_type num_tiles = (n + tile_size - 1) / tile_size;
   const size_type subscription = 10;
+
+  bulk::concurrent_group<
+    bulk::sequential_executor<grainsize>,
+    groupsize
+  > g;
+
   const size_type num_groups = thrust::min<size_type>(subscription * g.hardware_concurrency(), num_tiles);
 
   aligned_decomposition<size_type> decomp(n, num_groups, tile_size);
@@ -78,12 +85,12 @@ T my_reduce(RandomAccessIterator first, RandomAccessIterator last, T init, Binar
   thrust::detail::temporary_array<T,thrust::cuda::tag> partial_sums(t, decomp.size());
 
   // reduce into partial sums
-  bulk::async(bulk::par(g, decomp.size()), reduce_partitions(), bulk::there, first, decomp, partial_sums.begin(), init, binary_op);
+  bulk::async(bulk::par(g, decomp.size()), reduce_partitions(), bulk::root.this_exec, first, decomp, partial_sums.begin(), init, binary_op);
 
   if(partial_sums.size() > 1)
   {
     // reduce the partial sums
-    bulk::async(bulk::par(g, 1), reduce_partitions(), bulk::there, partial_sums.begin(), partial_sums.end(), partial_sums.begin(), binary_op);
+    bulk::async(bulk::par(g, 1), reduce_partitions(), bulk::root.this_exec, partial_sums.begin(), partial_sums.end(), partial_sums.begin(), binary_op);
   } // end while
 
   return partial_sums[0];

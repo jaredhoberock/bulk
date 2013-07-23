@@ -6,7 +6,7 @@
 struct reduce_intervals_kernel
 {
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Decomposition, typename RandomAccessIterator2, typename BinaryFunction>
-  __device__ void operator()(bulk::static_execution_group<groupsize,grainsize> &this_group,
+  __device__ void operator()(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &this_group,
                              RandomAccessIterator1 first,
                              Decomposition decomp,
                              RandomAccessIterator2 result,
@@ -32,9 +32,9 @@ template<typename RandomAccessIterator1, typename Decomposition, typename Random
 RandomAccessIterator2 reduce_intervals(RandomAccessIterator1 first, Decomposition decomp, RandomAccessIterator2 result, BinaryFunction binary_op)
 {
   typedef typename thrust::iterator_value<RandomAccessIterator2>::type result_type;
-  bulk::static_execution_group<128,7> g;
-  size_t heap_size = g.size() * sizeof(result_type);
-  bulk::async(bulk::par(g,decomp.size(),heap_size), reduce_intervals_kernel(), bulk::there, first, decomp, result, binary_op);
+  const size_t groupsize = 128;
+  size_t heap_size = groupsize * sizeof(result_type);
+  bulk::async(bulk::grid<groupsize,7>(decomp.size(),heap_size), reduce_intervals_kernel(), bulk::root.this_exec, first, decomp, result, binary_op);
 
   return result + decomp.size();
 } // end reduce_intervals()

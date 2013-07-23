@@ -1,10 +1,11 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
-#include <bulk/sequential_executor.hpp>
+#include <bulk/execution_policy.hpp>
 #include <bulk/malloc.hpp>
 #include <bulk/algorithm/copy.hpp>
 #include <bulk/uninitialized.hpp>
+#include <thrust/detail/minmax.h>
 
 
 BULK_NS_PREFIX
@@ -41,18 +42,19 @@ Size merge_path(RandomAccessIterator1 first1, Size n1,
 
 
 template<std::size_t bound,
+         std::size_t grainsize,
          typename InputIterator1,
          typename InputIterator2,
          typename OutputIterator,
          typename Compare>
 __device__
-OutputIterator merge(const bulk::bounded_executor<bound> &e,
+OutputIterator merge(const bulk::bounded_executor<bound,sequential_executor<grainsize> > &e,
                      InputIterator1 first1, InputIterator1 last1,
                      InputIterator2 first2, InputIterator2 last2,
                      OutputIterator result,
                      Compare comp)
 {
-  typedef int size_type;
+  typedef typename bounded_executor<bound,sequential_executor<grainsize> >::size_type size_type;
 
   typedef typename thrust::iterator_value<InputIterator1>::type value_type1;
   typedef typename thrust::iterator_value<InputIterator2>::type value_type2;
@@ -147,14 +149,17 @@ __device__
 typename thrust::detail::enable_if<
   (bound <= groupsize * grainsize)
 >::type
-inplace_merge(const bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g_,
+inplace_merge(bulk::bounded_executor<
+                bound,
+                bulk::concurrent_group<
+                  bulk::sequential_executor<grainsize>,
+                  groupsize
+                >
+              > &g,
               RandomAccessIterator first, RandomAccessIterator middle, RandomAccessIterator last,
               Compare comp)
 {
-  bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g =
-    const_cast<bulk::bounded_static_execution_group<bound,groupsize,grainsize>&>(g_);
-
-  typedef int size_type;
+  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
 
   size_type n1 = middle - first;
   size_type n2 = last - middle;
@@ -197,16 +202,19 @@ typename thrust::detail::enable_if<
   (bound <= groupsize * grainsize),
   RandomAccessIterator3
 >::type
-merge(const bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g_,
+merge(bulk::bounded_executor<
+        bound,
+        bulk::concurrent_group<
+          bulk::sequential_executor<grainsize>,
+          groupsize
+        >
+      > &g,
       RandomAccessIterator1 first1, RandomAccessIterator1 last1,
       RandomAccessIterator2 first2, RandomAccessIterator2 last2,
       RandomAccessIterator3 result,
       Compare comp)
 {
-  bulk::bounded_static_execution_group<bound,groupsize,grainsize> &g =
-    const_cast<bulk::bounded_static_execution_group<bound,groupsize,grainsize>&>(g_);
-
-  typedef int size_type;
+  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
 
   size_type n1 = last1 - first1;
   size_type n2 = last2 - first2;
@@ -245,17 +253,18 @@ namespace merge_detail
 {
 
 
+// XXX this should take a bounded_executor
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __device__
 RandomAccessIterator4
-  bounded_merge_with_buffer(bulk::static_execution_group<groupsize,grainsize> &exec,
+  bounded_merge_with_buffer(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &exec,
                             RandomAccessIterator1 first1, RandomAccessIterator1 last1,
                             RandomAccessIterator2 first2, RandomAccessIterator2 last2,
                             RandomAccessIterator3 buffer,
                             RandomAccessIterator4 result,
                             Compare comp)
 {
-  typedef int size_type;
+  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
 
   size_type n1 = last1 - first1;
   size_type n2 = last2 - first2;
@@ -283,19 +292,19 @@ RandomAccessIterator4
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename Compare>
 __device__
-RandomAccessIterator3 merge(bulk::static_execution_group<groupsize,grainsize> &exec,
+RandomAccessIterator3 merge(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &exec,
                             RandomAccessIterator1 first1, RandomAccessIterator1 last1,
                             RandomAccessIterator2 first2, RandomAccessIterator2 last2,
                             RandomAccessIterator3 result,
                             Compare comp)
 {
-  typedef int size_type;
+  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
 
   typedef typename thrust::iterator_value<RandomAccessIterator3>::type value_type;
 
   value_type *buffer = reinterpret_cast<value_type*>(bulk::malloc(exec, exec.size() * exec.grainsize() * sizeof(value_type)));
 
-  size_type chunk_size = exec.size() * exec.grainsize();
+  size_type chunk_size = exec.size() * exec.this_exec.grainsize();
 
   size_type n1 = last1 - first1;
   size_type n2 = last2 - first2;

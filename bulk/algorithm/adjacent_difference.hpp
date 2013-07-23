@@ -1,20 +1,20 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
-#include <bulk/execution_group.hpp>
-#include <bulk/sequential_executor.hpp>
+#include <bulk/execution_policy.hpp>
 
 BULK_NS_PREFIX
 namespace bulk
 {
 
 
-template<typename RandomAccessIterator1,
+template<std::size_t grainsize,
+         typename RandomAccessIterator1,
          typename RandomAccessIterator2,
          typename T,
          typename BinaryOperation>
 __device__
-RandomAccessIterator2 adjacent_difference(bulk::sequential_executor &exec,
+RandomAccessIterator2 adjacent_difference(bulk::sequential_executor<grainsize> &exec,
                                           RandomAccessIterator1 first, RandomAccessIterator1 last,
                                           RandomAccessIterator2 result,
                                           T init,
@@ -32,13 +32,13 @@ RandomAccessIterator2 adjacent_difference(bulk::sequential_executor &exec,
 
 
 template<std::size_t groupsize,
-         std::size_t grainsize,
+         std::size_t grainsize_,
          typename RandomAccessIterator1,
          typename RandomAccessIterator2,
          typename T,
          typename BinaryOperation>
 __device__
-RandomAccessIterator2 adjacent_difference(bulk::static_execution_group<groupsize,grainsize> &g,
+RandomAccessIterator2 adjacent_difference(bulk::concurrent_group<bulk::sequential_executor<grainsize_>,groupsize> &g,
                                           RandomAccessIterator1 first, RandomAccessIterator1 last,
                                           RandomAccessIterator2 result,
                                           T init,
@@ -48,14 +48,15 @@ RandomAccessIterator2 adjacent_difference(bulk::static_execution_group<groupsize
   //     when the input and output do not overlap, we can avoid the need for next_init
   //     and the barriers
   
-  typedef int size_type;
+  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize_>,groupsize>::size_type size_type;
 
   RandomAccessIterator2 return_me = result + (last - first);
 
-  const size_type tile_size = g.size() * g.grainsize();
+  const size_type grainsize = g.this_exec.grainsize();
+  const size_type tile_size = g.size() * grainsize;
 
   // set the first iteration's init
-  RandomAccessIterator1 first_init = first + g.grainsize() * g.this_exec.index() - 1;
+  RandomAccessIterator1 first_init = first + grainsize * g.this_exec.index() - 1;
   if(first <= first_init && first_init < last)
   {
     init = *first_init;
@@ -65,8 +66,8 @@ RandomAccessIterator2 adjacent_difference(bulk::static_execution_group<groupsize
 
   for(; first < last; first += tile_size, result += tile_size)
   {
-    size_type local_offset = g.grainsize() * g.this_exec.index();
-    size_type local_size = thrust::max(0, thrust::min<size_type>(g.grainsize(), last - (first + local_offset)));
+    size_type local_offset = grainsize * g.this_exec.index();
+    size_type local_size = thrust::max(0, thrust::min<size_type>(grainsize, last - (first + local_offset)));
 
     // get the init for the next iteration
     T next_init = (first + local_offset + tile_size - 1 < last) ? first[tile_size-1] : init;
@@ -96,7 +97,7 @@ template<std::size_t groupsize,
          typename RandomAccessIterator2,
          typename BinaryOperation>
 __device__
-RandomAccessIterator2 adjacent_difference(bulk::static_execution_group<groupsize,grainsize> &g,
+RandomAccessIterator2 adjacent_difference(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
                                           RandomAccessIterator1 first, RandomAccessIterator1 last,
                                           RandomAccessIterator2 result,
                                           BinaryOperation binary_op)

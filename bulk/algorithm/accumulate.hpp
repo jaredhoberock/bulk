@@ -2,7 +2,7 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/algorithm/reduce.hpp>
-#include <bulk/sequential_executor.hpp>
+#include <bulk/execution_policy.hpp>
 #include <bulk/uninitialized.hpp>
 #include <thrust/detail/type_traits/function_traits.h>
 
@@ -12,17 +12,18 @@ namespace bulk
 
 
 template<std::size_t bound,
+         std::size_t grainsize,
          typename RandomAccessIterator,
          typename T,
          typename BinaryFunction>
 __forceinline__ __device__
-T accumulate(const bounded_executor<bound> &exec,
+T accumulate(const bounded_executor<bound,bulk::sequential_executor<grainsize> > &exec,
              RandomAccessIterator first,
              RandomAccessIterator last,
              T init,
              BinaryFunction binary_op)
 {
-  typedef typename bounded_executor<bound>::size_type size_type;
+  typedef typename bounded_executor<bound,bulk::sequential_executor<grainsize> >::size_type size_type;
   typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
 
   size_type n = last - first;
@@ -61,7 +62,7 @@ struct buffer
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-T accumulate(bulk::static_execution_group<groupsize,grainsize> &g,
+T accumulate(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
              RandomAccessIterator first,
              RandomAccessIterator last,
              T init,
@@ -69,7 +70,7 @@ T accumulate(bulk::static_execution_group<groupsize,grainsize> &g,
 {
   typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
 
-  typedef int size_type;
+  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
 
   const size_type elements_per_group = groupsize * grainsize;
 
@@ -142,7 +143,7 @@ T accumulate(bulk::static_execution_group<groupsize,grainsize> &g,
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-T accumulate(bulk::static_execution_group<groupsize,grainsize> &g,
+T accumulate(bulk::concurrent_group<bulk::sequential_executor<grainsize>, groupsize> &g,
              RandomAccessIterator first,
              RandomAccessIterator last,
              T init,

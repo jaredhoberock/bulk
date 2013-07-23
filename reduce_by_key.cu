@@ -17,8 +17,7 @@
 
 struct reduce_by_key_kernel
 {
-  template<std::size_t groupsize,
-           std::size_t grainsize,
+  template<typename ConcurrentGroup,
            typename RandomAccessIterator1,
            typename Decomposition,
            typename RandomAccessIterator2,
@@ -31,7 +30,7 @@ struct reduce_by_key_kernel
            typename BinaryFunction>
   __device__
   thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
-  operator()(bulk::static_execution_group<groupsize,grainsize> &g,
+  operator()(ConcurrentGroup &g,
              RandomAccessIterator1 keys_first,
              Decomposition decomp,
              RandomAccessIterator2 values_first,
@@ -97,8 +96,7 @@ struct reduce_by_key_kernel
   }
 
 
-  template<std::size_t groupsize,
-           std::size_t grainsize,
+  template<typename ConcurrentGroup,
            typename RandomAccessIterator1,
            typename RandomAccessIterator2,
            typename RandomAccessIterator3,
@@ -107,7 +105,7 @@ struct reduce_by_key_kernel
            typename BinaryFunction,
            typename Iterator>
   __device__
-  void operator()(bulk::static_execution_group<groupsize,grainsize> &g,
+  void operator()(ConcurrentGroup      &g,
                   RandomAccessIterator1 keys_first,
                   RandomAccessIterator1 keys_last,
                   RandomAccessIterator2 values_first,
@@ -204,9 +202,10 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
     thrust::detail::temporary_array<size_type,thrust::cuda::tag> result_size_storage(t, 1);
 
     // good for 32b types
-    bulk::static_execution_group<512,3> g;
-    size_type heap_size = g.size() * g.grainsize() * (sizeof(size_type) + sizeof(value_type));
-    bulk::async(bulk::par(g,1,heap_size), reduce_by_key_kernel(), bulk::there, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op, result_size_storage.begin());
+    const int groupsize = 512;
+    const int grainsize = 3;
+    size_type heap_size = groupsize * grainsize * (sizeof(size_type) + sizeof(value_type));
+    bulk::async(bulk::grid<groupsize,grainsize>(1,heap_size), reduce_by_key_kernel(), bulk::root.this_exec, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op, result_size_storage.begin());
 
     size_type result_size = result_size_storage[0];
 
@@ -218,13 +217,14 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
   // XXX this should be the result of BinaryFunction
   typedef typename thrust::iterator_value<RandomAccessIterator4>::type intermediate_type;
 
-  bulk::static_execution_group<128,5> g;
-  size_type tile_size = g.size() * g.grainsize();
+  const size_type groupsize = 128;
+  const size_type grainsize = 5;
+  size_type tile_size = groupsize * grainsize;
 
   const size_type interval_size = threshold_of_parallelism; 
 
   size_type subscription = 100;
-  size_type num_groups = thrust::min<size_type>(subscription * g.hardware_concurrency(), (n + interval_size - 1) / interval_size);
+  size_type num_groups = thrust::min<size_type>(subscription * bulk::concurrent_group<>::hardware_concurrency(), (n + interval_size - 1) / interval_size);
   uniform_decomposition<size_type> decomp(n, num_groups);
 
   // count the number of tail flags in each interval
@@ -247,8 +247,8 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
   thrust::detail::temporary_array<intermediate_type,thrust::cuda::tag> interval_values(t, decomp.size());
 
   size_type heap_size = tile_size * (sizeof(size_type) + sizeof(value_type));
-  bulk::async(bulk::par(g,decomp.size(),heap_size), reduce_by_key_kernel(),
-    bulk::there, keys_first, decomp, values_first, keys_result, values_result, interval_output_offsets.begin(), interval_values.begin(), is_carry.begin(), thrust::make_tuple(pred, binary_op)
+  bulk::async(bulk::grid<groupsize,grainsize>(decomp.size(),heap_size), reduce_by_key_kernel(),
+    bulk::root.this_exec, keys_first, decomp, values_first, keys_result, values_result, interval_output_offsets.begin(), interval_values.begin(), is_carry.begin(), thrust::make_tuple(pred, binary_op)
   );
 
   // scan by key the carries

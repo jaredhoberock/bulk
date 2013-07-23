@@ -1,8 +1,7 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
-#include <bulk/execution_group.hpp>
-#include <bulk/sequential_executor.hpp>
+#include <bulk/execution_policy.hpp>
 
 BULK_NS_PREFIX
 namespace bulk
@@ -10,12 +9,13 @@ namespace bulk
 
 
 template<std::size_t bound,
+         std::size_t grainsize,
          typename RandomAccessIterator1,
          typename RandomAccessIterator2,
          typename RandomAccessIterator3,
          typename RandomAccessIterator4>
 __forceinline__ __device__
-void scatter_if(const bounded_executor<bound> &exec,
+void scatter_if(const bounded_executor<bound,sequential_executor<grainsize> > &exec,
                 RandomAccessIterator1 first,
                 RandomAccessIterator1 last,
                 RandomAccessIterator2 map,
@@ -36,39 +36,42 @@ void scatter_if(const bounded_executor<bound> &exec,
 } // end scatter_if()
 
 
-template<std::size_t b,
+template<std::size_t bound,
          std::size_t groupsize,
-         std::size_t grainsize_,
+         std::size_t grainsize,
          typename RandomAccessIterator1, 
          typename RandomAccessIterator2,
          typename RandomAccessIterator3,
          typename RandomAccessIterator4>
 __device__
 typename thrust::detail::enable_if<
-  b <= groupsize * grainsize_
+  bound <= groupsize * grainsize
 >::type
-scatter_if(const bulk::bounded_static_execution_group<b,groupsize,grainsize_> &g_,
+scatter_if(bulk::bounded_executor<
+             bound,
+             bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>
+           > &g,
            RandomAccessIterator1 first,
            RandomAccessIterator1 last,
            RandomAccessIterator2 map,
            RandomAccessIterator3 stencil,
            RandomAccessIterator4 result)
 {
-  bulk::bounded_static_execution_group<b,groupsize,grainsize_> &g =
-    const_cast<bulk::bounded_static_execution_group<b,groupsize,grainsize_>&>(g_);
+  typedef typename bulk::bounded_executor<
+    bound,
+    bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>
+  >::size_type size_type;
 
-  typedef int size_type;
-
-  const size_type grainsize = bulk::static_execution_group<groupsize,grainsize_>::static_grainsize;
+  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::executor_type executor_type;
 
   size_type n = last - first;
 
   size_type tid = g.this_exec.index();
 
   // avoid branches when possible
-  if(n == b)
+  if(n == bound)
   {
-    for(size_type i = 0; i < grainsize; ++i)
+    for(size_type i = 0; i < g.this_exec.grainsize(); ++i)
     {
       size_type idx = g.size() * i + tid;
 
@@ -78,9 +81,9 @@ scatter_if(const bulk::bounded_static_execution_group<b,groupsize,grainsize_> &g
       } // end if
     } // end for
   } // end if
-  else if(n < b)
+  else if(n < bound)
   {
-    for(size_type i = 0; i < grainsize; ++i)
+    for(size_type i = 0; i < g.this_exec.grainsize(); ++i)
     {
       size_type idx = g.size() * i + tid;
 
@@ -96,22 +99,20 @@ scatter_if(const bulk::bounded_static_execution_group<b,groupsize,grainsize_> &g
 
 
 template<std::size_t groupsize,
-         std::size_t grainsize_,
+         std::size_t grainsize,
          typename RandomAccessIterator1, 
          typename RandomAccessIterator2,
          typename RandomAccessIterator3,
          typename RandomAccessIterator4>
 __device__
-void scatter_if(bulk::static_execution_group<groupsize,grainsize_> &g,
+void scatter_if(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
                 RandomAccessIterator1 first,
                 RandomAccessIterator1 last,
                 RandomAccessIterator2 map,
                 RandomAccessIterator3 stencil,
                 RandomAccessIterator4 result)
 {
-  typedef int size_type;
-
-  const size_type grainsize = bulk::static_execution_group<groupsize,grainsize_>::static_grainsize;
+  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
 
   size_type chunk_size = g.size() * grainsize;
 

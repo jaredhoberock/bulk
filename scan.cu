@@ -15,8 +15,8 @@
 
 struct inclusive_scan_n
 {
-  template<std::size_t size, std::size_t grainsize, typename InputIterator, typename Size, typename OutputIterator, typename T, typename BinaryFunction>
-  __device__ void operator()(bulk::static_execution_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
+  template<typename ConcurrentGroup, typename InputIterator, typename Size, typename OutputIterator, typename T, typename BinaryFunction>
+  __device__ void operator()(ConcurrentGroup &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
   {
     bulk::inclusive_scan(this_group, first, first + n, result, init, binary_op);
   }
@@ -24,8 +24,8 @@ struct inclusive_scan_n
 
 struct exclusive_scan_n
 {
-  template<std::size_t size, std::size_t grainsize, typename InputIterator, typename Size, typename OutputIterator, typename T, typename BinaryFunction>
-  __device__ void operator()(bulk::static_execution_group<size,grainsize> &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
+  template<typename ConcurrentGroup, typename InputIterator, typename Size, typename OutputIterator, typename T, typename BinaryFunction>
+  __device__ void operator()(ConcurrentGroup &this_group, InputIterator first, Size n, OutputIterator result, T init, BinaryFunction binary_op)
   {
     bulk::exclusive_scan(this_group, first, first + n, result, init, binary_op);
   }
@@ -34,8 +34,8 @@ struct exclusive_scan_n
 
 struct inclusive_downsweep
 {
-  template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Decomposition, typename RandomAccessIterator2, typename RandomAccessIterator3, typename BinaryFunction>
-  __device__ void operator()(bulk::static_execution_group<groupsize,grainsize> &this_group,
+  template<typename ConcurrentGroup, typename RandomAccessIterator1, typename Decomposition, typename RandomAccessIterator2, typename RandomAccessIterator3, typename BinaryFunction>
+  __device__ void operator()(ConcurrentGroup &this_group,
                              RandomAccessIterator1 first,
                              Decomposition decomp,
                              RandomAccessIterator2 carries_first,
@@ -57,8 +57,8 @@ struct inclusive_downsweep
 
 struct accumulate_tiles
 {
-  template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Decomposition, typename RandomAccessIterator2, typename BinaryFunction>
-  __device__ void operator()(bulk::static_execution_group<groupsize,grainsize> &this_group,
+  template<typename ConcurrentGroup, typename RandomAccessIterator1, typename Decomposition, typename RandomAccessIterator2, typename BinaryFunction>
+  __device__ void operator()(ConcurrentGroup &this_group,
                              RandomAccessIterator1 first,
                              Decomposition decomp,
                              RandomAccessIterator2 result,
@@ -102,24 +102,22 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
 
   if(n < threshold_of_parallelism)
   {
-    bulk::static_execution_group<512,3> group;
     typedef bulk::detail::scan_detail::scan_buffer<512,3,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type;
     Size heap_size = sizeof(heap_type);
-    bulk::async(bulk::par(group, 1, heap_size), inclusive_scan_n(), bulk::there, first, n, result, init, binary_op);
+    bulk::async(bulk::par(bulk::con<512,3>(heap_size), 1), inclusive_scan_n(), bulk::root.this_exec, first, n, result, init, binary_op);
   } // end if
   else
   {
     // determined from empirical testing on k20c
     const int groupsize = sizeof(intermediate_type) <= sizeof(int) ? 128 : 256;
     const int grainsize = sizeof(intermediate_type) <= sizeof(int) ?   9 :   5;
-    bulk::static_execution_group<groupsize,grainsize> group1;
 
-    const Size tile_size = group1.size() * group1.grainsize();
+    const Size tile_size = groupsize * grainsize;
     int num_tiles = (n + tile_size - 1) / tile_size;
 
     // 20 determined from empirical testing on k20c & GTX 480
     int subscription = 20;
-    Size num_groups = thrust::min<Size>(subscription * group1.hardware_concurrency(), num_tiles);
+    Size num_groups = thrust::min<Size>(subscription * bulk::concurrent_group<>::hardware_concurrency(), num_tiles);
 
     aligned_decomposition<Size> decomp(n, num_groups, tile_size);
 
@@ -128,15 +126,14 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     	
     // Run the parallel raking reduce as an upsweep.
     // n loads + num_groups stores
-    Size heap_size = group1.size() * sizeof(intermediate_type);
-    bulk::async(bulk::par(group1,num_groups,heap_size), accumulate_tiles(), bulk::there, first, decomp, carries.begin(), binary_op);
+    Size heap_size = groupsize * sizeof(intermediate_type);
+    bulk::async(bulk::grid<groupsize,grainsize>(num_groups,heap_size), accumulate_tiles(), bulk::root.this_exec, first, decomp, carries.begin(), binary_op);
     
     // scan the sums to get the carries
     // num_groups loads + num_groups stores
-    bulk::static_execution_group<256,3> group2;
     typedef bulk::detail::scan_detail::scan_buffer<256,3,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type2;
     heap_size = sizeof(heap_type2);
-    bulk::async(bulk::par(group2,1,heap_size), exclusive_scan_n(), bulk::there, carries.begin(), num_groups, carries.begin(), init, binary_op);
+    bulk::async(bulk::grid<256,3>(1,heap_size), exclusive_scan_n(), bulk::root.this_exec, carries.begin(), num_groups, carries.begin(), init, binary_op);
 
     // do the downsweep - n loads, n stores
     typedef bulk::detail::scan_detail::scan_buffer<
@@ -145,7 +142,7 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
       RandomAccessIterator1,RandomAccessIterator2,BinaryFunction
     > heap_type3;
     heap_size = sizeof(heap_type3);
-    bulk::async(bulk::par(group1,num_groups,heap_size), inclusive_downsweep(), bulk::there, first, decomp, carries.begin(), result, binary_op);
+    bulk::async(bulk::grid<groupsize,grainsize>(num_groups,heap_size), inclusive_downsweep(), bulk::root.this_exec, first, decomp, carries.begin(), result, binary_op);
   } // end else
 
   return result + n;

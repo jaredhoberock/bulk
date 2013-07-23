@@ -5,20 +5,23 @@
 struct hello
 {
   __host__ __device__
-  void operator()(unsigned int num_threads)
+  void operator()()
   {
-    unsigned int thread_idx = blockDim.x * blockIdx.x + threadIdx.x;
-    
-    if(thread_idx < num_threads)
-    {
-      printf("Hello world!\n");
-    }
+    printf("Hello world!\n");
+  }
+
+  __host__ __device__
+  void operator()(bulk::parallel_group<> &g)
+  {
+    printf("Hello world from thread %d\n", g.this_exec.index());
   }
 };
 
 int main()
 {
-  bulk::async(bulk::par(1), hello(), 1);
+  bulk::async(bulk::par(1), hello());
+
+  bulk::async(bulk::par(32), hello(), bulk::root);
 
   cudaDeviceSynchronize();
 

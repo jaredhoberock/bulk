@@ -506,9 +506,9 @@ inline __device__ void unsafe_shfree(void *ptr)
 } // end unsafe_shfree()
 
 
-template<typename ThreadGroup>
+template<typename ConcurrentGroup>
 __device__
-inline void *malloc(ThreadGroup &g, size_t num_bytes)
+inline void *malloc(ConcurrentGroup &g, size_t num_bytes)
 {
   __shared__ void *s_result;
 
@@ -527,9 +527,9 @@ inline void *malloc(ThreadGroup &g, size_t num_bytes)
 } // end malloc()
 
 
-template<typename ThreadGroup>
+template<typename ConcurrentGroup>
 __device__
-inline void free(ThreadGroup &g, void *ptr)
+inline void free(ConcurrentGroup &g, void *ptr)
 {
   if(g.this_exec.index() == 0)
   {

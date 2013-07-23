@@ -12,7 +12,7 @@
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size,typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __device__
 RandomAccessIterator4
-  staged_merge(bulk::static_execution_group<groupsize,grainsize> &exec,
+  staged_merge(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &exec,
                RandomAccessIterator1 first1, Size n1,
                RandomAccessIterator2 first2, Size n2,
                RandomAccessIterator3 stage,
@@ -40,7 +40,7 @@ struct merge_kernel
 {
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
   __device__
-  void operator()(bulk::static_execution_group<groupsize,grainsize> &g,
+  void operator()(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
                   RandomAccessIterator1 first1, Size n1,
                   RandomAccessIterator2 first2, Size n2,
                   RandomAccessIterator3 merge_paths_first,
@@ -49,7 +49,7 @@ struct merge_kernel
   {
     typedef int size_type;
 
-    size_type elements_per_group = g.size() * g.grainsize();
+    size_type elements_per_group = g.size() * g.this_exec.grainsize();
 
     // determine the ranges to merge
     size_type mp0  = merge_paths_first[g.index()];
@@ -157,9 +157,9 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
   thrust::tabulate(merge_paths.begin(), merge_paths.end(), locate_merge_path<size_type,RandomAccessIterator1,RandomAccessIterator2,Compare>(tile_size,first1,last1,first2,last2,comp));
 
   // merge partitions
-  bulk::static_execution_group<groupsize,grainsize> g;
   size_type heap_size = tile_size * sizeof(value_type);
-  bulk::async(bulk::par(g, num_groups, heap_size), merge_kernel(), bulk::there, first1, last1 - first1, first2, last2 - first2, merge_paths.begin(), result, comp);
+  bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> g(heap_size);
+  bulk::async(bulk::par(g, num_groups), merge_kernel(), bulk::root.this_exec, first1, last1 - first1, first2, last2 - first2, merge_paths.begin(), result, comp);
 
   return result + n;
 } // end merge()

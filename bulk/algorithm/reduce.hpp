@@ -17,8 +17,8 @@ namespace reduce_detail
 {
 
 
-template<typename ExecutionGroup, typename RandomAccessIterator, typename Size, typename T, typename BinaryFunction>
-__device__ T destructive_reduce_n(ExecutionGroup &g, RandomAccessIterator first, Size n, T init, BinaryFunction binary_op)
+template<typename ConcurrentGroup, typename RandomAccessIterator, typename Size, typename T, typename BinaryFunction>
+__device__ T destructive_reduce_n(ConcurrentGroup &g, RandomAccessIterator first, Size n, T init, BinaryFunction binary_op)
 {
   typedef int size_type;
 
@@ -58,7 +58,7 @@ __device__ T destructive_reduce_n(ExecutionGroup &g, RandomAccessIterator first,
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
+T reduce(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
          RandomAccessIterator first,
          RandomAccessIterator last,
          T init,
@@ -145,7 +145,7 @@ T reduce(bulk::static_execution_group<groupsize,grainsize> &g,
 
 template<typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-T reduce(bulk::execution_group &g,
+T reduce(bulk::concurrent_group<> &g,
          RandomAccessIterator first,
          RandomAccessIterator last,
          T init,
@@ -154,7 +154,8 @@ T reduce(bulk::execution_group &g,
   typedef int size_type;
 
   const size_type groupsize = g.size();
-  const size_type grainsize = bulk::execution_group::static_grainsize;
+  typedef typename bulk::concurrent_group<>::executor_type executor_type;
+  const size_type grainsize = executor_type::static_grainsize;
   const size_type elements_per_group = groupsize * grainsize;
 
   size_type tid = g.this_exec.index();

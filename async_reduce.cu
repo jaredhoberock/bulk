@@ -36,7 +36,7 @@ int main()
   cudaStreamCreate(&s1);
   cudaStreamCreate(&s2);
 
-  using bulk::par_async;
+  using bulk::par;
   using bulk::async;
 
   thrust::device_vector<int> vec(1 << 20);
@@ -46,9 +46,9 @@ int main()
   thrust::device_vector<bool> flag(1);
 
   // note we launch the reduction before the greenlight
-  async(par_async(s1,1), reduce_kernel(), thrust::raw_pointer_cast(flag.data()), vec.begin(), vec.end(), result.begin());
+  async(par(s1,1), reduce_kernel(), thrust::raw_pointer_cast(flag.data()), vec.begin(), vec.end(), result.begin());
 
-  async(par_async(s2,1), greenlight(), thrust::raw_pointer_cast(flag.data()));
+  async(par(s2,1), greenlight(), thrust::raw_pointer_cast(flag.data()));
 
   cudaStreamDestroy(s1);
   cudaStreamDestroy(s2);

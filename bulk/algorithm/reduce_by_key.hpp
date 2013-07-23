@@ -1,7 +1,7 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
-#include <bulk/execution_group.hpp>
+#include <bulk/execution_policy.hpp>
 #include <bulk/algorithm/copy.hpp>
 #include <bulk/algorithm/scan.hpp>
 #include <bulk/algorithm/scatter.hpp>
@@ -10,6 +10,7 @@
 #include <bulk/detail/tail_flags.hpp>
 #include <thrust/detail/type_traits/function_traits.h>
 #include <thrust/iterator/zip_iterator.h>
+#include <thrust/iterator/retag.h>
 #include <thrust/detail/minmax.h>
 
 
@@ -67,7 +68,7 @@ thrust::tuple<
   typename thrust::iterator_value<OutputIterator2>::type
 >
 __device__
-reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
+reduce_by_key(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
               InputIterator1 keys_first, InputIterator1 keys_last,
               InputIterator2 values_first,
               OutputIterator1 keys_result,
@@ -80,7 +81,7 @@ reduce_by_key(bulk::static_execution_group<groupsize,grainsize> &g,
   typedef typename thrust::iterator_value<InputIterator1>::type key_type;
   typedef typename thrust::iterator_value<InputIterator2>::type value_type; // XXX this should be the type returned by BinaryFunction
 
-  typedef int size_type;
+  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
 
   const size_type interval_size = groupsize * grainsize;
 

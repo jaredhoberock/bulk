@@ -72,14 +72,16 @@ int main()
   thrust::device_vector<int> result(1);
 
   using bulk::par;
+  using bulk::con;
 
   // let the runtime size smem
-  bulk::async(par(1, block_size), sum(), vec.data(), result.data());
+  bulk::async(par(con(block_size), 1), sum(), vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 
   // size smem ourself
-  bulk::async(par(1, block_size, block_size * sizeof(int)), sum(), vec.data(), result.data());
+  size_t heap_size = block_size * sizeof(int);
+  bulk::async(par(con(block_size, heap_size), 1), sum(), vec.data(), result.data());
 
   assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
 }
