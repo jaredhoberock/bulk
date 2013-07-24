@@ -73,7 +73,7 @@ struct cuda_launcher_base
 #endif
 
 
-  void launch_task(size_t num_blocks, size_t block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
+  void launch(size_t num_blocks, size_t block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
   {
 #if BULK_ASYNC_USE_UNINITIALIZED
     uninitialized<task_type> wrapped_task;
@@ -91,7 +91,7 @@ struct cuda_launcher_base
       std::cout << "cuda_launcher_base::launch_task(): occupancy: " << maximum_potential_occupancy(get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
       std::cout << "cuda_launcher_base::launch_task(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
     } // end if
-  } // end launch_task()
+  } // end launch()
 
 
   static global_function_t get_global_function()
@@ -208,7 +208,7 @@ struct cuda_launcher<
 
   typedef typename super_t::task_type task_type;
 
-  future<void> go(grid_type request, Closure c, cudaStream_t stream)
+  void launch(grid_type request, Closure c, cudaStream_t stream)
   {
     grid_type g = configure(request);
 
@@ -220,23 +220,8 @@ struct cuda_launcher<
     {
       task_type task(g, c);
 
-      // XXX this business is pretty expensive
-      //     try to avoid it or speed it up or something
-      if(stream != 0)
-      {
-        cudaEvent_t before_event;
-        throw_on_error(cudaEventCreateWithFlags(&before_event, cudaEventDisableTiming | cudaEventBlockingSync), "cudaEventCreateWithFlags in launcher::go");
-        throw_on_error(cudaStreamWaitEvent(stream, before_event, 0), "cudaStreamWaitEvent in cuda_launcher::go");
-        throw_on_error(cudaEventDestroy(before_event), "cudaEventDestroy in cuda_launcher::go");
-      } // end if
-
-      super_t::launch_task(num_blocks, block_size, heap_size, stream, task);
+      super_t::launch(num_blocks, block_size, heap_size, stream, task);
     } // end if
-
-    // XXX this business is pretty expensive
-    //     try to avoid it or speed it up or something
-    // XXX we need to think more carefully about how the events get created here
-    return (stream != 0) ? future_core_access::create_in_stream(stream) : future<void>();
   } // end go()
 
   static grid_type configure(grid_type g)
@@ -265,7 +250,7 @@ struct cuda_launcher<
 
   typedef parallel_group<sequential_executor<grainsize>,groupsize> group_type;
 
-  future<void> go(group_type g, Closure c, cudaStream_t stream)
+  void launch(group_type g, Closure c, cudaStream_t stream)
   {
     size_t num_blocks, block_size;
     thrust::tie(num_blocks,block_size) = configure(g);
@@ -274,23 +259,8 @@ struct cuda_launcher<
     {
       task_type task(g, c);
 
-      // XXX this business is pretty expensive
-      //     try to avoid it or speed it up or something
-      if(stream != 0)
-      {
-        cudaEvent_t before_event;
-        throw_on_error(cudaEventCreateWithFlags(&before_event, cudaEventDisableTiming | cudaEventBlockingSync), "cudaEventCreateWithFlags in launcher::go");
-        throw_on_error(cudaStreamWaitEvent(stream, before_event, 0), "cudaStreamWaitEvent in cuda_launcher::go");
-        throw_on_error(cudaEventDestroy(before_event), "cudaEventDestroy in cuda_launcher::go");
-      } // end if
-
-      super_t::launch_task(num_blocks, block_size, 0, stream, task);
+      super_t::launch(num_blocks, block_size, 0, stream, task);
     } // end if
-
-    // XXX this business is pretty expensive
-    //     try to avoid it or speed it up or something
-    // XXX we need to think more carefully about how the events get created here
-    return (stream != 0) ? future_core_access::create_in_stream(stream) : future<void>();
   } // end go()
 
   static thrust::tuple<size_t,size_t> configure(group_type g)

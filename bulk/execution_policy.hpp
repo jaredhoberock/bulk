@@ -1,5 +1,6 @@
 #pragma once
 #include <bulk/detail/config.hpp>
+#include <bulk/future.hpp>
 #include <thrust/detail/type_traits.h>
 #include <thrust/detail/minmax.h> // XXX WAR missing #include in runtime_introspection.h
 #include <thrust/system/cuda/detail/runtime_introspection.h>
@@ -239,9 +240,40 @@ class async_launch
 {
   public:
     __host__ __device__
-    async_launch(Executor exec, cudaStream_t s)
-      : e(exec),s(s)
+    async_launch(Executor exec, cudaStream_t s, cudaEvent_t be = 0)
+      : owns_stream(false),e(exec),s(s),be(be)
     {}
+
+    __host__
+    async_launch(Executor exec, cudaEvent_t be)
+      : owns_stream(true),e(exec),s(0),be(be)
+    {
+      bulk::detail::future_detail::throw_on_error(cudaStreamCreate(&s), "cudaStreamCreate in async_launch ctor");
+    }
+
+    // ensure that copies never destroy the stream
+    // XXX maybe we should make this type move only, or explicitly copy streams 
+    __host__ __device__
+    async_launch(const async_launch &other)
+      : owns_stream(false),e(other.e),s(other.s),be(other.be)
+    {}
+
+    __host__ __device__
+    ~async_launch()
+    {
+#ifndef __CUDA_ARCH__
+      if(owns_stream)
+      {
+        // swallow the error
+        cudaError_t error = cudaStreamDestroy(s);
+
+        if(error)
+        {
+          std::cerr << "CUDA error after cudaStreamDestroy in async_launch dtor: " << cudaGetErrorString(error) << std::endl;
+        }
+      }
+#endif
+    }
 
     __host__ __device__
     Executor exec() const
@@ -255,8 +287,16 @@ class async_launch
       return s;
     }
 
+    __host__ __device__
+    cudaEvent_t before_event() const
+    {
+      return be;
+    }
+
   private:
+    bool owns_stream;
     Executor e;
+    cudaEvent_t be;
     cudaStream_t s;
 };
 
@@ -265,6 +305,14 @@ __host__ __device__
 async_launch<bulk::parallel_group<> > par(cudaStream_t s, size_t num_threads)
 {
   return async_launch<bulk::parallel_group<> >(bulk::parallel_group<>(num_threads), s);
+}
+
+
+async_launch<bulk::parallel_group<> > par(bulk::future<void> &before, size_t num_threads)
+{
+  cudaEvent_t before_event = bulk::detail::future_core_access::event(before);
+
+  return async_launch<bulk::parallel_group<> >(bulk::parallel_group<>(num_threads), before_event);
 }
 
 

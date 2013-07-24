@@ -96,7 +96,9 @@ class future<void>
       detail::future_detail::throw_on_error(cudaEventRecord(m_event, s), "cudaEventRecord in future ctor");
     } // end future()
 
-    static const int create_flags = cudaEventDisableTiming | cudaEventBlockingSync;
+    // XXX this combination makes the constructor expensive
+    //static const int create_flags = cudaEventDisableTiming | cudaEventBlockingSync;
+    static const int create_flags = cudaEventDisableTiming;
 
     cudaEvent_t m_event;
 }; // end future<void>
@@ -112,6 +114,11 @@ struct future_core_access
   {
     return future<void>(s);
   } // end create_in_stream()
+
+  inline static cudaEvent_t event(const future<void> &f)
+  {
+    return f.m_event;
+  } // end event()
 }; // end future_core_access
 
 

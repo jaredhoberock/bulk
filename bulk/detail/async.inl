@@ -2,6 +2,7 @@
 #include <bulk/async.hpp>
 #include <bulk/detail/cuda_launcher.hpp>
 #include <bulk/detail/closure.hpp>
+#include <bulk/detail/throw_on_error.hpp>
 
 
 BULK_NS_PREFIX
@@ -12,18 +13,31 @@ namespace detail
 
 
 template<typename ExecutionGroup, typename Closure>
+future<void> async_in_stream(ExecutionGroup g, Closure c, cudaStream_t s, cudaEvent_t before_event)
+{
+  if(before_event != 0)
+  {
+    throw_on_error(cudaStreamWaitEvent(s, before_event, 0), "cudaStreamWaitEvent in async_in_stream");
+  }
+
+  bulk::detail::cuda_launcher<ExecutionGroup, Closure> launcher;
+  launcher.launch(g, c, s);
+
+  return future_core_access::create_in_stream(s);
+}
+
+
+template<typename ExecutionGroup, typename Closure>
 future<void> async(ExecutionGroup g, Closure c)
 {
-  bulk::detail::cuda_launcher<ExecutionGroup, Closure> launcher;
-  return launcher.go(g, c, 0);
+  return async_in_stream(g, c, 0, 0);
 } // end async()
 
 
 template<typename ExecutionGroup, typename Closure>
 future<void> async(async_launch<ExecutionGroup> launch, Closure c)
 {
-  bulk::detail::cuda_launcher<ExecutionGroup, Closure> launcher;
-  return launcher.go(launch.exec(), c, launch.stream());
+  return async_in_stream(launch.exec(), c, launch.stream(), launch.before_event());
 } // end async()
 
 
