@@ -23,8 +23,26 @@ future<void> async_in_stream(ExecutionGroup g, Closure c, cudaStream_t s, cudaEv
   bulk::detail::cuda_launcher<ExecutionGroup, Closure> launcher;
   launcher.launch(g, c, s);
 
-  return future_core_access::create_in_stream(s);
-}
+  return future_core_access::create(s, false);
+} // end async_in_stream()
+
+
+template<typename ExecutionGroup, typename Closure>
+future<void> async(ExecutionGroup g, Closure c, cudaEvent_t before_event)
+{
+  cudaStream_t s;
+  bulk::detail::throw_on_error(cudaStreamCreate(&s), "cudaStreamCreate in bulk::detail::async");
+
+  if(before_event != 0)
+  {
+    throw_on_error(cudaStreamWaitEvent(s, before_event, 0), "cudaStreamWaitEvent in bulk::detail::async");
+  }
+
+  bulk::detail::cuda_launcher<ExecutionGroup, Closure> launcher;
+  launcher.launch(g, c, s);
+
+  return future_core_access::create(s, true);
+} // end async()
 
 
 template<typename ExecutionGroup, typename Closure>

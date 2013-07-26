@@ -27,23 +27,25 @@ void task3()
 
 int main()
 {
-  cudaStream_t s1, s2;
+  cudaStream_t s1;
   cudaStreamCreate(&s1);
-  cudaStreamCreate(&s2);
 
   using bulk::par;
   using bulk::async;
 
+  // we can insert a task into a stream directly
   bulk::future<void> t1 = async(par(s1, 1), task1());
-  bulk::future<void> t2 = async(par(s2, 1), task2());
 
+  // or we can make a new task depend on a previous future
+  bulk::future<void> t2 = async(par(t1, 1), task2());
+
+  // task3 is independent of both task1 & task2 and executes in this thread
   task3();
 
   t1.wait();
   t2.wait();
 
   cudaStreamDestroy(s1);
-  cudaStreamDestroy(s2);
 
   return 0;
 }
