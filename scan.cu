@@ -1,4 +1,3 @@
-#include <moderngpu.cuh>
 #include <thrust/scan.h>
 #include <thrust/fill.h>
 #include <thrust/device_vector.h>
@@ -157,7 +156,7 @@ void my_scan(thrust::device_vector<T> *data, T init)
 
 
 template<typename T>
-void do_it(size_t n)
+void validate(size_t n)
 {
   thrust::host_vector<T> h_input(n);
   thrust::fill(h_input.begin(), h_input.end(), 1);
@@ -185,32 +184,6 @@ void do_it(size_t n)
 }
 
 
-template<typename InputIterator, typename OutputIterator>
-OutputIterator mgpu_inclusive_scan(InputIterator first, InputIterator last, OutputIterator result)
-{
-  typedef typename thrust::iterator_value<InputIterator>::type T;
-
-  mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
-
-  mgpu::Scan<mgpu::MgpuScanTypeInc>(thrust::raw_pointer_cast(&*first),
-                                    last - first,
-                                    thrust::raw_pointer_cast(&*result),
-                                    mgpu::ScanOp<mgpu::ScanOpTypeAdd,T>(),
-                                    (T*)0,
-                                    false,
-                                    *ctx);
-
-  return result + (last - first);
-}
-
-
-template<typename T>
-void sean_scan(thrust::device_vector<T> *data)
-{
-  mgpu_inclusive_scan(data->begin(), data->end(), data->begin());
-}
-
-
 template<typename T>
 void thrust_scan(thrust::device_vector<T> *data)
 {
@@ -219,12 +192,9 @@ void thrust_scan(thrust::device_vector<T> *data)
 
 
 template<typename T>
-void compare()
+void compare(size_t n = 1 << 28)
 {
-  thrust::device_vector<T> vec(1 << 28);
-
-  sean_scan(&vec);
-  double sean_msecs = time_invocation_cuda(50, sean_scan<T>, &vec);
+  thrust::device_vector<T> vec(n);
 
   thrust_scan(&vec);
   double thrust_msecs = time_invocation_cuda(50, thrust_scan<T>, &vec);
@@ -232,12 +202,11 @@ void compare()
   my_scan(&vec, T(13));
   double my_msecs = time_invocation_cuda(50, my_scan<T>, &vec, 13);
 
-  std::cout << "Sean's time:   " << sean_msecs << " ms" << std::endl;
-  std::cout << "Thrust's time: " << thrust_msecs << " ms" << std::endl;
-  std::cout << "My time:       " << my_msecs << " ms" << std::endl;
-
-  std::cout << "Performance relative to Sean:   " << sean_msecs / my_msecs << std::endl;
-  std::cout << "Performance relative to Thrust: " << thrust_msecs / my_msecs << std::endl;
+  std::cout << "N: " << n << std::endl;
+  std::cout << "  Thrust's time:                  " << thrust_msecs << " ms" << std::endl;
+  std::cout << "  My time:                        " << my_msecs << " ms" << std::endl;
+  std::cout << "  Performance relative to Thrust: " << thrust_msecs / my_msecs << std::endl;
+  std::cout << std::endl;
 }
 
 
@@ -247,7 +216,7 @@ int main()
   for(size_t n = 1; n <= 1 << 20; n <<= 1)
   {
     std::cout << "Testing n = " << n << std::endl;
-    do_it<int>(n);
+    validate<int>(n);
   }
 
   thrust::default_random_engine rng;
@@ -256,14 +225,20 @@ int main()
     size_t n = rng() % (1 << 20);
    
     std::cout << "Testing n = " << n << std::endl;
-    do_it<int>(n);
+    validate<int>(n);
   }
 
   std::cout << "32b int:" << std::endl;
-  compare<int>();
+  for(int i = 0; i < 28; ++i)
+  {
+    compare<int>(1 << i);
+  }
 
   std::cout << "64b float:" << std::endl;
-  compare<double>();
+  for(int i = 0; i < 28; ++i)
+  {
+    compare<double>(1 << i);
+  }
 
   return 0;
 }
