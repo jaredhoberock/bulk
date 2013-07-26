@@ -6,7 +6,7 @@
 struct reduce_intervals_kernel
 {
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Decomposition, typename RandomAccessIterator2, typename BinaryFunction>
-  __device__ void operator()(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &this_group,
+  __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &this_group,
                              RandomAccessIterator1 first,
                              Decomposition decomp,
                              RandomAccessIterator2 result,

@@ -11,10 +11,10 @@ BULK_NS_PREFIX
 namespace bulk
 {
 
-// Executor requirements:
+// ExecutionAgent requirements:
 //
 // template<typename T>
-// concept bool Executor()
+// concept bool ExecutionAgent()
 // {
 //   return requires(T t)
 //   {
@@ -28,13 +28,13 @@ namespace bulk
 // template<typename T>
 // concept bool ExecutionGroup()
 // {
-//   return Executor<T>
+//   return ExecutionAgent<T>
 //       && requires(T g)
 //   {
-//     typename T::executor_type;
-//     Executor<typename T::executor_type>();
+//     typename T::agent_type;
+//     ExecutionAgent<typename T::agent_type>();
 //     {g.size()} -> typename T::size_type;
-//     {g.this_exec} -> typename T::executor_type &
+//     {g.this_exec} -> typename T::agent_type &
 //   }
 // };
 
@@ -43,8 +43,9 @@ static const int invalid_index = INT_MAX;
 
 
 // sequential execution with a grainsize hint and index within a group
+// a light-weight (logical) thread
 template<std::size_t grainsize_ = 1>
-class sequential_executor
+class agent
 {
   public:
     typedef int size_type;
@@ -52,7 +53,7 @@ class sequential_executor
     static const size_type static_grainsize = grainsize_;
 
     __host__ __device__
-    sequential_executor(size_type i = invalid_index)
+    agent(size_type i = invalid_index)
       : m_index(i)
     {}
 
@@ -84,18 +85,18 @@ namespace group_detail
 {
 
 
-template<typename Executor, std::size_t size_>
+template<typename ExecutionAgent, std::size_t size_>
 class group_base
 {
   public:
-    typedef Executor executor_type;
+    typedef ExecutionAgent agent_type;
 
     typedef int size_type;
 
     static const size_type static_size = size_;
 
     __host__ __device__
-    group_base(executor_type exec = executor_type(), size_type i = invalid_index)
+    group_base(agent_type exec = agent_type(), size_type i = invalid_index)
       : this_exec(exec),
         m_index(i)
     {}
@@ -118,23 +119,23 @@ class group_base
       return index() * size() + this_exec.index();
     }
 
-    executor_type this_exec;
+    agent_type this_exec;
 
   private:
     const size_type m_index;
 };
 
 
-template<typename Executor>
-class group_base<Executor,dynamic_group_size>
+template<typename ExecutionAgent>
+class group_base<ExecutionAgent,dynamic_group_size>
 {
   public:
-    typedef Executor executor_type;
+    typedef ExecutionAgent agent_type;
 
     typedef int size_type;
 
     __host__ __device__
-    group_base(size_type sz = use_default, executor_type exec = executor_type(), size_type i = invalid_index)
+    group_base(size_type sz = use_default, agent_type exec = agent_type(), size_type i = invalid_index)
       : this_exec(exec),
         m_size(sz),
         m_index(i)
@@ -158,7 +159,7 @@ class group_base<Executor,dynamic_group_size>
       return index() * size() + this_exec.index();
     }
 
-    executor_type this_exec;
+    agent_type this_exec;
 
   private:
     const size_type m_size;
@@ -170,55 +171,55 @@ class group_base<Executor,dynamic_group_size>
 } // end detail
 
 
-// a group of independent Executors
-template<typename Executor = sequential_executor<>,
+// a group of independent ExecutionAgents
+template<typename ExecutionAgent = agent<>,
          std::size_t size_ = dynamic_group_size>
 class parallel_group
-  : public detail::group_detail::group_base<Executor,size_>
+  : public detail::group_detail::group_base<ExecutionAgent,size_>
 {
   private:
     typedef detail::group_detail::group_base<
-      Executor,
+      ExecutionAgent,
       size_
     > super_t;
 
   public:
-    typedef typename super_t::executor_type executor_type;
+    typedef typename super_t::agent_type agent_type;
 
-    typedef typename super_t::size_type     size_type;
+    typedef typename super_t::size_type  size_type;
 
     // XXX the constructor taking an index should be made private
     __host__ __device__
-    parallel_group(executor_type exec = executor_type(), size_type i = invalid_index)
+    parallel_group(agent_type exec = agent_type(), size_type i = invalid_index)
       : super_t(exec,i)
     {}
 };
 
 
-template<typename Executor>
-class parallel_group<Executor,dynamic_group_size>
-  : public detail::group_detail::group_base<Executor,dynamic_group_size>
+template<typename ExecutionAgent>
+class parallel_group<ExecutionAgent,dynamic_group_size>
+  : public detail::group_detail::group_base<ExecutionAgent,dynamic_group_size>
 {
   private:
     typedef detail::group_detail::group_base<
-      Executor,
+      ExecutionAgent,
       dynamic_group_size
     > super_t;
 
   public:
-    typedef typename super_t::executor_type executor_type;
+    typedef typename super_t::agent_type agent_type;
 
-    typedef typename super_t::size_type     size_type;
+    typedef typename super_t::size_type  size_type;
 
     // XXX the constructor taking an index should be made private
     __host__ __device__
-    parallel_group(size_type size = use_default, executor_type exec = executor_type(), size_type i = invalid_index)
+    parallel_group(size_type size = use_default, agent_type exec = agent_type(), size_type i = invalid_index)
       : super_t(size,exec,i)
     {}
 };
 
 
-// shorthand for creating a parallel_group of sequential_executors
+// shorthand for creating a parallel_group of agents
 inline __host__ __device__
 parallel_group<> par(size_t size)
 {
@@ -226,31 +227,31 @@ parallel_group<> par(size_t size)
 }
 
 
-// shorthand for creating a parallel_group of Executors
-template<typename Executor>
+// shorthand for creating a parallel_group of ExecutionAgents
+template<typename ExecutionAgent>
 __host__ __device__
-parallel_group<Executor> par(Executor exec, size_t size)
+parallel_group<ExecutionAgent> par(ExecutionAgent exec, size_t size)
 {
-  return parallel_group<Executor>(size, exec);
+  return parallel_group<ExecutionAgent>(size, exec);
 }
 
 
-template<typename Executor>
+template<typename ExecutionAgent>
 class async_launch
 {
   public:
     __host__ __device__
-    async_launch(Executor exec, cudaStream_t s, cudaEvent_t be = 0)
+    async_launch(ExecutionAgent exec, cudaStream_t s, cudaEvent_t be = 0)
       : stream_valid(true),e(exec),s(s),be(be)
     {}
 
     __host__
-    async_launch(Executor exec, cudaEvent_t be)
+    async_launch(ExecutionAgent exec, cudaEvent_t be)
       : stream_valid(false),e(exec),s(0),be(be)
     {}
 
     __host__ __device__
-    Executor exec() const
+    ExecutionAgent exec() const
     {
       return e;
     }
@@ -275,7 +276,7 @@ class async_launch
 
   private:
     bool stream_valid;
-    Executor e;
+    ExecutionAgent e;
     cudaEvent_t be;
     cudaStream_t s;
 };
@@ -296,25 +297,25 @@ async_launch<bulk::parallel_group<> > par(bulk::future<void> &before, size_t num
 }
 
 
-// a group of concurrent Executors which may synchronize
-template<typename Executor      = sequential_executor<>,
+// a group of concurrent ExecutionAgents which may synchronize
+template<typename ExecutionAgent      = agent<>,
          std::size_t size_      = dynamic_group_size>
 class concurrent_group
-  : public parallel_group<Executor,size_>
+  : public parallel_group<ExecutionAgent,size_>
 {
   private:
     typedef parallel_group<
-      Executor,
+      ExecutionAgent,
       size_
     > super_t;
 
   public:
-    typedef typename super_t::executor_type executor_type;
-    typedef typename super_t::size_type     size_type;
+    typedef typename super_t::agent_type agent_type;
+    typedef typename super_t::size_type  size_type;
 
     // XXX the constructor taking an index should be made private
     __host__ __device__
-    concurrent_group(size_type heap_size = use_default, executor_type exec = executor_type(), size_type i = invalid_index)
+    concurrent_group(size_type heap_size = use_default, agent_type exec = agent_type(), size_type i = invalid_index)
       : super_t(exec,i),
         m_heap_size(heap_size)
     {}
@@ -342,26 +343,26 @@ class concurrent_group
 };
 
 
-template<typename Executor>
-class concurrent_group<Executor,dynamic_group_size>
-  : public parallel_group<Executor,dynamic_group_size>
+template<typename ExecutionAgent>
+class concurrent_group<ExecutionAgent,dynamic_group_size>
+  : public parallel_group<ExecutionAgent,dynamic_group_size>
 {
   private:
     typedef parallel_group<
-      Executor,
+      ExecutionAgent,
       dynamic_group_size
     > super_t;
 
   public:
-    typedef typename super_t::executor_type executor_type;
+    typedef typename super_t::agent_type agent_type;
 
-    typedef typename super_t::size_type     size_type;
+    typedef typename super_t::size_type  size_type;
 
     // XXX the constructor taking an index should be made private
     __host__ __device__
     concurrent_group(size_type size = use_default,
                      size_type heap_size = use_default,
-                     executor_type exec = executor_type(),
+                     agent_type exec = agent_type(),
                      size_type i = invalid_index)
       : super_t(size,exec,i),
         m_heap_size(heap_size)
@@ -390,7 +391,7 @@ class concurrent_group<Executor,dynamic_group_size>
 };
 
 
-// shorthand for creating a concurrent_group of sequential_executors
+// shorthand for creating a concurrent_group of agents
 inline __host__ __device__
 concurrent_group<> con(size_t size, size_t heap_size = use_default)
 {
@@ -398,32 +399,32 @@ concurrent_group<> con(size_t size, size_t heap_size = use_default)
 }
 
 
-// shorthand for creating a concurrent_group of Executors
-template<typename Executor>
+// shorthand for creating a concurrent_group of ExecutionAgents
+template<typename ExecutionAgent>
 __host__ __device__
-concurrent_group<Executor> con(Executor exec, size_t size, size_t heap_size = use_default)
+concurrent_group<ExecutionAgent> con(ExecutionAgent exec, size_t size, size_t heap_size = use_default)
 {
-  return concurrent_group<Executor>(size,heap_size,exec);
+  return concurrent_group<ExecutionAgent>(size,heap_size,exec);
 }
 
 
-// shorthand for creating a concurrent_group of sequential_executors with static sizing
+// shorthand for creating a concurrent_group of agents with static sizing
 template<std::size_t groupsize, std::size_t grainsize>
 __host__ __device__
-concurrent_group<bulk::sequential_executor<grainsize>,groupsize>
+concurrent_group<bulk::agent<grainsize>,groupsize>
 con(size_t heap_size)
 {
-  return concurrent_group<bulk::sequential_executor<grainsize>,groupsize>(heap_size);
+  return concurrent_group<bulk::agent<grainsize>,groupsize>(heap_size);
 }
 
 
-// a way to statically bound the size of an Executor's work
-template<std::size_t bound_, typename Executor>
-class bounded_executor
-  : public Executor
+// a way to statically bound the size of an ExecutionAgent's work
+template<std::size_t bound_, typename ExecutionAgent>
+class bounded_agent
+  : public ExecutionAgent
 {
   public:
-    typedef typename Executor::size_type size_type;
+    typedef typename ExecutionAgent::size_type size_type;
 
     static const size_type static_bound = bound_;
 
@@ -435,14 +436,14 @@ class bounded_executor
 
 
     __host__ __device__
-    Executor &unbound()
+    ExecutionAgent &unbound()
     {
       return *this;
     }
 
 
     __host__ __device__
-    const Executor &unbound() const
+    const ExecutionAgent &unbound() const
     {
       return *this;
     }
@@ -450,25 +451,25 @@ class bounded_executor
 
   private:
     // XXX delete these unless we find a need for them
-    bounded_executor();
+    bounded_agent();
 
-    bounded_executor(const bounded_executor &);
+    bounded_agent(const bounded_agent &);
 };
 
 
-template<std::size_t bound_, typename Executor>
+template<std::size_t bound_, typename ExecutionAgent>
 __host__ __device__
-bounded_executor<bound_, Executor> &bound(Executor &exec)
+bounded_agent<bound_, ExecutionAgent> &bound(ExecutionAgent &exec)
 {
-  return static_cast<bounded_executor<bound_, Executor>&>(exec);
+  return static_cast<bounded_agent<bound_, ExecutionAgent>&>(exec);
 }
 
 
-template<std::size_t bound_, typename Executor>
+template<std::size_t bound_, typename ExecutionAgent>
 __host__ __device__
-const bounded_executor<bound_, Executor> &bound(const Executor &exec)
+const bounded_agent<bound_, ExecutionAgent> &bound(const ExecutionAgent &exec)
 {
-  return static_cast<const bounded_executor<bound_, Executor>&>(exec);
+  return static_cast<const bounded_agent<bound_, ExecutionAgent>&>(exec);
 }
 
 
@@ -476,28 +477,28 @@ namespace detail
 {
 
 
-template<unsigned int depth, typename Executor>
-struct executor_at_depth
+template<unsigned int depth, typename ExecutionAgent>
+struct agent_at_depth
 {
-  typedef typename executor_at_depth<
-    depth-1,Executor
-  >::type parent_executor_type;
+  typedef typename agent_at_depth<
+    depth-1,ExecutionAgent
+  >::type parent_agent_type;
 
-  typedef typename parent_executor_type::executor_type type;
+  typedef typename parent_agent_type::agent_type type;
 };
 
 
-template<typename Executor>
-struct executor_at_depth<0,Executor>
+template<typename ExecutionAgent>
+struct agent_at_depth<0,ExecutionAgent>
 {
-  typedef Executor type;
+  typedef ExecutionAgent type;
 };
 
 
 template<typename Cursor, typename ExecutionGroup>
 struct cursor_result
 {
-  typedef typename executor_at_depth<Cursor::depth,ExecutionGroup>::type & type;
+  typedef typename agent_at_depth<Cursor::depth,ExecutionGroup>::type & type;
 };
 
 
@@ -548,9 +549,9 @@ template<> struct cursor<0>
   cursor<1> this_exec;
 
   // the root level cursor simply returns the root
-  template<typename Executor>
+  template<typename ExecutionAgent>
   static __host__ __device__
-  Executor &get(Executor &root)
+  ExecutionAgent &get(ExecutionAgent &root)
   {
     return root;
   }
@@ -572,7 +573,7 @@ struct is_cursor<cursor<d> >
 static const detail::cursor<0> root;
 
 
-// shorthand for creating a parallel group of concurrent groups of sequential_executors
+// shorthand for creating a parallel group of concurrent groups of agents
 inline __host__ __device__
 parallel_group<concurrent_group<> > grid(size_t num_groups, size_t group_size, size_t heap_size = use_default)
 {
@@ -584,7 +585,7 @@ template<std::size_t groupsize, std::size_t grainsize>
 __host__ __device__
 parallel_group<
   concurrent_group<
-    bulk::sequential_executor<grainsize>,
+    bulk::agent<grainsize>,
     groupsize
   >
 >

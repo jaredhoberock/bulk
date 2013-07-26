@@ -96,7 +96,7 @@ class task_base
 template<std::size_t blocksize, std::size_t grainsize>
 struct cuda_block
 {
-  typedef concurrent_group<sequential_executor<grainsize>, blocksize> type;
+  typedef concurrent_group<agent<grainsize>, blocksize> type;
 };
 
 
@@ -117,7 +117,7 @@ struct grid_maker
 {
   __host__ __device__
   static Grid make(typename Grid::size_type     size,
-                   typename Grid::executor_type block,
+                   typename Grid::agent_type    block,
                    typename Grid::size_type     index)
   {
     return Grid(block, index);
@@ -144,8 +144,8 @@ struct block_maker
   __host__ __device__
   static Block make(typename Block::size_type     size,
                     typename Block::size_type     heap_size,
-                    typename Block::executor_type thread,
-                    typename Block::size_type index)
+                    typename Block::agent_type    thread,
+                    typename Block::size_type     index)
   {
     return Block(heap_size, thread, index);
   }
@@ -167,7 +167,7 @@ struct block_maker<concurrent_group<Thread,dynamic_group_size> >
 
 template<typename Grid>
 __host__ __device__
-Grid make_grid(typename Grid::size_type size, typename Grid::executor_type block, typename Grid::size_type index = invalid_index)
+Grid make_grid(typename Grid::size_type size, typename Grid::agent_type block, typename Grid::size_type index = invalid_index)
 {
   return grid_maker<Grid>::make(size, block, index);
 }
@@ -175,7 +175,7 @@ Grid make_grid(typename Grid::size_type size, typename Grid::executor_type block
 
 template<typename Block>
 __host__ __device__
-Block make_block(typename Block::size_type size, typename Block::size_type heap_size, typename Block::executor_type thread = typename Block::executor_type(), typename Block::size_type index = invalid_index)
+Block make_block(typename Block::size_type size, typename Block::size_type heap_size, typename Block::agent_type thread = typename Block::agent_type(), typename Block::size_type index = invalid_index)
 {
   return block_maker<Block>::make(size, heap_size, thread, index);
 }
@@ -186,7 +186,7 @@ template<std::size_t gridsize, std::size_t blocksize, std::size_t grainsize, typ
 class cuda_task<
   parallel_group<
     concurrent_group<
-      sequential_executor<grainsize>,
+      agent<grainsize>,
       blocksize
     >,
     gridsize
@@ -198,10 +198,10 @@ class cuda_task<
     typedef task_base<typename cuda_grid<gridsize,blocksize,grainsize>::type,Closure> super_t;
 
   public:
-    typedef typename super_t::group_type       grid_type;
-    typedef typename grid_type::executor_type  block_type;
-    typedef typename block_type::executor_type thread_type;
-    typedef typename super_t::closure_type     closure_type;
+    typedef typename super_t::group_type    grid_type;
+    typedef typename grid_type::agent_type  block_type;
+    typedef typename block_type::agent_type thread_type;
+    typedef typename super_t::closure_type  closure_type;
 
     __host__ __device__
     cuda_task(grid_type g, closure_type c)
@@ -240,11 +240,11 @@ class cuda_task<
 
 // specialize cuda_task for a single big parallel group
 template<std::size_t groupsize, std::size_t grainsize, typename Closure>
-class cuda_task<parallel_group<sequential_executor<grainsize>,groupsize>,Closure>
-  : public task_base<parallel_group<sequential_executor<grainsize>,groupsize>,Closure>
+class cuda_task<parallel_group<agent<grainsize>,groupsize>,Closure>
+  : public task_base<parallel_group<agent<grainsize>,groupsize>,Closure>
 {
   private:
-    typedef task_base<parallel_group<sequential_executor<grainsize>,groupsize>,Closure> super_t;
+    typedef task_base<parallel_group<agent<grainsize>,groupsize>,Closure> super_t;
 
   public:
     typedef typename super_t::closure_type closure_type;
@@ -267,9 +267,9 @@ class cuda_task<parallel_group<sequential_executor<grainsize>,groupsize>,Closure
         if(tid < super_t::g.size())
         {
           // instantiate a view of the exec group
-          parallel_group<sequential_executor<grainsize>,groupsize> this_group(
+          parallel_group<agent<grainsize>,groupsize> this_group(
             1,
-            sequential_executor<grainsize>(tid),
+            agent<grainsize>(tid),
             0
           );
 

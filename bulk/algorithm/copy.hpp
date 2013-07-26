@@ -18,12 +18,12 @@ template<std::size_t bound,
          typename Size,
          typename RandomAccessIterator2>
 __forceinline__ __device__
-RandomAccessIterator2 copy_n(const bounded_executor<bound,sequential_executor<grainsize> > &b,
+RandomAccessIterator2 copy_n(const bounded_agent<bound,agent<grainsize> > &b,
                              RandomAccessIterator1 first,
                              Size n,
                              RandomAccessIterator2 result)
 {
-  typedef typename bounded_executor<bound,sequential_executor<grainsize> >::size_type size_type;
+  typedef typename bounded_agent<bound,agent<grainsize> >::size_type size_type;
 
   #pragma unroll
   for(size_type i = 0; i < b.bound(); ++i)
@@ -71,14 +71,14 @@ template<std::size_t size,
          typename RandomAccessIterator2>
 __forceinline__ __device__
 RandomAccessIterator2 simple_copy_n(bulk::concurrent_group<
-                                      sequential_executor<grainsize>,
+                                      agent<grainsize>,
                                       size
                                     > &g,
                                     RandomAccessIterator1 first, Size n,
                                     RandomAccessIterator2 result)
 {
   typedef bulk::concurrent_group<
-    sequential_executor<grainsize>,
+    agent<grainsize>,
     size
   > group_type;
 
@@ -144,7 +144,7 @@ template<std::size_t size,
          typename RandomAccessIterator2>
 __forceinline__ __device__
 RandomAccessIterator2 copy_n(concurrent_group<
-                               sequential_executor<grainsize>,
+                               agent<grainsize>,
                                size
                              > &g,
                              RandomAccessIterator1 first,
@@ -177,10 +177,10 @@ typename thrust::detail::enable_if<
   (bound <= groupsize * grainsize),
   RandomAccessIterator2 
 >::type
-copy_n(bulk::bounded_executor<
+copy_n(bulk::bounded_agent<
          bound,
          concurrent_group<
-           sequential_executor<grainsize>,
+           agent<grainsize>,
            groupsize
          >
        > &g,
@@ -188,10 +188,10 @@ copy_n(bulk::bounded_executor<
        Size n,
        RandomAccessIterator2 result)
 {
-  typedef bounded_executor<
+  typedef bounded_agent<
     bound,
     concurrent_group<
-      sequential_executor<grainsize>,
+      agent<grainsize>,
       groupsize
     >
   > group_type;

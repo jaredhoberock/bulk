@@ -1,7 +1,7 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
-#include <bulk/sequential_executor.hpp>
+#include <bulk/execution_policy.hpp>
 
 
 BULK_NS_PREFIX
@@ -9,12 +9,12 @@ namespace bulk
 {
 
 
-template<typename ThreadGroup,
+template<typename ExecutionGroup,
          typename RandomAccessIterator,
          typename Size,
          typename Function>
 __device__
-RandomAccessIterator for_each_n(ThreadGroup &g, RandomAccessIterator first, Size n, Function f)
+RandomAccessIterator for_each_n(ExecutionGroup &g, RandomAccessIterator first, Size n, Function f)
 {
   for(Size i = g.this_thread.index();
       i < n;
@@ -30,16 +30,17 @@ RandomAccessIterator for_each_n(ThreadGroup &g, RandomAccessIterator first, Size
 
 
 template<std::size_t bound,
+         std::size_t grainsize,
          typename RandomAccessIterator,
          typename Size,
          typename Function>
 __device__
-RandomAccessIterator for_each_n(bounded_executor<bound> &b,
+RandomAccessIterator for_each_n(bounded_agent<bound, bulk::agent<grainsize> > &b,
                                 RandomAccessIterator first,
                                 Size n,
                                 Function f)
 {
-  typedef typename bounded_executor<bound>::size_type size_type;
+  typedef typename bounded_agent<bound, bulk::agent<grainsize> >::size_type size_type;
 
   for(size_type i = 0; i < bound; ++i)
   {

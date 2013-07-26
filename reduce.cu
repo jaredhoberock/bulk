@@ -73,7 +73,7 @@ T my_reduce(RandomAccessIterator first, RandomAccessIterator last, T init, Binar
   const size_type subscription = 10;
 
   bulk::concurrent_group<
-    bulk::sequential_executor<grainsize>,
+    bulk::agent<grainsize>,
     groupsize
   > g;
 

@@ -14,7 +14,7 @@ template<std::size_t grainsize,
          typename T,
          typename BinaryOperation>
 __device__
-RandomAccessIterator2 adjacent_difference(bulk::sequential_executor<grainsize> &exec,
+RandomAccessIterator2 adjacent_difference(bulk::agent<grainsize> &exec,
                                           RandomAccessIterator1 first, RandomAccessIterator1 last,
                                           RandomAccessIterator2 result,
                                           T init,
@@ -38,7 +38,7 @@ template<std::size_t groupsize,
          typename T,
          typename BinaryOperation>
 __device__
-RandomAccessIterator2 adjacent_difference(bulk::concurrent_group<bulk::sequential_executor<grainsize_>,groupsize> &g,
+RandomAccessIterator2 adjacent_difference(bulk::concurrent_group<bulk::agent<grainsize_>,groupsize> &g,
                                           RandomAccessIterator1 first, RandomAccessIterator1 last,
                                           RandomAccessIterator2 result,
                                           T init,
@@ -48,7 +48,7 @@ RandomAccessIterator2 adjacent_difference(bulk::concurrent_group<bulk::sequentia
   //     when the input and output do not overlap, we can avoid the need for next_init
   //     and the barriers
   
-  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize_>,groupsize>::size_type size_type;
+  typedef typename bulk::concurrent_group<bulk::agent<grainsize_>,groupsize>::size_type size_type;
 
   RandomAccessIterator2 return_me = result + (last - first);
 
@@ -97,7 +97,7 @@ template<std::size_t groupsize,
          typename RandomAccessIterator2,
          typename BinaryOperation>
 __device__
-RandomAccessIterator2 adjacent_difference(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
+RandomAccessIterator2 adjacent_difference(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
                                           RandomAccessIterator1 first, RandomAccessIterator1 last,
                                           RandomAccessIterator2 result,
                                           BinaryOperation binary_op)

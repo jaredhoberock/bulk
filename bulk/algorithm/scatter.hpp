@@ -15,7 +15,7 @@ template<std::size_t bound,
          typename RandomAccessIterator3,
          typename RandomAccessIterator4>
 __forceinline__ __device__
-void scatter_if(const bounded_executor<bound,sequential_executor<grainsize> > &exec,
+void scatter_if(const bounded_agent<bound,agent<grainsize> > &exec,
                 RandomAccessIterator1 first,
                 RandomAccessIterator1 last,
                 RandomAccessIterator2 map,
@@ -47,9 +47,9 @@ __device__
 typename thrust::detail::enable_if<
   bound <= groupsize * grainsize
 >::type
-scatter_if(bulk::bounded_executor<
+scatter_if(bulk::bounded_agent<
              bound,
-             bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>
+             bulk::concurrent_group<bulk::agent<grainsize>,groupsize>
            > &g,
            RandomAccessIterator1 first,
            RandomAccessIterator1 last,
@@ -57,12 +57,12 @@ scatter_if(bulk::bounded_executor<
            RandomAccessIterator3 stencil,
            RandomAccessIterator4 result)
 {
-  typedef typename bulk::bounded_executor<
+  typedef typename bulk::bounded_agent<
     bound,
-    bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>
+    bulk::concurrent_group<bulk::agent<grainsize>,groupsize>
   >::size_type size_type;
 
-  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::executor_type executor_type;
+  typedef typename bulk::concurrent_group<bulk::agent<grainsize>,groupsize>::agent_type agent_type;
 
   size_type n = last - first;
 
@@ -105,14 +105,14 @@ template<std::size_t groupsize,
          typename RandomAccessIterator3,
          typename RandomAccessIterator4>
 __device__
-void scatter_if(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
+void scatter_if(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
                 RandomAccessIterator1 first,
                 RandomAccessIterator1 last,
                 RandomAccessIterator2 map,
                 RandomAccessIterator3 stencil,
                 RandomAccessIterator4 result)
 {
-  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
+  typedef typename bulk::concurrent_group<bulk::agent<grainsize>,groupsize>::size_type size_type;
 
   size_type chunk_size = g.size() * grainsize;
 

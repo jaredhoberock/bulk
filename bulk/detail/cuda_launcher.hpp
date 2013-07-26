@@ -191,7 +191,7 @@ template<std::size_t gridsize, std::size_t blocksize, std::size_t grainsize, typ
 struct cuda_launcher<
   parallel_group<
     concurrent_group<
-      sequential_executor<grainsize>,
+      agent<grainsize>,
       blocksize
     >,
     gridsize
@@ -203,8 +203,8 @@ struct cuda_launcher<
   typedef cuda_launcher_base<typename cuda_grid<gridsize,blocksize,grainsize>::type,Closure> super_t;
 
   typedef typename cuda_grid<gridsize,blocksize,grainsize>::type grid_type;
-  typedef typename grid_type::executor_type                      block_type;
-  typedef typename block_type::executor_type                     thread_type;
+  typedef typename grid_type::agent_type                         block_type;
+  typedef typename block_type::agent_type                        thread_type;
 
   typedef typename super_t::task_type task_type;
 
@@ -238,17 +238,17 @@ struct cuda_launcher<
 template<std::size_t groupsize, std::size_t grainsize, typename Closure>
 struct cuda_launcher<
   parallel_group<
-    sequential_executor<grainsize>,
+    agent<grainsize>,
     groupsize
   >,
   Closure
 >
-  : public cuda_launcher_base<parallel_group<sequential_executor<grainsize>,groupsize>,Closure>
+  : public cuda_launcher_base<parallel_group<agent<grainsize>,groupsize>,Closure>
 {
-  typedef cuda_launcher_base<parallel_group<sequential_executor<grainsize>,groupsize>,Closure> super_t;
+  typedef cuda_launcher_base<parallel_group<agent<grainsize>,groupsize>,Closure> super_t;
   typedef typename super_t::task_type task_type;
 
-  typedef parallel_group<sequential_executor<grainsize>,groupsize> group_type;
+  typedef parallel_group<agent<grainsize>,groupsize> group_type;
 
   void launch(group_type g, Closure c, cudaStream_t stream)
   {

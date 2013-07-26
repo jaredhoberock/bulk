@@ -17,13 +17,13 @@ template<std::size_t bound,
          typename T,
          typename BinaryFunction>
 __forceinline__ __device__
-T accumulate(const bounded_executor<bound,bulk::sequential_executor<grainsize> > &exec,
+T accumulate(const bounded_agent<bound,bulk::agent<grainsize> > &exec,
              RandomAccessIterator first,
              RandomAccessIterator last,
              T init,
              BinaryFunction binary_op)
 {
-  typedef typename bounded_executor<bound,bulk::sequential_executor<grainsize> >::size_type size_type;
+  typedef typename bounded_agent<bound,bulk::agent<grainsize> >::size_type size_type;
   typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
 
   size_type n = last - first;
@@ -62,7 +62,7 @@ struct buffer
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-T accumulate(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
+T accumulate(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
              RandomAccessIterator first,
              RandomAccessIterator last,
              T init,
@@ -70,7 +70,7 @@ T accumulate(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsi
 {
   typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
 
-  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
+  typedef typename bulk::concurrent_group<bulk::agent<grainsize>,groupsize>::size_type size_type;
 
   const size_type elements_per_group = groupsize * grainsize;
 
@@ -143,7 +143,7 @@ T accumulate(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsi
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-T accumulate(bulk::concurrent_group<bulk::sequential_executor<grainsize>, groupsize> &g,
+T accumulate(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g,
              RandomAccessIterator first,
              RandomAccessIterator last,
              T init,

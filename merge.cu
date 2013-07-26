@@ -12,7 +12,7 @@
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size,typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __device__
 RandomAccessIterator4
-  staged_merge(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &exec,
+  staged_merge(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &exec,
                RandomAccessIterator1 first1, Size n1,
                RandomAccessIterator2 first2, Size n2,
                RandomAccessIterator3 stage,
@@ -40,7 +40,7 @@ struct merge_kernel
 {
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename Size, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
   __device__
-  void operator()(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
+  void operator()(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
                   RandomAccessIterator1 first1, Size n1,
                   RandomAccessIterator2 first2, Size n2,
                   RandomAccessIterator3 merge_paths_first,
@@ -158,7 +158,7 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
 
   // merge partitions
   size_type heap_size = tile_size * sizeof(value_type);
-  bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> g(heap_size);
+  bulk::concurrent_group<bulk::agent<grainsize>,groupsize> g(heap_size);
   bulk::async(bulk::par(g, num_groups), merge_kernel(), bulk::root.this_exec, first1, last1 - first1, first2, last2 - first2, merge_paths.begin(), result, comp);
 
   return result + n;

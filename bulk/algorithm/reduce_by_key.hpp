@@ -68,7 +68,7 @@ thrust::tuple<
   typename thrust::iterator_value<OutputIterator2>::type
 >
 __device__
-reduce_by_key(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
+reduce_by_key(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
               InputIterator1 keys_first, InputIterator1 keys_last,
               InputIterator2 values_first,
               OutputIterator1 keys_result,
@@ -81,7 +81,7 @@ reduce_by_key(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groups
   typedef typename thrust::iterator_value<InputIterator1>::type key_type;
   typedef typename thrust::iterator_value<InputIterator2>::type value_type; // XXX this should be the type returned by BinaryFunction
 
-  typedef typename bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize>::size_type size_type;
+  typedef typename bulk::concurrent_group<bulk::agent<grainsize>,groupsize>::size_type size_type;
 
   const size_type interval_size = groupsize * grainsize;
 

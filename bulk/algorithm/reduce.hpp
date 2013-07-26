@@ -58,7 +58,7 @@ __device__ T destructive_reduce_n(ConcurrentGroup &g, RandomAccessIterator first
 
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T, typename BinaryFunction>
 __device__
-T reduce(bulk::concurrent_group<bulk::sequential_executor<grainsize>,groupsize> &g,
+T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
          RandomAccessIterator first,
          RandomAccessIterator last,
          T init,
@@ -154,8 +154,8 @@ T reduce(bulk::concurrent_group<> &g,
   typedef int size_type;
 
   const size_type groupsize = g.size();
-  typedef typename bulk::concurrent_group<>::executor_type executor_type;
-  const size_type grainsize = executor_type::static_grainsize;
+  typedef typename bulk::concurrent_group<>::agent_type agent_type;
+  const size_type grainsize = agent_type::static_grainsize;
   const size_type elements_per_group = groupsize * grainsize;
 
   size_type tid = g.this_exec.index();
