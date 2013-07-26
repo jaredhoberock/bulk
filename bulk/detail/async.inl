@@ -55,7 +55,9 @@ future<void> async(ExecutionGroup g, Closure c)
 template<typename ExecutionGroup, typename Closure>
 future<void> async(async_launch<ExecutionGroup> launch, Closure c)
 {
-  return async_in_stream(launch.exec(), c, launch.stream(), launch.before_event());
+  return launch.is_stream_valid() ?
+    async_in_stream(launch.exec(), c, launch.stream(), launch.before_event()) :
+    async(launch.exec(), c, launch.before_event());
 } // end async()
 
 

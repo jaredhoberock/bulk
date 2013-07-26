@@ -241,39 +241,13 @@ class async_launch
   public:
     __host__ __device__
     async_launch(Executor exec, cudaStream_t s, cudaEvent_t be = 0)
-      : owns_stream(false),e(exec),s(s),be(be)
+      : stream_valid(true),e(exec),s(s),be(be)
     {}
 
     __host__
     async_launch(Executor exec, cudaEvent_t be)
-      : owns_stream(true),e(exec),s(0),be(be)
-    {
-      bulk::detail::future_detail::throw_on_error(cudaStreamCreate(&s), "cudaStreamCreate in async_launch ctor");
-    }
-
-    // ensure that copies never destroy the stream
-    // XXX maybe we should make this type move only, or explicitly copy streams 
-    __host__ __device__
-    async_launch(const async_launch &other)
-      : owns_stream(false),e(other.e),s(other.s),be(other.be)
+      : stream_valid(false),e(exec),s(0),be(be)
     {}
-
-    __host__ __device__
-    ~async_launch()
-    {
-#ifndef __CUDA_ARCH__
-      if(owns_stream)
-      {
-        // swallow the error
-        cudaError_t error = cudaStreamDestroy(s);
-
-        if(error)
-        {
-          std::cerr << "CUDA error after cudaStreamDestroy in async_launch dtor: " << cudaGetErrorString(error) << std::endl;
-        }
-      }
-#endif
-    }
 
     __host__ __device__
     Executor exec() const
@@ -293,8 +267,14 @@ class async_launch
       return be;
     }
 
+    __host__ __device__
+    bool is_stream_valid() const
+    {
+      return stream_valid;
+    }
+
   private:
-    bool owns_stream;
+    bool stream_valid;
     Executor e;
     cudaEvent_t be;
     cudaStream_t s;
