@@ -70,7 +70,18 @@ class future<void>
 
     void wait() const
     {
+      // XXX need to capture the error as an exception and then throw it in .get()
       detail::future_detail::throw_on_error(cudaEventSynchronize(m_event), "cudaEventSynchronize in future::wait");
+
+      // XXX upon c++11
+      //cudaError_t status = cudaEventQuery(m_event);
+      //while(status == cudaErrorNotReady)
+      //{
+      //  // sleep
+      //  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      //} // end while
+
+      //detail::future_detail::throw_on_error(status, "cudaEventQuery in future::wait");
     } // end wait()
 
     bool valid() const
@@ -132,11 +143,6 @@ struct future_core_access
   {
     return future<void>(s, owns_stream);
   } // end create_in_stream()
-
-  inline static cudaStream_t stream(const future<void> &f)
-  {
-    return f.m_stream;
-  }
 
   inline static cudaEvent_t event(const future<void> &f)
   {
