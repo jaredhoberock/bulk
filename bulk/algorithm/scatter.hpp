@@ -15,7 +15,7 @@ template<std::size_t bound,
          typename RandomAccessIterator3,
          typename RandomAccessIterator4>
 __forceinline__ __device__
-void scatter_if(const bounded_agent<bound,agent<grainsize> > &exec,
+void scatter_if(const bounded<bound,agent<grainsize> > &exec,
                 RandomAccessIterator1 first,
                 RandomAccessIterator1 last,
                 RandomAccessIterator2 map,
@@ -47,7 +47,7 @@ __device__
 typename thrust::detail::enable_if<
   bound <= groupsize * grainsize
 >::type
-scatter_if(bulk::bounded_agent<
+scatter_if(bulk::bounded<
              bound,
              bulk::concurrent_group<bulk::agent<grainsize>,groupsize>
            > &g,
@@ -57,7 +57,7 @@ scatter_if(bulk::bounded_agent<
            RandomAccessIterator3 stencil,
            RandomAccessIterator4 result)
 {
-  typedef typename bulk::bounded_agent<
+  typedef typename bulk::bounded<
     bound,
     bulk::concurrent_group<bulk::agent<grainsize>,groupsize>
   >::size_type size_type;

@@ -17,13 +17,13 @@ template<std::size_t bound,
          typename T,
          typename BinaryFunction>
 __forceinline__ __device__
-T accumulate(const bounded_agent<bound,bulk::agent<grainsize> > &exec,
+T accumulate(const bounded<bound,bulk::agent<grainsize> > &exec,
              RandomAccessIterator first,
              RandomAccessIterator last,
              T init,
              BinaryFunction binary_op)
 {
-  typedef typename bounded_agent<bound,bulk::agent<grainsize> >::size_type size_type;
+  typedef typename bounded<bound,bulk::agent<grainsize> >::size_type size_type;
   typedef typename thrust::iterator_value<RandomAccessIterator>::type value_type;
 
   size_type n = last - first;

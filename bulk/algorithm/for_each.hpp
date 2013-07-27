@@ -35,12 +35,12 @@ template<std::size_t bound,
          typename Size,
          typename Function>
 __device__
-RandomAccessIterator for_each_n(bounded_agent<bound, bulk::agent<grainsize> > &b,
+RandomAccessIterator for_each_n(bounded<bound, bulk::agent<grainsize> > &b,
                                 RandomAccessIterator first,
                                 Size n,
                                 Function f)
 {
-  typedef typename bounded_agent<bound, bulk::agent<grainsize> >::size_type size_type;
+  typedef typename bounded<bound, bulk::agent<grainsize> >::size_type size_type;
 
   for(size_type i = 0; i < bound; ++i)
   {

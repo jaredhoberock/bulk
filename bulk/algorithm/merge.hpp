@@ -48,13 +48,13 @@ template<std::size_t bound,
          typename OutputIterator,
          typename Compare>
 __device__
-OutputIterator merge(const bulk::bounded_agent<bound,agent<grainsize> > &e,
+OutputIterator merge(const bulk::bounded<bound,agent<grainsize> > &e,
                      InputIterator1 first1, InputIterator1 last1,
                      InputIterator2 first2, InputIterator2 last2,
                      OutputIterator result,
                      Compare comp)
 {
-  typedef typename bounded_agent<bound,agent<grainsize> >::size_type size_type;
+  typedef typename bounded<bound,agent<grainsize> >::size_type size_type;
 
   typedef typename thrust::iterator_value<InputIterator1>::type value_type1;
   typedef typename thrust::iterator_value<InputIterator2>::type value_type2;
@@ -149,7 +149,7 @@ __device__
 typename thrust::detail::enable_if<
   (bound <= groupsize * grainsize)
 >::type
-inplace_merge(bulk::bounded_agent<
+inplace_merge(bulk::bounded<
                 bound,
                 bulk::concurrent_group<
                   bulk::agent<grainsize>,
@@ -202,7 +202,7 @@ typename thrust::detail::enable_if<
   (bound <= groupsize * grainsize),
   RandomAccessIterator3
 >::type
-merge(bulk::bounded_agent<
+merge(bulk::bounded<
         bound,
         bulk::concurrent_group<
           bulk::agent<grainsize>,
@@ -253,7 +253,7 @@ namespace merge_detail
 {
 
 
-// XXX this should take a bounded_agent
+// XXX this should take a bounded
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3, typename RandomAccessIterator4, typename Compare>
 __device__
 RandomAccessIterator4

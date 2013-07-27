@@ -420,7 +420,7 @@ con(size_t heap_size)
 
 // a way to statically bound the size of an ExecutionAgent's work
 template<std::size_t bound_, typename ExecutionAgent>
-class bounded_agent
+class bounded
   : public ExecutionAgent
 {
   public:
@@ -451,25 +451,25 @@ class bounded_agent
 
   private:
     // XXX delete these unless we find a need for them
-    bounded_agent();
+    bounded();
 
-    bounded_agent(const bounded_agent &);
+    bounded(const bounded &);
 };
 
 
 template<std::size_t bound_, typename ExecutionAgent>
 __host__ __device__
-bounded_agent<bound_, ExecutionAgent> &bound(ExecutionAgent &exec)
+bounded<bound_, ExecutionAgent> &bound(ExecutionAgent &exec)
 {
-  return static_cast<bounded_agent<bound_, ExecutionAgent>&>(exec);
+  return static_cast<bounded<bound_, ExecutionAgent>&>(exec);
 }
 
 
 template<std::size_t bound_, typename ExecutionAgent>
 __host__ __device__
-const bounded_agent<bound_, ExecutionAgent> &bound(const ExecutionAgent &exec)
+const bounded<bound_, ExecutionAgent> &bound(const ExecutionAgent &exec)
 {
-  return static_cast<const bounded_agent<bound_, ExecutionAgent>&>(exec);
+  return static_cast<const bounded<bound_, ExecutionAgent>&>(exec);
 }
 
 

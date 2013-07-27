@@ -18,12 +18,12 @@ template<std::size_t bound,
          typename Size,
          typename RandomAccessIterator2>
 __forceinline__ __device__
-RandomAccessIterator2 copy_n(const bounded_agent<bound,agent<grainsize> > &b,
+RandomAccessIterator2 copy_n(const bounded<bound,agent<grainsize> > &b,
                              RandomAccessIterator1 first,
                              Size n,
                              RandomAccessIterator2 result)
 {
-  typedef typename bounded_agent<bound,agent<grainsize> >::size_type size_type;
+  typedef typename bounded<bound,agent<grainsize> >::size_type size_type;
 
   #pragma unroll
   for(size_type i = 0; i < b.bound(); ++i)
@@ -177,7 +177,7 @@ typename thrust::detail::enable_if<
   (bound <= groupsize * grainsize),
   RandomAccessIterator2 
 >::type
-copy_n(bulk::bounded_agent<
+copy_n(bulk::bounded<
          bound,
          concurrent_group<
            agent<grainsize>,
@@ -188,7 +188,7 @@ copy_n(bulk::bounded_agent<
        Size n,
        RandomAccessIterator2 result)
 {
-  typedef bounded_agent<
+  typedef bounded<
     bound,
     concurrent_group<
       agent<grainsize>,
