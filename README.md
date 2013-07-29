@@ -36,7 +36,7 @@ int main()
   // just launch one agent to say hello
   bulk::async(bulk::par(1), hello());
 
-  // launch 32 agents
+  // launch 32 agents in parallel
   // bulk::root stands in for the root of the agent hierarchy
   // the hello functor uses this to identify each agent within its group
   bulk::async(bulk::par(32), hello(), bulk::root);
