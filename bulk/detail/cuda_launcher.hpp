@@ -205,6 +205,7 @@ struct cuda_launcher<
   typedef typename cuda_grid<gridsize,blocksize,grainsize>::type grid_type;
   typedef typename grid_type::agent_type                         block_type;
   typedef typename block_type::agent_type                        thread_type;
+  typedef typename grid_type::size_type                          size_type;
 
   typedef typename super_t::task_type task_type;
 
@@ -216,11 +217,21 @@ struct cuda_launcher<
     size_t block_size = g.this_exec.size();
     size_t heap_size  = g.this_exec.heap_size();
 
-    if(num_blocks > 0 && block_size > 0)
-    {
-      task_type task(g, c);
+    size_t max_physical_grid_size = super_t::device_properties().maxGridSize[0];
 
-      super_t::launch(num_blocks, block_size, heap_size, stream, task);
+    // launch multiple grids in order to accomodate potentially too large grid size requests
+    // XXX these will all go in sequential order in the same stream, even though they are logically
+    //     parallel
+    if(block_size > 0)
+    {
+      for(size_type block_offset = 0;
+          block_offset < num_blocks;
+          block_offset += max_physical_grid_size)
+      {
+        task_type task(g, c, block_offset);
+
+        super_t::launch(num_blocks, block_size, heap_size, stream, task);
+      } // end for block_offset
     } // end if
   } // end go()
 

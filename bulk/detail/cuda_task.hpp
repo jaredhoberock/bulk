@@ -202,10 +202,17 @@ class cuda_task<
     typedef typename grid_type::agent_type  block_type;
     typedef typename block_type::agent_type thread_type;
     typedef typename super_t::closure_type  closure_type;
+    typedef typename grid_type::size_type   size_type;
+
+  private:
+    size_type block_offset;
+
+  public:
 
     __host__ __device__
-    cuda_task(grid_type g, closure_type c)
-      : super_t(g,c)
+    cuda_task(grid_type g, closure_type c, size_type offset)
+      : super_t(g,c),
+        block_offset(offset)
     {}
 
     __device__
@@ -214,12 +221,12 @@ class cuda_task<
       // instantiate a view of this grid
       grid_type this_grid =
         make_grid<grid_type>(
-          gridDim.x,
+          super_t::g.size(),
           make_block<block_type>(
             blockDim.x,
             super_t::g.this_exec.heap_size(),
             thread_type(threadIdx.x),
-            blockIdx.x
+            block_offset + blockIdx.x
           ),
           0
       );

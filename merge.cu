@@ -145,10 +145,7 @@ RandomAccessIterator3 my_merge(RandomAccessIterator1 first1,
   
   const size_type tile_size = groupsize * grainsize;
 
-  // XXX it's easy to launch too many blocks this way
-  //     we need to cap it and virtualize
   difference_type n = (last1 - first1) + (last2 - first2);
-
   difference_type num_groups = (n + tile_size - 1) / tile_size;
 
   thrust::cuda::tag t;
