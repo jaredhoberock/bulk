@@ -8,9 +8,9 @@
 struct saxpy
 {
   __host__ __device__
-  void operator()(bulk::agent<> &g, float a, float *x, float *y)
+  void operator()(bulk::agent<> &self, float a, float *x, float *y)
   {
-    int i = g.index();
+    int i = self.index();
     y[i] = a * x[i] + y[i];
   }
 };
