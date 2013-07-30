@@ -90,7 +90,7 @@ T my_reduce(RandomAccessIterator first, RandomAccessIterator last, T init, Binar
   if(partial_sums.size() > 1)
   {
     // reduce the partial sums
-    bulk::async(bulk::par(g, 1), reduce_partitions(), bulk::root.this_exec, partial_sums.begin(), partial_sums.end(), partial_sums.begin(), binary_op);
+    bulk::async(g, reduce_partitions(), bulk::root.this_exec, partial_sums.begin(), partial_sums.end(), partial_sums.begin(), binary_op);
   } // end while
 
   return partial_sums[0];

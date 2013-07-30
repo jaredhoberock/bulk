@@ -246,6 +246,31 @@ struct cuda_launcher<
 }; // end cuda_launcher
 
 
+template<std::size_t blocksize, std::size_t grainsize, typename Closure>
+struct cuda_launcher<
+  concurrent_group<
+    agent<grainsize>,
+    blocksize
+  >,
+  Closure
+>
+  : public cuda_launcher_base<concurrent_group<agent<grainsize>,blocksize>,Closure>
+{
+  typedef cuda_launcher_base<concurrent_group<agent<grainsize>,blocksize>,Closure> super_t;
+
+  typedef concurrent_group<agent<grainsize>,blocksize> block_type;
+
+  void launch(block_type request, Closure c, cudaStream_t stream)
+  {
+    // just do a 1-block grid
+    typedef parallel_group<block_type> grid_type;
+    cuda_launcher<grid_type,Closure> launcher;
+
+    return launcher.launch(bulk::par(request,1), c, stream);
+  } // end go()
+}; // end cuda_launcher
+
+
 template<std::size_t groupsize, std::size_t grainsize, typename Closure>
 struct cuda_launcher<
   parallel_group<

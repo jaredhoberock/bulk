@@ -55,17 +55,16 @@ int main()
 
   thrust::device_vector<int> result(1);
 
-  using bulk::par;
   using bulk::con;
 
   // let the runtime size the heap
-  bulk::async(par(con(group_size), 1), sum(), bulk::root.this_exec, vec.data(), result.data());
+  bulk::async(con(group_size), sum(), bulk::root.this_exec, vec.data(), result.data());
 
   assert(512 == result[0]);
 
   // size the heap ourself
   size_t heap_size = group_size * sizeof(int);
-  bulk::async(par(con(group_size, heap_size), 1), sum(), bulk::root.this_exec, vec.data(), result.data());
+  bulk::async(con(group_size, heap_size), sum(), bulk::root.this_exec, vec.data(), result.data());
 
   assert(512 == result[0]);
 }
