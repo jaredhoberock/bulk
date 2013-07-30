@@ -1,88 +1,72 @@
 #include <cstdio>
 #include <bulk/bulk.hpp>
 #include <thrust/device_vector.h>
-#include <thrust/sequence.h>
-#include <thrust/reduce.h>
 #include <cassert>
-
-template<typename Iterator1, typename Size, typename Iterator2>
-__device__
-void block_copy_n(Iterator1 first, Size n, Iterator2 result)
-{
-  for(Size i = threadIdx.x; i < n; i += blockDim.x)
-  {
-    result[i] = first[i];
-  }
-
-  __syncthreads();
-}
 
 struct sum
 {
   __device__
-  void operator()(thrust::device_ptr<int> data, thrust::device_ptr<int> result)
+  void operator()(bulk::concurrent_group<> &g, thrust::device_ptr<int> data, thrust::device_ptr<int> result)
   {
-    __shared__ int *s_s_data;
+    unsigned int n = g.size();
 
-    unsigned int n = blockDim.x;
+    // allocate some special memory that the group can use for fast communication
+    int *s_data = static_cast<int*>(bulk::malloc(g, n * sizeof(int)));
 
-    if(threadIdx.x == 0)
-    {
-      s_s_data = static_cast<int *>(bulk::shmalloc(n * sizeof(int)));
-    }
-    __syncthreads();
-
-    int *s_data = s_s_data;
-
-    block_copy_n(data, n, s_data);
+    // the whole group cooperatively copies the data
+    bulk::copy_n(g, data, n, s_data);
 
     while(n > 1)
     {
       unsigned int half_n = n / 2;
 
-      if(threadIdx.x < half_n)
+      if(g.this_exec.index() < half_n)
       {
-        s_data[threadIdx.x] += s_data[n - threadIdx.x - 1];
+        s_data[g.this_exec.index()] += s_data[n - g.this_exec.index() - 1];
       }
 
-      __syncthreads();
+      // the group synchronizes after each update
+      g.wait();
 
       n -= half_n;
     }
 
-    __syncthreads();
-    if(threadIdx.x == 0)
+    if(g.this_exec.index() == 0)
     {
       *result = s_data[0];
-      bulk::shfree(s_data);
     }
+
+    // wait for agent 0 to store the result
+    g.wait();
+
+    // free the memory cooperatively
+    bulk::free(g, s_data);
   }
 };
 
 int main()
 {
-  size_t block_size = 512;
+  size_t group_size = 512;
 
-  size_t n = block_size;
+  size_t n = group_size;
 
-  thrust::device_vector<int> vec(n);
-
-  thrust::sequence(vec.begin(), vec.end());
+  // [1, 1, 1, ... 1] - 512 of them
+  thrust::device_vector<int> vec(n, 1);
 
   thrust::device_vector<int> result(1);
 
   using bulk::par;
   using bulk::con;
 
-  // let the runtime size smem
-  bulk::async(par(con(block_size), 1), sum(), vec.data(), result.data());
+  // let the runtime size the heap
+  bulk::async(par(con(group_size), 1), sum(), bulk::root.this_exec, vec.data(), result.data());
 
-  assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
+  assert(512 == result[0]);
 
-  // size smem ourself
-  size_t heap_size = block_size * sizeof(int);
-  bulk::async(par(con(block_size, heap_size), 1), sum(), vec.data(), result.data());
+  // size the heap ourself
+  size_t heap_size = group_size * sizeof(int);
+  bulk::async(par(con(group_size, heap_size), 1), sum(), bulk::root.this_exec, vec.data(), result.data());
 
-  assert(thrust::reduce(vec.begin(), vec.end()) == result[0]);
+  assert(512 == result[0]);
 }
 
