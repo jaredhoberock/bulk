@@ -245,6 +245,57 @@ class cuda_task<
 }; // end cuda_task
 
 
+// specialize cuda_task for a single CUDA block
+template<std::size_t blocksize, std::size_t grainsize, typename Closure>
+class cuda_task<
+  concurrent_group<
+    agent<grainsize>,
+    blocksize
+  >,
+  Closure
+> : public task_base<typename cuda_block<blocksize,grainsize>::type,Closure>
+{
+  private:
+    typedef task_base<typename cuda_block<blocksize,grainsize>::type,Closure> super_t;
+
+  public:
+    typedef typename super_t::group_type    block_type;
+    typedef typename block_type::agent_type thread_type;
+    typedef typename super_t::closure_type  closure_type;
+    typedef typename block_type::size_type  size_type;
+
+  public:
+    __host__ __device__
+    cuda_task(block_type b, closure_type c)
+      : super_t(b,c)
+    {}
+
+    __device__
+    void operator()()
+    {
+      // instantiate a view of this block
+      block_type this_block =
+        make_block<block_type>(
+          blockDim.x,
+          super_t::g.heap_size(),
+          thread_type(threadIdx.x),
+          0
+        );
+
+#if __CUDA_ARCH__ >= 200
+      // initialize shared storage
+      if(this_block.index() == 0)
+      {
+        bulk::detail::init_on_chip_malloc(this_block.heap_size());
+      }
+      this_block.wait();
+#endif
+
+      substitute_placeholders_and_execute(this_block, super_t::c);
+    } // end operator()
+}; // end cuda_task
+
+
 // specialize cuda_task for a single big parallel group
 template<std::size_t groupsize, std::size_t grainsize, typename Closure>
 class cuda_task<parallel_group<agent<grainsize>,groupsize>,Closure>

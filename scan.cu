@@ -132,7 +132,7 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
     // num_groups loads + num_groups stores
     typedef bulk::detail::scan_detail::scan_buffer<256,3,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type2;
     heap_size = sizeof(heap_type2);
-    bulk::async(bulk::con<256,3>(heap_size), exclusive_scan_n(), bulk::root.this_exec, carries.begin(), num_groups, carries.begin(), init, binary_op);
+    bulk::async(bulk::con<256,3>(heap_size), exclusive_scan_n(), bulk::root, carries.begin(), num_groups, carries.begin(), init, binary_op);
 
     // do the downsweep - n loads, n stores
     typedef bulk::detail::scan_detail::scan_buffer<

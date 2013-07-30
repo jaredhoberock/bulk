@@ -58,13 +58,13 @@ int main()
   using bulk::con;
 
   // let the runtime size the heap
-  bulk::async(con(group_size), sum(), bulk::root.this_exec, vec.data(), result.data());
+  bulk::async(con(group_size), sum(), bulk::root, vec.data(), result.data());
 
   assert(512 == result[0]);
 
   // size the heap ourself
   size_t heap_size = group_size * sizeof(int);
-  bulk::async(con(group_size, heap_size), sum(), bulk::root.this_exec, vec.data(), result.data());
+  bulk::async(con(group_size, heap_size), sum(), bulk::root, vec.data(), result.data());
 
   assert(512 == result[0]);
 }

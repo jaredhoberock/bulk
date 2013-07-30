@@ -84,12 +84,15 @@ struct cuda_launcher_base
     get_global_function()<<<(unsigned int)num_blocks, (unsigned int)block_size, num_dynamic_smem_bytes, stream>>>(task);
 #endif
 
+    // check that the launch got off the ground
+    bulk::detail::throw_on_error(cudaGetLastError(), "after kernel launch in cuda_launcher_base::launch()");
+
     thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
 
     if(verbose)
     {
-      std::cout << "cuda_launcher_base::launch_task(): occupancy: " << maximum_potential_occupancy(get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
-      std::cout << "cuda_launcher_base::launch_task(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
+      std::cout << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
+      std::cout << "cuda_launcher_base::launch(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
     } // end if
   } // end launch()
 
@@ -257,17 +260,30 @@ struct cuda_launcher<
   : public cuda_launcher_base<concurrent_group<agent<grainsize>,blocksize>,Closure>
 {
   typedef cuda_launcher_base<concurrent_group<agent<grainsize>,blocksize>,Closure> super_t;
+  typedef typename super_t::task_type task_type;
 
   typedef concurrent_group<agent<grainsize>,blocksize> block_type;
 
   void launch(block_type request, Closure c, cudaStream_t stream)
   {
-    // just do a 1-block grid
-    typedef parallel_group<block_type> grid_type;
-    cuda_launcher<grid_type,Closure> launcher;
+    block_type b = configure(request);
 
-    return launcher.launch(bulk::par(request,1), c, stream);
+    size_t block_size = b.size();
+    size_t heap_size  = b.heap_size();
+
+    if(block_size > 0)
+    {
+      task_type task(b, c);
+      super_t::launch(1, block_size, heap_size, stream, task);
+    } // end if
   } // end go()
+
+  static block_type configure(block_type b)
+  {
+    size_t block_size = super_t::choose_group_size(b.size());
+    size_t heap_size  = super_t::choose_heap_size(block_size, b.heap_size());
+    return make_block<block_type>(block_size, heap_size);
+  } // end configure()
 }; // end cuda_launcher
 
 
