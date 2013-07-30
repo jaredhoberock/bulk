@@ -70,12 +70,16 @@ template<std::size_t size,
          typename Size,
          typename RandomAccessIterator2>
 __forceinline__ __device__
-RandomAccessIterator2 simple_copy_n(bulk::concurrent_group<
-                                      agent<grainsize>,
-                                      size
-                                    > &g,
-                                    RandomAccessIterator1 first, Size n,
-                                    RandomAccessIterator2 result)
+typename thrust::detail::enable_if<
+  (size * grainsize > 0),
+  RandomAccessIterator2
+>::type
+  simple_copy_n(bulk::concurrent_group<
+                  agent<grainsize>,
+                  size
+                > &g,
+                RandomAccessIterator1 first, Size n,
+                RandomAccessIterator2 result)
 {
   typedef bulk::concurrent_group<
     agent<grainsize>,
