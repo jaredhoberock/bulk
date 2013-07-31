@@ -90,7 +90,7 @@ struct merge_kernel
 
     bulk::free(g, stage);
 #else
-    bulk::uninitialized_array<value_type, groupsize * grainsize> stage;
+    __shared__ bulk::uninitialized_array<value_type, groupsize * grainsize> stage;
     staged_merge(g, first1, local_size1, first2, local_size2, stage.data(), result, comp);
 #endif
   } // end operator()
