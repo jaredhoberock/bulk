@@ -29,9 +29,7 @@ int main()
   thrust::device_vector<int> vec(n);
   thrust::sequence(vec.begin(), vec.end());
 
-  bulk::future<void> f = bulk::async(bulk::par(n), for_each_kernel(), bulk::root.this_exec, vec.begin(), print_functor());
-
-  f.wait();
+  bulk::async(bulk::par(n), for_each_kernel(), bulk::root.this_exec, vec.begin(), print_functor()).wait();
 
   return 0;
 }
