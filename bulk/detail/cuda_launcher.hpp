@@ -75,6 +75,15 @@ struct cuda_launcher_base
 
   void launch(size_t num_blocks, size_t block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
   {
+    if(verbose)
+    {
+      std::clog << "CUDA error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
+      std::clog << "cuda_launcher_base::launch(): num_blocks: " << num_blocks << std::endl;
+      std::clog << "cuda_launcher_base::launch(): block_size: " << block_size << std::endl;
+      std::clog << "cuda_launcher_base::launch(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
+      std::clog << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
+    } // end if
+
 #if BULK_ASYNC_USE_UNINITIALIZED
     uninitialized<task_type> wrapped_task;
     wrapped_task.construct(task);
@@ -88,12 +97,6 @@ struct cuda_launcher_base
     bulk::detail::throw_on_error(cudaGetLastError(), "after kernel launch in cuda_launcher_base::launch()");
 
     thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
-
-    if(verbose)
-    {
-      std::cout << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
-      std::cout << "cuda_launcher_base::launch(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
-    } // end if
   } // end launch()
 
 
@@ -184,6 +187,30 @@ struct cuda_launcher_base
 
     return result;
   } // end choose_group_size()
+
+
+  static unsigned int max_physical_grid_size()
+  {
+    // get the limit of the actual device
+    int actual_limit = device_properties().maxGridSize[0];
+
+    // get the limit of the PTX version of the kernel
+    int ptx_version = function_attributes().ptxVersion;
+
+    int ptx_limit = 0;
+
+    // from table 9 of the CUDA C Programming Guide
+    if(ptx_version < 30)
+    {
+      ptx_limit = 65535;
+    } // end if
+    else
+    {
+      ptx_limit = (1u << 31) - 1;
+    } // end else
+
+    return thrust::min<unsigned int>(actual_limit, ptx_limit);
+  } // end max_physical_grid_size()
 }; // end cuda_launcher_base
 
 
@@ -220,20 +247,31 @@ struct cuda_launcher<
     size_t block_size = g.this_exec.size();
     size_t heap_size  = g.this_exec.heap_size();
 
-    size_t max_physical_grid_size = super_t::device_properties().maxGridSize[0];
+    size_t max_physical_grid_size = super_t::max_physical_grid_size();
 
     // launch multiple grids in order to accomodate potentially too large grid size requests
     // XXX these will all go in sequential order in the same stream, even though they are logically
     //     parallel
     if(block_size > 0)
     {
+      size_t num_remaining_physical_blocks = num_blocks;
       for(size_type block_offset = 0;
           block_offset < num_blocks;
           block_offset += max_physical_grid_size)
       {
         task_type task(g, c, block_offset);
 
-        super_t::launch(num_blocks, block_size, heap_size, stream, task);
+        size_t num_physical_blocks = thrust::min<size_t>(num_remaining_physical_blocks, max_physical_grid_size);
+
+        if(bulk::detail::verbose)
+        {
+          std::clog << "cuda_launcher::launch(): max_physical_grid_size: " << max_physical_grid_size << std::endl;
+          std::clog << "cuda_launcher::launch(): requesting " << num_physical_blocks << " physical blocks" << std::endl;
+        }
+
+        super_t::launch(num_physical_blocks, block_size, heap_size, stream, task);
+
+        num_remaining_physical_blocks -= num_physical_blocks;
       } // end for block_offset
     } // end if
   } // end go()
