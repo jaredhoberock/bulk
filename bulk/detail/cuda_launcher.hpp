@@ -58,7 +58,15 @@ void launch_by_pointer(const Function *f)
 }
 
 
+// put this state in an anon namespace
+namespace
+{
+
+
 bool verbose = false;
+
+
+}
 
 
 template<typename ExecutionGroup, typename Closure>
