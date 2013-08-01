@@ -85,3 +85,40 @@ int main()
 }
 ```
 
+Algorithms built with Bulk are fast.
+
+[`reduce`](reduce.cu) Performance
+---------------------
+
+![][32b_float_reduce]
+![][64b_float_reduce]
+
+[32b_float_reduce]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdGVQazRVcGxIZGt2TjFybFNpR1hJQmc&oid=2&zx=5u68essty3v7
+[64b_float_reduce]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdGVQazRVcGxIZGt2TjFybFNpR1hJQmc&oid=3&zx=kx4rsyamnhnj
+
+[`inclusive_scan`](scan.cu) Performance
+----------------------------
+
+![][32b_float_scan]
+![][64b_float_scan]
+
+[32b_float_scan]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdGR4cXU4ekdPeXFTOTBTUG9NUDh3OWc&oid=2&zx=5ji93q18pi8m
+[64b_float_scan]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdGR4cXU4ekdPeXFTOTBTUG9NUDh3OWc&oid=3&zx=ftlaacipyq13
+
+[`merge`](merge.cu) Performance
+-------------------
+
+![][32b_float_merge]
+![][64b_float_merge]
+
+[32b_float_merge]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdDE4cm9tTXJWS0RsOTYtNklZSWcxdFE&oid=2&zx=39ly741b12lr
+[64b_float_merge]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdDE4cm9tTXJWS0RsOTYtNklZSWcxdFE&oid=3&zx=pgd9pgqqswo3
+
+[`reduce_by_key`](reduce_by_key.cu) Performance
+---------------------------
+
+![][32b_float_reduce_by_key]
+![][64b_float_reduce_by_key]
+
+[32b_float_reduce_by_key]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdDlYWDVhTDZiZXJvYUV6TlF5MUpNSXc&oid=2&zx=4vck6bwpyh52
+[64b_float_reduce_by_key]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdDlYWDVhTDZiZXJvYUV6TlF5MUpNSXc&oid=3&zx=t72yxc8mvorj
