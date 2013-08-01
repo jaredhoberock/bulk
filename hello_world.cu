@@ -13,7 +13,7 @@ struct hello
   __host__ __device__
   void operator()(bulk::parallel_group<> &g)
   {
-    printf("Hello world from thread %d\n", g.this_exec.index());
+    printf("Hello world from agent %d\n", g.this_exec.index());
   }
 };
 
