@@ -21,9 +21,8 @@ int main()
 {
   bulk::async(bulk::par(1), hello());
 
-  bulk::async(bulk::par(32), hello(), bulk::root);
-
-  cudaDeviceSynchronize();
+  // wait for this async to finish before exiting the program
+  bulk::async(bulk::par(32), hello(), bulk::root).wait();
 
   return 0;
 }
