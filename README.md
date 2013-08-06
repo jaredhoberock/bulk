@@ -111,8 +111,8 @@ Algorithms built with Bulk are fast.
 ![][32b_float_merge]
 ![][64b_float_merge]
 
-[32b_float_merge]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdDE4cm9tTXJWS0RsOTYtNklZSWcxdFE&oid=2&zx=39ly741b12lr
-[64b_float_merge]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdDE4cm9tTXJWS0RsOTYtNklZSWcxdFE&oid=3&zx=pgd9pgqqswo3
+[32b_float_merge]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdDE4cm9tTXJWS0RsOTYtNklZSWcxdFE&oid=4&zx=l6i8z7pk97nu
+[64b_float_merge]: https://docs.google.com/spreadsheet/oimg?key=0Aj9b9uhQ9hZUdDE4cm9tTXJWS0RsOTYtNklZSWcxdFE&oid=5&zx=c8b2ujje3wql
 
 [`reduce_by_key`](reduce_by_key.cu) Performance
 ---------------------------
