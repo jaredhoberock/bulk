@@ -4,6 +4,25 @@
 #include <thrust/sort.h>
 #include "time_invocation_cuda.hpp"
 
+
+template<int NT, int VT, typename KeyType, typename ValType, typename Comp>
+__device__
+void CTAMergesort(KeyType threadKeys[VT], ValType threadValues[VT], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
+{
+  // Stable sort the keys in the thread.
+  if(VT * tid < count)
+  {
+    mgpu::OddEvenTransposeSort<VT>(threadKeys, threadValues, comp);
+  }
+  
+  // Store the locally sorted keys into shared memory.
+  mgpu::DeviceThreadToShared<VT>(threadKeys, tid, keys_shared);
+  
+  // Recursively merge lists until the entire CTA is sorted.
+  mgpu::CTABlocksortLoop<NT, VT, true>(threadValues, keys_shared, values_shared, tid, count, comp);
+}
+
+
 template<typename Tuning, typename KeyIt1, typename KeyIt2, typename ValIt1, typename ValIt2, typename Comp>
 __global__ void KernelBlocksort(KeyIt1 keysSource_global, ValIt1 valsSource_global, int count, KeyIt2 keysDest_global, ValIt2 valsDest_global, Comp comp)
 {
@@ -11,39 +30,39 @@ __global__ void KernelBlocksort(KeyIt1 keysSource_global, ValIt1 valsSource_glob
   typedef typename std::iterator_traits<KeyIt1>::value_type KeyType;
   typedef typename std::iterator_traits<ValIt1>::value_type ValType;
   
-  const int NT = Params::NT;
-  const int VT = Params::VT;
-  const int NV = NT * VT;
+  const int groupsize = Params::NT;
+  const int grainsize = Params::VT;
+  const int tile_size = groupsize * grainsize;
   union Shared
   {
-    KeyType keys[NT * (VT + 1)];
-    ValType values[NV];
+    KeyType keys[groupsize * (grainsize + 1)];
+    ValType values[tile_size];
   };
   __shared__ Shared shared;
   
   int tid = threadIdx.x;
   int block = blockIdx.x;
-  int gid = NV * block;
-  int count2 = min(NV, count - gid);
+  int gid = tile_size * block;
+  int count2 = min(tile_size, count - gid);
   
   // Load the values into thread order.
-  ValType threadValues[VT];
-  mgpu::DeviceGlobalToShared<NT, VT>(count2, valsSource_global + gid, tid, shared.values);
-  mgpu::DeviceSharedToThread<VT>(shared.values, tid, threadValues);
+  ValType threadValues[grainsize];
+  mgpu::DeviceGlobalToShared<groupsize, grainsize>(count2, valsSource_global + gid, tid, shared.values);
+  mgpu::DeviceSharedToThread<grainsize>(shared.values, tid, threadValues);
   
   // Load keys into shared memory and transpose into register in thread order.
-  KeyType threadKeys[VT];
-  mgpu::DeviceGlobalToShared<NT, VT>(count2, keysSource_global + gid, tid, shared.keys);
-  mgpu::DeviceSharedToThread<VT>(shared.keys, tid, threadKeys);
+  KeyType threadKeys[grainsize];
+  mgpu::DeviceGlobalToShared<groupsize, grainsize>(count2, keysSource_global + gid, tid, shared.keys);
+  mgpu::DeviceSharedToThread<grainsize>(shared.keys, tid, threadKeys);
   
   // If we're in the last tile, set the uninitialized keys for the thread with
   // a partial number of keys.
-  int first = VT * tid;
-  if(first + VT > count2 && first < count2)
+  int first = grainsize * tid;
+  if(first + grainsize > count2 && first < count2)
   {
     KeyType maxKey = threadKeys[0];
     #pragma unroll
-    for(int i = 1; i < VT; ++i)
+    for(int i = 1; i < grainsize; ++i)
     {
       if(first + i < count2)
       {
@@ -53,18 +72,18 @@ __global__ void KernelBlocksort(KeyIt1 keysSource_global, ValIt1 valsSource_glob
     
     // Fill in the uninitialized elements with max key.
     #pragma unroll
-    for(int i = 0; i < VT; ++i)
+    for(int i = 0; i < grainsize; ++i)
     {
       if(first + i >= count2) threadKeys[i] = maxKey;
     }
   }
   
-  mgpu::CTAMergesort<NT, VT, true>(threadKeys, threadValues, shared.keys, shared.values, count2, tid, comp);
+  ::CTAMergesort<groupsize, grainsize, true>(threadKeys, threadValues, shared.keys, shared.values, count2, tid, comp);
   
   // Store the sorted keys to global.
-  mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.keys, tid, keysDest_global + gid);
-  mgpu::DeviceThreadToShared<VT>(threadValues, tid, shared.values);
-  mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.values, tid, valsDest_global + gid);
+  mgpu::DeviceSharedToGlobal<groupsize, grainsize>(count2, shared.keys, tid, keysDest_global + gid);
+  mgpu::DeviceThreadToShared<grainsize>(threadValues, tid, shared.values);
+  mgpu::DeviceSharedToGlobal<groupsize, grainsize>(count2, shared.values, tid, valsDest_global + gid);
 }
 
 
