@@ -6,49 +6,6 @@
 #include <bulk/bulk.hpp>
 #include "time_invocation_cuda.hpp"
 
-
-template<int i, int bound>
-struct stable_odd_even_transpose_sort_impl
-{
-  template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
-  static __device__
-  void sort(RandomAccessIterator1 keys, RandomAccessIterator2 values, int n, Compare comp)
-  {
-    #pragma unroll
-    for(int j = 1 & i; j < bound - 1; j += 2)
-    {
-      if(j + 1 < n && comp(keys[j + 1], keys[j]))
-      {
-        using thrust::swap;
-
-      	swap(keys[j], keys[j + 1]);
-      	swap(values[j], values[j + 1]);
-      }
-    }
-
-    stable_odd_even_transpose_sort_impl<i + 1, bound>::sort(keys, values, n, comp);
-  }
-};
-
-
-template<int i> struct stable_odd_even_transpose_sort_impl<i, i>
-{
-  template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
-  static __device__ void sort(RandomAccessIterator1, RandomAccessIterator2, int, Compare) { }
-};
-
-
-template<std::size_t bound, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
-__device__
-void stable_sort_by_key(const bulk::bounded<bound,bulk::agent<grainsize> > &,
-                        RandomAccessIterator1 keys_first, RandomAccessIterator1 keys_last,
-                        RandomAccessIterator2 values_first,
-                        Compare comp)
-{
-  stable_odd_even_transpose_sort_impl<0, bound>::sort(keys_first, values_first, keys_last - keys_first, comp);
-}
-
-
 template<int NT, int VT, typename KeyType, typename ValType, typename Comp>
 __device__
 void CTAMergesort(KeyType threadKeys[VT], ValType threadValues[VT], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
@@ -57,7 +14,7 @@ void CTAMergesort(KeyType threadKeys[VT], ValType threadValues[VT], KeyType* key
 
   // Stable sort the keys in the thread.
   int local_size = max(0, min(VT, count - VT * tid));
-  stable_sort_by_key(bulk::bound<VT>(exec), threadKeys, threadKeys + local_size, threadValues, comp);
+  bulk::stable_sort_by_key(bulk::bound<VT>(exec), threadKeys, threadKeys + local_size, threadValues, comp);
   
   // Store the locally sorted keys into shared memory.
   mgpu::DeviceThreadToShared<VT>(threadKeys, tid, keys_shared);
