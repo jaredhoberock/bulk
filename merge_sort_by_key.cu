@@ -3,6 +3,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 #include <thrust/detail/swap.h>
+#include <bulk/bulk.hpp>
 #include "time_invocation_cuda.hpp"
 
 
@@ -37,11 +38,14 @@ template<int i> struct stable_odd_even_transpose_sort_impl<i, i>
 };
 
 
-template<int bound, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
+template<std::size_t bound, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
 __device__
-void OddEvenTransposeSort(RandomAccessIterator1 keys, RandomAccessIterator2 values, int n, Compare comp)
+void stable_sort_by_key(const bulk::bounded<bound,bulk::agent<grainsize> > &,
+                        RandomAccessIterator1 keys_first, RandomAccessIterator1 keys_last,
+                        RandomAccessIterator2 values_first,
+                        Compare comp)
 {
-  stable_odd_even_transpose_sort_impl<0, bound>::sort(keys, values, n, comp);
+  stable_odd_even_transpose_sort_impl<0, bound>::sort(keys_first, values_first, keys_last - keys_first, comp);
 }
 
 
@@ -49,9 +53,11 @@ template<int NT, int VT, typename KeyType, typename ValType, typename Comp>
 __device__
 void CTAMergesort(KeyType threadKeys[VT], ValType threadValues[VT], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
 {
+  bulk::agent<VT> exec(threadIdx.x);
+
   // Stable sort the keys in the thread.
   int local_size = max(0, min(VT, count - VT * tid));
-  ::OddEvenTransposeSort<VT>(threadKeys, threadValues, local_size, comp);
+  stable_sort_by_key(bulk::bound<VT>(exec), threadKeys, threadKeys + local_size, threadValues, comp);
   
   // Store the locally sorted keys into shared memory.
   mgpu::DeviceThreadToShared<VT>(threadKeys, tid, keys_shared);
