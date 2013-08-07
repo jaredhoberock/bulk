@@ -135,7 +135,7 @@ class group_base<ExecutionAgent,dynamic_group_size>
     typedef int size_type;
 
     __host__ __device__
-    group_base(size_type sz = use_default, agent_type exec = agent_type(), size_type i = invalid_index)
+    group_base(size_type sz, agent_type exec = agent_type(), size_type i = invalid_index)
       : this_exec(exec),
         m_size(sz),
         m_index(i)
@@ -213,7 +213,7 @@ class parallel_group<ExecutionAgent,dynamic_group_size>
 
     // XXX the constructor taking an index should be made private
     __host__ __device__
-    parallel_group(size_type size = use_default, agent_type exec = agent_type(), size_type i = invalid_index)
+    parallel_group(size_type size, agent_type exec = agent_type(), size_type i = invalid_index)
       : super_t(size,exec,i)
     {}
 };
@@ -315,7 +315,9 @@ class concurrent_group
 
     // XXX the constructor taking an index should be made private
     __host__ __device__
-    concurrent_group(size_type heap_size = use_default, agent_type exec = agent_type(), size_type i = invalid_index)
+    concurrent_group(size_type heap_size = use_default,
+                     agent_type exec = agent_type(),
+                     size_type i = invalid_index)
       : super_t(exec,i),
         m_heap_size(heap_size)
     {}
@@ -360,7 +362,7 @@ class concurrent_group<ExecutionAgent,dynamic_group_size>
 
     // XXX the constructor taking an index should be made private
     __host__ __device__
-    concurrent_group(size_type size = use_default,
+    concurrent_group(size_type size,
                      size_type heap_size = use_default,
                      agent_type exec = agent_type(),
                      size_type i = invalid_index)
