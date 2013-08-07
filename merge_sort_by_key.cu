@@ -2,7 +2,47 @@
 #include <moderngpu.cuh>
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
+#include <thrust/detail/swap.h>
 #include "time_invocation_cuda.hpp"
+
+
+template<int i, int bound>
+struct stable_odd_even_transpose_sort_impl
+{
+  template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
+  static __device__
+  void sort(RandomAccessIterator1 keys, RandomAccessIterator2 values, Compare comp)
+  {
+    #pragma unroll
+    for(int j = 1 & i; j < bound - 1; j += 2)
+    {
+      if(comp(keys[j + 1], keys[j]))
+      {
+        using thrust::swap;
+
+      	swap(keys[j], keys[j + 1]);
+      	swap(values[j], values[j + 1]);
+      }
+    }
+
+    stable_odd_even_transpose_sort_impl<i + 1, bound>::sort(keys, values, comp);
+  }
+};
+
+
+template<int i> struct stable_odd_even_transpose_sort_impl<i, i>
+{
+  template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
+  static __device__ void sort(RandomAccessIterator1 keys, RandomAccessIterator2 values, Compare comp) { }
+};
+
+
+template<int bound, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
+__device__
+void OddEvenTransposeSort(RandomAccessIterator1 keys, RandomAccessIterator2 values, Compare comp)
+{
+  stable_odd_even_transpose_sort_impl<0, bound>::sort(keys, values, comp);
+}
 
 
 template<int NT, int VT, typename KeyType, typename ValType, typename Comp>
@@ -12,7 +52,7 @@ void CTAMergesort(KeyType threadKeys[VT], ValType threadValues[VT], KeyType* key
   // Stable sort the keys in the thread.
   if(VT * tid < count)
   {
-    mgpu::OddEvenTransposeSort<VT>(threadKeys, threadValues, comp);
+    ::OddEvenTransposeSort<VT>(threadKeys, threadValues, comp);
   }
   
   // Store the locally sorted keys into shared memory.
