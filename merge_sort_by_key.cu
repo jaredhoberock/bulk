@@ -11,12 +11,12 @@ struct stable_odd_even_transpose_sort_impl
 {
   template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
   static __device__
-  void sort(RandomAccessIterator1 keys, RandomAccessIterator2 values, Compare comp)
+  void sort(RandomAccessIterator1 keys, RandomAccessIterator2 values, int n, Compare comp)
   {
     #pragma unroll
     for(int j = 1 & i; j < bound - 1; j += 2)
     {
-      if(comp(keys[j + 1], keys[j]))
+      if(j + 1 < n && comp(keys[j + 1], keys[j]))
       {
         using thrust::swap;
 
@@ -25,7 +25,7 @@ struct stable_odd_even_transpose_sort_impl
       }
     }
 
-    stable_odd_even_transpose_sort_impl<i + 1, bound>::sort(keys, values, comp);
+    stable_odd_even_transpose_sort_impl<i + 1, bound>::sort(keys, values, n, comp);
   }
 };
 
@@ -33,15 +33,15 @@ struct stable_odd_even_transpose_sort_impl
 template<int i> struct stable_odd_even_transpose_sort_impl<i, i>
 {
   template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
-  static __device__ void sort(RandomAccessIterator1 keys, RandomAccessIterator2 values, Compare comp) { }
+  static __device__ void sort(RandomAccessIterator1, RandomAccessIterator2, int, Compare) { }
 };
 
 
 template<int bound, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
 __device__
-void OddEvenTransposeSort(RandomAccessIterator1 keys, RandomAccessIterator2 values, Compare comp)
+void OddEvenTransposeSort(RandomAccessIterator1 keys, RandomAccessIterator2 values, int n, Compare comp)
 {
-  stable_odd_even_transpose_sort_impl<0, bound>::sort(keys, values, comp);
+  stable_odd_even_transpose_sort_impl<0, bound>::sort(keys, values, n, comp);
 }
 
 
@@ -50,10 +50,8 @@ __device__
 void CTAMergesort(KeyType threadKeys[VT], ValType threadValues[VT], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
 {
   // Stable sort the keys in the thread.
-  if(VT * tid < count)
-  {
-    ::OddEvenTransposeSort<VT>(threadKeys, threadValues, comp);
-  }
+  int local_size = max(0, min(VT, count - VT * tid));
+  ::OddEvenTransposeSort<VT>(threadKeys, threadValues, local_size, comp);
   
   // Store the locally sorted keys into shared memory.
   mgpu::DeviceThreadToShared<VT>(threadKeys, tid, keys_shared);
@@ -94,29 +92,6 @@ __global__ void KernelBlocksort(KeyIt1 keysSource_global, ValIt1 valsSource_glob
   KeyType threadKeys[grainsize];
   mgpu::DeviceGlobalToShared<groupsize, grainsize>(count2, keysSource_global + gid, tid, shared.keys);
   mgpu::DeviceSharedToThread<grainsize>(shared.keys, tid, threadKeys);
-  
-  // If we're in the last tile, set the uninitialized keys for the thread with
-  // a partial number of keys.
-  int first = grainsize * tid;
-  if(first + grainsize > count2 && first < count2)
-  {
-    KeyType maxKey = threadKeys[0];
-    #pragma unroll
-    for(int i = 1; i < grainsize; ++i)
-    {
-      if(first + i < count2)
-      {
-      	maxKey = comp(maxKey, threadKeys[i]) ? threadKeys[i] : maxKey;
-      }
-    }
-    
-    // Fill in the uninitialized elements with max key.
-    #pragma unroll
-    for(int i = 0; i < grainsize; ++i)
-    {
-      if(first + i >= count2) threadKeys[i] = maxKey;
-    }
-  }
   
   ::CTAMergesort<groupsize, grainsize, true>(threadKeys, threadValues, shared.keys, shared.values, count2, tid, comp);
   
