@@ -131,11 +131,11 @@ template<typename RandomAccessIterator1, typename RandomAccessIterator2, typenam
 void my_sort_by_key_(RandomAccessIterator1 keys_first, RandomAccessIterator1 keys_last, RandomAccessIterator2 values_first, Compare comp)
 {
   mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
-  mgpu::MergesortPairs(thrust::raw_pointer_cast(&*keys_first),
-                       thrust::raw_pointer_cast(&*values_first),
-                       keys_last - keys_first,
-                       comp,
-                       *ctx);
+  ::MergesortPairs(thrust::raw_pointer_cast(&*keys_first),
+                   thrust::raw_pointer_cast(&*values_first),
+                   keys_last - keys_first,
+                   comp,
+                   *ctx);
 }
 
 
