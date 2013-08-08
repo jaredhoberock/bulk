@@ -7,6 +7,23 @@
 #include "time_invocation_cuda.hpp"
 
 
+template<int NT, int VT, typename T, typename Comp>
+__device__
+void my_CTABlocksortPass(T* keys_shared, int tid, int count, int coop, T* keys, int* indices, Comp comp)
+{
+  int list = ~(coop - 1) & tid;
+  int diag = min(count, VT * ((coop - 1) & tid));
+  int start = VT * list;
+  int a0 = min(count, start);
+  int b0 = min(count, start + VT * (coop / 2));
+  int b1 = min(count, start + VT * coop);
+  
+  int p = bulk::merge_path(keys_shared + a0, b0 - a0, keys_shared + b0, b1 - b0, diag, comp);
+  
+  mgpu::SerialMerge<VT, true>(keys_shared, a0 + p, b0, b0 + diag - p, b1, keys, indices, comp);
+}
+
+
 template<int NT, int grainsize, typename KeyType, typename ValType, typename Comp>
 __device__
 void CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
@@ -25,7 +42,7 @@ void CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize]
   for(int coop = 2; coop <= NT; coop *= 2)
   {
     int indices[grainsize];
-    mgpu::CTABlocksortPass<NT, grainsize>(keys_shared, tid, count, coop, threadKeys, indices, comp);
+    my_CTABlocksortPass<NT, grainsize>(keys_shared, tid, count, coop, threadKeys, indices, comp);
     
     // Exchange the values through shared memory.
     bulk::copy_n(bulk::bound<grainsize>(exec), threadValues, local_size, values_shared + local_offset);
