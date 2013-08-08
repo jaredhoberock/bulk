@@ -144,6 +144,131 @@ OutputIterator merge(const bulk::bounded<bound,agent<grainsize> > &e,
 } // end merge
 
 
+template<std::size_t bound,
+         std::size_t grainsize,
+         typename InputIterator1,
+         typename InputIterator2,
+         typename InputIterator3,
+         typename InputIterator4,
+         typename OutputIterator1,
+         typename OutputIterator2,
+         typename Compare>
+__device__
+thrust::pair<OutputIterator1,OutputIterator2>
+  merge_by_key(const bulk::bounded<bound,bulk::agent<grainsize> > &e,
+               InputIterator1 keys_first1, InputIterator1 keys_last1,
+               InputIterator2 keys_first2, InputIterator2 keys_last2,
+               InputIterator3 values_first1, InputIterator4 values_first2,
+               OutputIterator1 keys_result,
+               OutputIterator2 values_result,
+               Compare comp)
+{
+  typedef typename bulk::bounded<bound,bulk::agent<grainsize> >::size_type size_type;
+
+  typedef typename thrust::iterator_value<InputIterator1>::type key_type1;
+  typedef typename thrust::iterator_value<InputIterator2>::type key_type2;
+
+  typedef typename thrust::iterator_value<InputIterator1>::type value_type1;
+  typedef typename thrust::iterator_value<InputIterator2>::type value_type2;
+
+  size_type n1 = keys_last1 - keys_first1;
+  size_type idx1 = 0;
+
+  size_type n2 = keys_last2 - keys_first2;
+  size_type idx2 = 0;
+
+  bulk::uninitialized<key_type1>   key_a;
+  bulk::uninitialized<key_type2>   key_b;
+
+  bulk::uninitialized<value_type1> val_a;
+  bulk::uninitialized<value_type2> val_b;
+
+  if(n1)
+  {
+    key_a.construct(keys_first1[0]);
+    val_a.construct(values_first1[0]);
+  } // end if
+
+  if(n2)
+  {
+    key_b.construct(keys_first2[0]);
+    val_b.construct(values_first2[0]);
+  } // end if
+
+  size_type i = 0;
+  #pragma unroll
+  for(; i < bound; ++i)
+  {
+    // 4 cases:
+    // 0. both ranges are exhausted
+    // 1. range 1 is exhausted
+    // 2. range 2 is exhausted
+    // 3. neither range is exhausted
+
+    const bool exhausted1 = idx1 >= n1;
+    const bool exhausted2 = idx2 >= n2;
+
+    if(exhausted1 && exhausted2)
+    {
+      break;
+    } // end if
+    else if(exhausted1)
+    {
+      keys_result[i] = key_b;
+      values_result[i] = val_b;
+      ++idx2;
+    } // end else if
+    else if(exhausted2)
+    {
+      keys_result[i] = key_a;
+      values_result[i] = val_a;
+      ++idx1;
+    } // end else if
+    else
+    {
+      if(!comp(key_b.get(),key_a.get()))
+      {
+        keys_result[i] = key_a;
+        values_result[i] = val_a;
+        ++idx1;
+
+        if(idx1 < n1)
+        {
+          key_a = keys_first1[idx1];
+          val_a = values_first1[idx1];
+        } // end if
+      } // end if
+      else
+      {
+        keys_result[i] = key_b;
+        values_result[i] = val_b;
+        ++idx2;
+
+        if(idx2 < n2)
+        {
+          key_b = keys_first2[idx2];
+          val_b = values_first2[idx2];
+        } // end if
+      } // end else
+    } // end else
+  } // end for i
+
+  if(n1)
+  {
+    key_a.destroy();
+    val_a.destroy();
+  } // end if
+
+  if(n2)
+  {
+    key_b.destroy();
+    val_b.destroy();
+  } // end if
+
+  return thrust::make_pair(keys_result + i, values_result + i);
+} // end merge_by_key
+
+
 template<std::size_t bound, std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename Compare>
 __device__
 typename thrust::detail::enable_if<

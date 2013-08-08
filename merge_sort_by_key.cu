@@ -18,13 +18,21 @@ void my_CTABlocksortPass(T* keys_shared, int tid, int count, int coop, T* keys, 
   int b0 = min(count, start + VT * (coop / 2));
   int b1 = min(count, start + VT * coop);
   
-  int p = bulk::merge_path(keys_shared + a0, b0 - a0, keys_shared + b0, b1 - b0, diag, comp);
-  
-  mgpu::SerialMerge<VT, true>(keys_shared, a0 + p, b0, b0 + diag - p, b1, keys, indices, comp);
+  int mp = bulk::merge_path(keys_shared + a0, b0 - a0, keys_shared + b0, b1 - b0, diag, comp);
+
+  bulk::agent<VT> exec(threadIdx.x);
+  bulk::merge_by_key(bulk::bound<VT>(exec),
+                     keys_shared + a0 + mp, keys_shared + b0,
+                     keys_shared + b0 + diag - mp, keys_shared + b1,
+                     thrust::make_counting_iterator<int>(0),
+                     thrust::make_counting_iterator<int>(0),
+                     keys,
+                     indices,
+                     comp);
 }
 
 
-template<int NT, int grainsize, typename KeyType, typename ValType, typename Comp>
+template<int groupsize, int grainsize, typename KeyType, typename ValType, typename Comp>
 __device__
 void CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
 {
@@ -39,10 +47,10 @@ void CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize]
   bulk::copy_n(bulk::bound<grainsize>(exec), threadKeys, local_size, keys_shared + local_offset);
   
   // iteratively merge lists until the entire CTA is sorted.
-  for(int coop = 2; coop <= NT; coop *= 2)
+  for(int coop = 2; coop <= groupsize; coop *= 2)
   {
     int indices[grainsize];
-    my_CTABlocksortPass<NT, grainsize>(keys_shared, tid, count, coop, threadKeys, indices, comp);
+    my_CTABlocksortPass<groupsize, grainsize>(keys_shared, tid, count, coop, threadKeys, indices, comp);
     
     // Exchange the values through shared memory.
     bulk::copy_n(bulk::bound<grainsize>(exec), threadValues, local_size, values_shared + local_offset);
