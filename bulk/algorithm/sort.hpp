@@ -2,6 +2,7 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/execution_policy.hpp>
+#include <thrust/detail/swap.h>
 
 BULK_NS_PREFIX
 namespace bulk
