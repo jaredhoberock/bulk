@@ -2,60 +2,56 @@
 #include <moderngpu.cuh>
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
-#include <thrust/detail/swap.h>
+#include <thrust/detail/minmax.h>
 #include <bulk/bulk.hpp>
 #include "time_invocation_cuda.hpp"
 
 
-template<int NT, int VT, typename T, typename Comp>
-__device__
-void my_CTABlocksortPass(T* keys_shared, int tid, int count, int coop, T* keys, int* indices, Comp comp)
-{
-  int list = ~(coop - 1) & tid;
-  int diag = min(count, VT * ((coop - 1) & tid));
-  int start = VT * list;
-  int a0 = min(count, start);
-  int b0 = min(count, start + VT * (coop / 2));
-  int b1 = min(count, start + VT * coop);
-  
-  int mp = bulk::merge_path(keys_shared + a0, b0 - a0, keys_shared + b0, b1 - b0, diag, comp);
-
-  bulk::agent<VT> exec(threadIdx.x);
-  bulk::merge_by_key(bulk::bound<VT>(exec),
-                     keys_shared + a0 + mp, keys_shared + b0,
-                     keys_shared + b0 + diag - mp, keys_shared + b1,
-                     thrust::make_counting_iterator<int>(0),
-                     thrust::make_counting_iterator<int>(0),
-                     keys,
-                     indices,
-                     comp);
-}
-
-
-template<int groupsize, int grainsize, typename KeyType, typename ValType, typename Comp>
+template<std::size_t groupsize, std::size_t grainsize, typename KeyType, typename ValType, typename Comp>
 __device__
 void CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
 {
   bulk::agent<grainsize> exec(threadIdx.x);
 
+  typedef typename bulk::agent<grainsize>::size_type size_type;
+
   // each agent sorts its local partition
-  int local_offset = grainsize * tid;
-  int local_size = max(0, min(grainsize, count - local_offset));
+  size_type local_offset = grainsize * tid;
+  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, count - local_offset));
   bulk::stable_sort_by_key(bulk::bound<grainsize>(exec), threadKeys, threadKeys + local_size, threadValues, comp);
   
   // store the sorted partitions back to smem
   bulk::copy_n(bulk::bound<grainsize>(exec), threadKeys, local_size, keys_shared + local_offset);
   
   // iteratively merge lists until the entire CTA is sorted.
-  for(int coop = 2; coop <= groupsize; coop *= 2)
+  for(size_type agents_per_merge = 2; agents_per_merge <= groupsize; agents_per_merge *= 2)
   {
-    int indices[grainsize];
-    my_CTABlocksortPass<groupsize, grainsize>(keys_shared, tid, count, coop, threadKeys, indices, comp);
+    // do some bookkeeping to figure out where the lists to merge begin
+    size_type list = ~(agents_per_merge - 1) & tid;
+    size_type diag = min(count, grainsize * ((agents_per_merge - 1) & tid));
+    size_type start = grainsize * list;
+    size_type a0 = min(count, start);
+    size_type b0 = min(count, start + grainsize * (agents_per_merge / 2));
+    size_type b1 = min(count, start + grainsize * agents_per_merge);
     
-    // Exchange the values through shared memory.
+    // each agent runs merge_path
+    size_type mp = bulk::merge_path(keys_shared + a0, b0 - a0, keys_shared + b0, b1 - b0, diag, comp);
+
+    // each agent merges their local lists
+    size_type gather_indices[grainsize];
+    bulk::merge_by_key(bulk::bound<grainsize>(exec),
+                       keys_shared + a0 + mp, keys_shared + b0,
+                       keys_shared + b0 + diag - mp, keys_shared + b1,
+                       thrust::make_counting_iterator<size_type>(0),
+                       thrust::make_counting_iterator<size_type>(0),
+                       threadKeys,
+                       gather_indices,
+                       comp);
+    
+    // move the values through shared memory.
     bulk::copy_n(bulk::bound<grainsize>(exec), threadValues, local_size, values_shared + local_offset);
 
-    bulk::gather(bulk::bound<grainsize>(exec), indices, indices + local_size, values_shared, threadValues);
+    bulk::gather(bulk::bound<grainsize>(exec), gather_indices, gather_indices + local_size, values_shared, threadValues);
     
     // Store results in shared memory in sorted order.
     bulk::copy_n(bulk::bound<grainsize>(exec), threadKeys, local_size, keys_shared + local_offset);
@@ -77,7 +73,7 @@ __global__ void KernelBlocksort(KeyIt1 keysSource_global, ValIt1 valsSource_glob
   const int tile_size = groupsize * grainsize;
   union Shared
   {
-    KeyType keys[groupsize * (grainsize + 1)];
+    KeyType keys[tile_size];
     ValType values[tile_size];
   };
   __shared__ Shared shared;
