@@ -6,21 +6,65 @@
 #include <bulk/bulk.hpp>
 #include "time_invocation_cuda.hpp"
 
-template<int NT, int VT, typename KeyType, typename ValType, typename Comp>
-__device__
-void CTAMergesort(KeyType threadKeys[VT], ValType threadValues[VT], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
-{
-  bulk::agent<VT> exec(threadIdx.x);
 
-  // Stable sort the keys in the thread.
-  int local_size = max(0, min(VT, count - VT * tid));
-  bulk::stable_sort_by_key(bulk::bound<VT>(exec), threadKeys, threadKeys + local_size, threadValues, comp);
+template<int NT, int VT, typename InputIt, typename T>
+__device__
+void DeviceGather(int count, InputIt data, int indices[VT], int tid, T* reg, bool sync)
+{
+  if(count >= NT * VT)
+  {
+    #pragma unroll
+    for(int i = 0; i < VT; ++i)
+    {
+      reg[i] = data[indices[i]];
+    }
+  }
+  else
+  {
+    #pragma unroll
+    for(int i = 0; i < VT; ++i)
+    {
+      int index = NT * i + tid;
+      if(index < count)
+      {
+        reg[i] = data[indices[i]];
+      }
+    }
+  }
+  if(sync) __syncthreads();
+}
+
+
+template<int NT, int grainsize, typename KeyType, typename ValType, typename Comp>
+__device__
+void CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
+{
+  bulk::agent<grainsize> exec(threadIdx.x);
+
+  // each agent sorts its local partition
+  int local_offset = grainsize * tid;
+  int local_size = max(0, min(grainsize, count - local_offset));
+  bulk::stable_sort_by_key(bulk::bound<grainsize>(exec), threadKeys, threadKeys + local_size, threadValues, comp);
   
-  // Store the locally sorted keys into shared memory.
-  mgpu::DeviceThreadToShared<VT>(threadKeys, tid, keys_shared);
+  // store the sorted partitions back to smem
+  bulk::copy_n(bulk::bound<grainsize>(exec), threadKeys, local_size, keys_shared + local_offset);
   
-  // Recursively merge lists until the entire CTA is sorted.
-  mgpu::CTABlocksortLoop<NT, VT, true>(threadValues, keys_shared, values_shared, tid, count, comp);
+  // iteratively merge lists until the entire CTA is sorted.
+  for(int coop = 2; coop <= NT; coop *= 2)
+  {
+    int indices[grainsize];
+    mgpu::CTABlocksortPass<NT, grainsize>(keys_shared, tid, count, coop, threadKeys, indices, comp);
+    
+    // Exchange the values through shared memory.
+    bulk::copy_n(bulk::bound<grainsize>(exec), threadValues, local_size, values_shared + local_offset);
+
+    ::DeviceGather<NT, grainsize>(NT * grainsize, values_shared, indices, tid, threadValues, true);
+    
+    // Store results in shared memory in sorted order.
+    bulk::copy_n(bulk::bound<grainsize>(exec), threadKeys, local_size, keys_shared + local_offset);
+
+    __syncthreads();
+  }
 }
 
 
@@ -117,6 +161,17 @@ void my_sort_by_key_(RandomAccessIterator1 keys_first, RandomAccessIterator1 key
 }
 
 
+struct my_less
+{
+  template<typename T>
+  __host__ __device__
+  bool operator()(const T &x, const T& y)
+  {
+    return x < y;
+  }
+};
+
+
 template<typename T>
 void my_sort_by_key(const thrust::device_vector<T> *unsorted_keys,
                     const thrust::device_vector<T> *unsorted_values,
@@ -125,7 +180,7 @@ void my_sort_by_key(const thrust::device_vector<T> *unsorted_keys,
 {
   *sorted_keys = *unsorted_keys;
   *sorted_values = *unsorted_values;
-  my_sort_by_key_(sorted_keys->begin(), sorted_keys->end(), sorted_values->begin(), thrust::less<T>());
+  my_sort_by_key_(sorted_keys->begin(), sorted_keys->end(), sorted_values->begin(), my_less());
 }
 
 
@@ -141,7 +196,7 @@ void sean_sort_by_key(const thrust::device_vector<T> *unsorted_keys,
   mgpu::MergesortPairs(thrust::raw_pointer_cast(sorted_keys->data()),
                        thrust::raw_pointer_cast(sorted_values->data()),
                        sorted_keys->size(),
-                       thrust::less<T>(),
+                       my_less(),
                        *ctx);
 }
 
@@ -154,7 +209,7 @@ void thrust_sort_by_key(const thrust::device_vector<T> *unsorted_keys,
 {
   *sorted_keys = *unsorted_keys;
   *sorted_values = *unsorted_values;
-  thrust::sort_by_key(sorted_keys->begin(), sorted_keys->end(), sorted_values->begin(), thrust::less<T>());
+  thrust::sort_by_key(sorted_keys->begin(), sorted_keys->end(), sorted_values->begin(), my_less());
 }
 
 
@@ -219,12 +274,12 @@ void validate(size_t n)
 
   thrust::device_vector<T> ref_keys = unsorted_keys;
   thrust::device_vector<T> ref_values = unsorted_values;
-  thrust::sort_by_key(ref_keys.begin(), ref_keys.end(), ref_values.begin());
+  thrust::sort_by_key(ref_keys.begin(), ref_keys.end(), ref_values.begin(), my_less());
 
   thrust::device_vector<T> sorted_keys = unsorted_keys;
   thrust::device_vector<T> sorted_values = unsorted_values;
 
-  my_sort_by_key_(sorted_keys.begin(), sorted_keys.end(), sorted_values.begin(), thrust::less<T>());
+  my_sort_by_key_(sorted_keys.begin(), sorted_keys.end(), sorted_values.begin(), my_less());
 
   std::cout << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
 
