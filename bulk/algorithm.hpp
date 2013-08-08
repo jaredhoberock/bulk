@@ -10,4 +10,5 @@
 #include <bulk/algorithm/adjacent_difference.hpp>
 #include <bulk/algorithm/reduce_by_key.hpp>
 #include <bulk/algorithm/sort.hpp>
+#include <bulk/algorithm/gather.hpp>
 

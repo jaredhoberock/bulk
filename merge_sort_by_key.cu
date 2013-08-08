@@ -7,34 +7,6 @@
 #include "time_invocation_cuda.hpp"
 
 
-template<int NT, int VT, typename InputIt, typename T>
-__device__
-void DeviceGather(int count, InputIt data, int indices[VT], int tid, T* reg, bool sync)
-{
-  if(count >= NT * VT)
-  {
-    #pragma unroll
-    for(int i = 0; i < VT; ++i)
-    {
-      reg[i] = data[indices[i]];
-    }
-  }
-  else
-  {
-    #pragma unroll
-    for(int i = 0; i < VT; ++i)
-    {
-      int index = NT * i + tid;
-      if(index < count)
-      {
-        reg[i] = data[indices[i]];
-      }
-    }
-  }
-  if(sync) __syncthreads();
-}
-
-
 template<int NT, int grainsize, typename KeyType, typename ValType, typename Comp>
 __device__
 void CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
@@ -58,7 +30,7 @@ void CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize]
     // Exchange the values through shared memory.
     bulk::copy_n(bulk::bound<grainsize>(exec), threadValues, local_size, values_shared + local_offset);
 
-    ::DeviceGather<NT, grainsize>(NT * grainsize, values_shared, indices, tid, threadValues, true);
+    bulk::gather(bulk::bound<grainsize>(exec), indices, indices + local_size, values_shared, threadValues);
     
     // Store results in shared memory in sorted order.
     bulk::copy_n(bulk::bound<grainsize>(exec), threadKeys, local_size, keys_shared + local_offset);
