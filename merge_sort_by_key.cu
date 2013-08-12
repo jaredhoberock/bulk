@@ -9,7 +9,7 @@
 
 template<std::size_t groupsize, std::size_t grainsize, typename KeyType, typename ValType, typename Comp>
 __device__
-void inplace_merge_adjacent_partitions(KeyType threadKeys[grainsize], ValType threadValues[grainsize], void* stage_ptr, int tid, int count, int local_size, Comp comp)
+void inplace_merge_adjacent_partitions(KeyType threadKeys[grainsize], ValType threadValues[grainsize], void* stage_ptr, int count, int local_size, Comp comp)
 {
   union stage_t
   {
@@ -24,7 +24,7 @@ void inplace_merge_adjacent_partitions(KeyType threadKeys[grainsize], ValType th
 
   typedef typename bulk::agent<grainsize>::size_type size_type;
 
-  size_type local_offset = grainsize * tid;
+  size_type local_offset = grainsize * exec.index();
 
   for(size_type num_agents_per_merge = 2; num_agents_per_merge <= groupsize; num_agents_per_merge *= 2)
   {
@@ -34,8 +34,8 @@ void inplace_merge_adjacent_partitions(KeyType threadKeys[grainsize], ValType th
     __syncthreads();
 
     // find the index of the first array this agent will merge
-    size_type list = ~(num_agents_per_merge - 1) & tid;
-    size_type diag = thrust::min<size_type>(count, grainsize * ((num_agents_per_merge - 1) & tid));
+    size_type list = ~(num_agents_per_merge - 1) & exec.index();
+    size_type diag = thrust::min<size_type>(count, grainsize * ((num_agents_per_merge - 1) & exec.index()));
     size_type start = grainsize * list;
 
     // the size of each of the two input arrays we're merging
@@ -89,11 +89,11 @@ void my_CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsi
   // avoid dynamic sizes when possible
   if(count == groupsize * grainsize)
   {
-    inplace_merge_adjacent_partitions<groupsize, grainsize>(threadKeys, threadValues, stage_ptr, tid, groupsize * grainsize, grainsize, comp);
+    inplace_merge_adjacent_partitions<groupsize, grainsize>(threadKeys, threadValues, stage_ptr, groupsize * grainsize, grainsize, comp);
   } // end if
   else
   {
-    inplace_merge_adjacent_partitions<groupsize, grainsize>(threadKeys, threadValues, stage_ptr, tid, count, local_size, comp);
+    inplace_merge_adjacent_partitions<groupsize, grainsize>(threadKeys, threadValues, stage_ptr, count, local_size, comp);
   } // end else
 } // end my_CTAMergesort()
 
