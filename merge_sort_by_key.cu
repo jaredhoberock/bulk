@@ -9,96 +9,135 @@
 
 template<std::size_t groupsize, std::size_t grainsize, typename KeyType, typename ValType, typename Comp>
 __device__
-void CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize], KeyType* keys_shared, ValType* values_shared, int count, int tid, Comp comp)
+void inplace_merge_adjacent_partitions(KeyType threadKeys[grainsize], ValType threadValues[grainsize], void* stage_ptr, int tid, int count, int local_size, Comp comp)
 {
+  union stage_t
+  {
+    KeyType *keys;
+    ValType *vals;
+  };
+  
+  stage_t stage;
+  stage.keys = reinterpret_cast<KeyType*>(stage_ptr);
+
   bulk::agent<grainsize> exec(threadIdx.x);
 
   typedef typename bulk::agent<grainsize>::size_type size_type;
 
-  // each agent sorts its local partition
   size_type local_offset = grainsize * tid;
-  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, count - local_offset));
-  bulk::stable_sort_by_key(bulk::bound<grainsize>(exec), threadKeys, threadKeys + local_size, threadValues, comp);
-  
-  // store the sorted partitions back to smem
-  bulk::copy_n(bulk::bound<grainsize>(exec), threadKeys, local_size, keys_shared + local_offset);
-  
-  // iteratively merge lists until the entire CTA is sorted.
-  for(size_type agents_per_merge = 2; agents_per_merge <= groupsize; agents_per_merge *= 2)
-  {
-    // do some bookkeeping to figure out where the lists to merge begin
-    size_type list = ~(agents_per_merge - 1) & tid;
-    size_type diag = min(count, grainsize * ((agents_per_merge - 1) & tid));
-    size_type start = grainsize * list;
-    size_type a0 = min(count, start);
-    size_type b0 = min(count, start + grainsize * (agents_per_merge / 2));
-    size_type b1 = min(count, start + grainsize * agents_per_merge);
-    
-    // each agent runs merge_path
-    size_type mp = bulk::merge_path(keys_shared + a0, b0 - a0, keys_shared + b0, b1 - b0, diag, comp);
 
-    // each agent merges their local lists
+  for(size_type num_agents_per_merge = 2; num_agents_per_merge <= groupsize; num_agents_per_merge *= 2)
+  {
+    // copy keys into the stage so we can dynamically index them
+    bulk::copy_n(bulk::bound<grainsize>(exec), threadKeys, local_size, stage.keys + local_offset);
+
+    __syncthreads();
+
+    // find the index of the first array this agent will merge
+    size_type list = ~(num_agents_per_merge - 1) & tid;
+    size_type diag = thrust::min<size_type>(count, grainsize * ((num_agents_per_merge - 1) & tid));
+    size_type start = grainsize * list;
+
+    // the size of each of the two input arrays we're merging
+    size_type input_size = grainsize * (num_agents_per_merge / 2);
+
+    size_type partition_first1 = thrust::min<size_type>(count, start);
+    size_type partition_first2 = thrust::min<size_type>(count, partition_first1 + input_size);
+    size_type partition_last2  = thrust::min<size_type>(count, partition_first2 + input_size);
+
+    size_type n1 = partition_first2 - partition_first1;
+    size_type n2 = partition_last2  - partition_first2;
+
+    size_type mp = bulk::merge_path(stage.keys + partition_first1, n1, stage.keys + partition_first2, n2, diag, comp);
+
+    // each agent merges sequentially locally
+    // note the source index of each merged value so that we can gather values into merged order later
     size_type gather_indices[grainsize];
     bulk::merge_by_key(bulk::bound<grainsize>(exec),
-                       keys_shared + a0 + mp, keys_shared + b0,
-                       keys_shared + b0 + diag - mp, keys_shared + b1,
-                       thrust::make_counting_iterator<size_type>(0),
-                       thrust::make_counting_iterator<size_type>(0),
+                       stage.keys + partition_first1 + mp,        stage.keys + partition_first2,
+                       stage.keys + partition_first2 + diag - mp, stage.keys + partition_last2,
+                       thrust::make_counting_iterator<size_type>(partition_first1 + mp),
+                       thrust::make_counting_iterator<size_type>(partition_first2 + diag - mp),
                        threadKeys,
                        gather_indices,
                        comp);
     
-    // move the values through shared memory.
-    bulk::copy_n(bulk::bound<grainsize>(exec), threadValues, local_size, values_shared + local_offset);
+    // move values into the stage so we can index them
+    bulk::copy_n(bulk::bound<grainsize>(exec), threadValues, local_size, stage.vals + local_offset);
 
-    bulk::gather(bulk::bound<grainsize>(exec), gather_indices, gather_indices + local_size, values_shared, threadValues);
-    
-    // Store results in shared memory in sorted order.
-    bulk::copy_n(bulk::bound<grainsize>(exec), threadKeys, local_size, keys_shared + local_offset);
+    // gather values into registers
+    bulk::gather(bulk::bound<grainsize>(exec), gather_indices, gather_indices + local_size, stage.vals, threadValues);
 
     __syncthreads();
-  }
-}
+  } // end for
+} // end inplace_merge_adjacent_partitions()
+
+
+template<std::size_t groupsize, std::size_t grainsize, typename KeyType, typename ValType, typename Comp>
+__device__
+void my_CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize], void* stage_ptr, int count, int tid, Comp comp)
+{
+  bulk::agent<grainsize> exec(threadIdx.x);
+  typedef typename bulk::agent<grainsize>::size_type size_type;
+
+  size_type local_offset = grainsize * tid;
+  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, count - local_offset));
+
+  bulk::stable_sort_by_key(bulk::bound<grainsize>(exec), threadKeys, threadKeys + local_size, threadValues, comp);
+  
+  // Recursively merge lists until the entire CTA is sorted.
+  // avoid dynamic sizes when possible
+  if(count == groupsize * grainsize)
+  {
+    inplace_merge_adjacent_partitions<groupsize, grainsize>(threadKeys, threadValues, stage_ptr, tid, groupsize * grainsize, grainsize, comp);
+  } // end if
+  else
+  {
+    inplace_merge_adjacent_partitions<groupsize, grainsize>(threadKeys, threadValues, stage_ptr, tid, count, local_size, comp);
+  } // end else
+} // end my_CTAMergesort()
 
 
 template<typename Tuning, typename KeyIt1, typename KeyIt2, typename ValIt1, typename ValIt2, typename Comp>
-__global__ void KernelBlocksort(KeyIt1 keysSource_global, ValIt1 valsSource_global, int count, KeyIt2 keysDest_global, ValIt2 valsDest_global, Comp comp)
+__global__ void my_KernelBlocksort(KeyIt1 keysSource_global, ValIt1 valsSource_global, int count, KeyIt2 keysDest_global, ValIt2 valsDest_global, Comp comp)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
   typedef typename std::iterator_traits<KeyIt1>::value_type KeyType;
   typedef typename std::iterator_traits<ValIt1>::value_type ValType;
   
-  const int groupsize = Params::NT;
-  const int grainsize = Params::VT;
-  const int tile_size = groupsize * grainsize;
-  union Shared
+  const int NT = Params::NT;
+  const int VT = Params::VT;
+  const int NV = NT * VT;
+  union Shared 
   {
-    KeyType keys[tile_size];
-    ValType values[tile_size];
+    KeyType keys[NV];
+    ValType values[NV];
   };
   __shared__ Shared shared;
   
   int tid = threadIdx.x;
   int block = blockIdx.x;
-  int gid = tile_size * block;
-  int count2 = min(tile_size, count - gid);
+  int gid = NV * block;
+  int count2 = min(NV, count - gid);
   
   // Load the values into thread order.
-  ValType threadValues[grainsize];
-  mgpu::DeviceGlobalToShared<groupsize, grainsize>(count2, valsSource_global + gid, tid, shared.values);
-  mgpu::DeviceSharedToThread<grainsize>(shared.values, tid, threadValues);
+  ValType threadValues[VT];
+  mgpu::DeviceGlobalToShared<NT, VT>(count2, valsSource_global + gid, tid, shared.values);
+  mgpu::DeviceSharedToThread<VT>(shared.values, tid, threadValues);
   
   // Load keys into shared memory and transpose into register in thread order.
-  KeyType threadKeys[grainsize];
-  mgpu::DeviceGlobalToShared<groupsize, grainsize>(count2, keysSource_global + gid, tid, shared.keys);
-  mgpu::DeviceSharedToThread<grainsize>(shared.keys, tid, threadKeys);
-  
-  ::CTAMergesort<groupsize, grainsize, true>(threadKeys, threadValues, shared.keys, shared.values, count2, tid, comp);
+  KeyType threadKeys[VT];
+  mgpu::DeviceGlobalToShared<NT, VT>(count2, keysSource_global + gid, tid, shared.keys);
+  mgpu::DeviceSharedToThread<VT>(shared.keys, tid, threadKeys);
+
+  my_CTAMergesort<NT, VT>(threadKeys, threadValues, shared.keys, count2, tid, comp);
   
   // Store the sorted keys to global.
-  mgpu::DeviceSharedToGlobal<groupsize, grainsize>(count2, shared.keys, tid, keysDest_global + gid);
-  mgpu::DeviceThreadToShared<grainsize>(threadValues, tid, shared.values);
-  mgpu::DeviceSharedToGlobal<groupsize, grainsize>(count2, shared.values, tid, valsDest_global + gid);
+  mgpu::DeviceThreadToShared<VT>(threadKeys, tid, shared.keys);
+  mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.keys, tid, keysDest_global + gid);
+  
+  mgpu::DeviceThreadToShared<VT>(threadValues, tid, shared.values);
+  mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.values, tid, valsDest_global + gid);
 }
 
 
@@ -121,7 +160,7 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Com
   ValType* valsSource = values_global;
   ValType* valsDest = valsDestDevice->get();
   
-  mgpu::KernelBlocksort<Tuning, true><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, (1 & numPasses) ? keysDest : keysSource, (1 & numPasses) ? valsDest : valsSource, comp);
+  my_KernelBlocksort<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, (1 & numPasses) ? keysDest : keysSource, (1 & numPasses) ? valsDest : valsSource, comp);
 
   if(1 & numPasses)
   {
@@ -276,6 +315,28 @@ void validate(size_t n)
 
   std::cout << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
 
+  if(n < 30 && sorted_keys != ref_keys)
+  {
+    std::cerr << "reference: " << std::endl;
+
+    for(int i = 0; i < n; ++i)
+    {
+      std::cerr << ref_keys[i] << " ";
+    }
+
+    std::cerr << std::endl;
+
+
+    std::cerr << "output: " << std::endl;
+
+    for(int i = 0; i < n; ++i)
+    {
+      std::cerr << sorted_keys[i] << " ";
+    }
+
+    std::cerr << std::endl;
+  }
+
   assert(sorted_keys == ref_keys);
   assert(sorted_values == ref_values);
 }
@@ -283,10 +344,14 @@ void validate(size_t n)
 
 int main()
 {
+//  std::cout << "small input: " << std::endl;
+//  std::cout << "int: " << std::endl;
+//
+//  validate<int>(20);
+
   size_t n = 12345678;
 
-  //validate<int>(n);
-  validate<double>(n);
+  validate<int>(n);
 
   std::cout << "Large input: " << std::endl;
   std::cout << "int: " << std::endl;
