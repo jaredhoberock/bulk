@@ -75,12 +75,12 @@ void inplace_merge_adjacent_partitions(KeyType threadKeys[grainsize], ValType th
 
 template<std::size_t groupsize, std::size_t grainsize, typename KeyType, typename ValType, typename Comp>
 __device__
-void my_CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize], void* stage_ptr, int count, int tid, Comp comp)
+void my_CTAMergesort(KeyType threadKeys[grainsize], ValType threadValues[grainsize], void* stage_ptr, int count, Comp comp)
 {
   bulk::agent<grainsize> exec(threadIdx.x);
   typedef typename bulk::agent<grainsize>::size_type size_type;
 
-  size_type local_offset = grainsize * tid;
+  size_type local_offset = grainsize * exec.index();
   size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, count - local_offset));
 
   bulk::stable_sort_by_key(bulk::bound<grainsize>(exec), threadKeys, threadKeys + local_size, threadValues, comp);
@@ -130,7 +130,7 @@ __global__ void my_KernelBlocksort(KeyIt1 keysSource_global, ValIt1 valsSource_g
   mgpu::DeviceGlobalToShared<NT, VT>(count2, keysSource_global + gid, tid, shared.keys);
   mgpu::DeviceSharedToThread<VT>(shared.keys, tid, threadKeys);
 
-  my_CTAMergesort<NT, VT>(threadKeys, threadValues, shared.keys, count2, tid, comp);
+  my_CTAMergesort<NT, VT>(threadKeys, threadValues, shared.keys, count2, comp);
   
   // Store the sorted keys to global.
   mgpu::DeviceThreadToShared<VT>(threadKeys, tid, shared.keys);
