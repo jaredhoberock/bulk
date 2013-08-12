@@ -25,11 +25,21 @@ RandomAccessIterator3 gather(const bounded<bound,agent<grainsize> > &,
 
   size_type n = map_last - map_first;
 
-  for(size_type i = 0; i < bound; ++i)
+  if(bound <= n)
   {
-    if(i < n)
+    for(size_type i = 0; i < bound; ++i)
     {
       result[i] = input_first[map_first[i]];
+    }
+  }
+  else
+  {
+    for(size_type i = 0; i < bound; ++i)
+    {
+      if(i < n)
+      {
+        result[i] = input_first[map_first[i]];
+      }
     }
   }
 
