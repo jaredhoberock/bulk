@@ -25,14 +25,23 @@ RandomAccessIterator2 copy_n(const bounded<bound,agent<grainsize> > &b,
 {
   typedef typename bounded<bound,agent<grainsize> >::size_type size_type;
 
-  #pragma unroll
-  for(size_type i = 0; i < b.bound(); ++i)
+  if(bound <= n)
   {
-    if(i < n)
+    for(size_type i = 0; i < b.bound(); ++i)
     {
       result[i] = first[i];
-    } // end if
-  } // end for i
+    } // end for i
+  } // end if
+  else
+  {
+    for(size_type i = 0; i < b.bound(); ++i)
+    {
+      if(i < n)
+      {
+        result[i] = first[i];
+      } // end if
+    } // end for i
+  } // end else
 
   return result + n;
 } // end copy_n()
