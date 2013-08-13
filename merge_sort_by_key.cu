@@ -7,146 +7,21 @@
 #include "time_invocation_cuda.hpp"
 
 
-template<std::size_t bound, std::size_t groupsize, std::size_t grainsize, typename KeyType, typename ValType, typename Comp>
-__device__
-typename thrust::detail::enable_if<
-  bound <= groupsize * grainsize
->::type
-inplace_merge_adjacent_partitions(bulk::bounded<bound,bulk::concurrent_group<bulk::agent<grainsize>, groupsize> > &g,
-                                  KeyType threadKeys[grainsize], ValType threadValues[grainsize], void* stage_ptr, int count, int local_size, Comp comp)
-{
-  union stage_t
-  {
-    KeyType *keys;
-    ValType *vals;
-  };
-  
-  stage_t stage;
-  stage.keys = reinterpret_cast<KeyType*>(stage_ptr);
-
-  typedef typename bulk::agent<grainsize>::size_type size_type;
-
-  size_type local_offset = grainsize * g.this_exec.index();
-
-  for(size_type num_agents_per_merge = 2; num_agents_per_merge <= groupsize; num_agents_per_merge *= 2)
-  {
-    // copy keys into the stage so we can dynamically index them
-    bulk::copy_n(bulk::bound<grainsize>(g.this_exec), threadKeys, local_size, stage.keys + local_offset);
-
-    g.wait();
-
-    // find the index of the first array this agent will merge
-    size_type list = ~(num_agents_per_merge - 1) & g.this_exec.index();
-    size_type diag = thrust::min<size_type>(count, grainsize * ((num_agents_per_merge - 1) & g.this_exec.index()));
-    size_type start = grainsize * list;
-
-    // the size of each of the two input arrays we're merging
-    size_type input_size = grainsize * (num_agents_per_merge / 2);
-
-    size_type partition_first1 = thrust::min<size_type>(count, start);
-    size_type partition_first2 = thrust::min<size_type>(count, partition_first1 + input_size);
-    size_type partition_last2  = thrust::min<size_type>(count, partition_first2 + input_size);
-
-    size_type n1 = partition_first2 - partition_first1;
-    size_type n2 = partition_last2  - partition_first2;
-
-    size_type mp = bulk::merge_path(stage.keys + partition_first1, n1, stage.keys + partition_first2, n2, diag, comp);
-
-    // each agent merges sequentially locally
-    // note the source index of each merged value so that we can gather values into merged order later
-    size_type gather_indices[grainsize];
-    bulk::merge_by_key(bulk::bound<grainsize>(g.this_exec),
-                       stage.keys + partition_first1 + mp,        stage.keys + partition_first2,
-                       stage.keys + partition_first2 + diag - mp, stage.keys + partition_last2,
-                       thrust::make_counting_iterator<size_type>(partition_first1 + mp),
-                       thrust::make_counting_iterator<size_type>(partition_first2 + diag - mp),
-                       threadKeys,
-                       gather_indices,
-                       comp);
-    
-    // move values into the stage so we can index them
-    bulk::copy_n(bulk::bound<grainsize>(g.this_exec), threadValues, local_size, stage.vals + local_offset);
-
-    // gather values into registers
-    bulk::gather(bulk::bound<grainsize>(g.this_exec), gather_indices, gather_indices + local_size, stage.vals, threadValues);
-
-    g.wait();
-  } // end for
-} // end inplace_merge_adjacent_partitions()
-
-
-template<std::size_t bound, std::size_t groupsize, std::size_t grainsize, typename KeyType, typename ValType, typename Comp>
-__device__
-typename thrust::detail::enable_if<
-  bound <= groupsize * grainsize
->::type
-stable_sort_by_key(bulk::bounded<bound,bulk::concurrent_group<bulk::agent<grainsize>,groupsize> > &g,
-                   KeyType threadKeys[grainsize], ValType threadValues[grainsize], void* stage_ptr, int count, Comp comp)
-{
-  typedef typename bulk::agent<grainsize>::size_type size_type;
-
-  const size_type tile_size = groupsize * grainsize;
-
-  size_type local_offset = grainsize * g.this_exec.index();
-  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, count - local_offset));
-
-  // each agent sorts its local partition of the array
-  bulk::stable_sort_by_key(bulk::bound<grainsize>(g.this_exec), threadKeys, threadKeys + local_size, threadValues, comp);
-  
-  // merge adjacent partitions together
-  // avoid dynamic sizes when possible
-  if(count == tile_size)
-  {
-    inplace_merge_adjacent_partitions(g, threadKeys, threadValues, stage_ptr, tile_size, grainsize, comp);
-  } // end if
-  else
-  {
-    inplace_merge_adjacent_partitions(g, threadKeys, threadValues, stage_ptr, count, local_size, comp);
-  } // end else
-} // end my_CTAMergesort()
-
-
-template<typename Tuning, typename KeyIt1, typename KeyIt2, typename ValIt1, typename ValIt2, typename Comp>
-__global__ void my_KernelBlocksort(KeyIt1 keysSource_global, ValIt1 valsSource_global, int count, KeyIt2 keysDest_global, ValIt2 valsDest_global, Comp comp)
+template<typename Tuning, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
+__global__ void stable_sort_each_kernel(RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int count, Compare comp)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
-  typedef typename std::iterator_traits<KeyIt1>::value_type KeyType;
-  typedef typename std::iterator_traits<ValIt1>::value_type ValType;
   
-  const int NT = Params::NT;
-  const int VT = Params::VT;
-  const int NV = NT * VT;
-  union Shared 
-  {
-    KeyType keys[NV];
-    ValType values[NV];
-  };
-  __shared__ Shared shared;
+  const int groupsize = Params::NT;
+  const int grainsize = Params::VT;
+  const int tilesize = groupsize * grainsize;
   
-  int tid = threadIdx.x;
-  int block = blockIdx.x;
-  int gid = NV * block;
-  int count2 = min(NV, count - gid);
-  
-  // Load the values into thread order.
-  ValType threadValues[VT];
-  mgpu::DeviceGlobalToShared<NT, VT>(count2, valsSource_global + gid, tid, shared.values);
-  mgpu::DeviceSharedToThread<VT>(shared.values, tid, threadValues);
-  
-  // Load keys into shared memory and transpose into register in thread order.
-  KeyType threadKeys[VT];
-  mgpu::DeviceGlobalToShared<NT, VT>(count2, keysSource_global + gid, tid, shared.keys);
-  mgpu::DeviceSharedToThread<VT>(shared.keys, tid, threadKeys);
+  bulk::concurrent_group<bulk::agent<grainsize>,groupsize> g(0, bulk::agent<grainsize>(threadIdx.x), blockIdx.x);
 
-  bulk::concurrent_group<bulk::agent<VT>,NT> g(0, bulk::agent<VT>(threadIdx.x), blockIdx.x);
-  stable_sort_by_key(bulk::bound<NV>(g), threadKeys, threadValues, shared.keys, count2, comp);
-  
-  // Store the sorted keys to global.
-  mgpu::DeviceThreadToShared<VT>(threadKeys, tid, shared.keys);
-  mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.keys, tid, keysDest_global + gid);
-  
-  mgpu::DeviceThreadToShared<VT>(threadValues, tid, shared.values);
-  mgpu::DeviceSharedToGlobal<NT, VT>(count2, shared.values, tid, valsDest_global + gid);
+  int gid = tilesize * g.index();
+  int count2 = min(tilesize, count - gid);
+
+  bulk::stable_sort_by_key(bulk::bound<tilesize>(g), keys_first + gid, keys_first + gid + count2, values_first + gid, comp);
 }
 
 
@@ -168,14 +43,8 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Com
   KeyType* keysDest = keysDestDevice->get();
   ValType* valsSource = values_global;
   ValType* valsDest = valsDestDevice->get();
-  
-  my_KernelBlocksort<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, (1 & numPasses) ? keysDest : keysSource, (1 & numPasses) ? valsDest : valsSource, comp);
 
-  if(1 & numPasses)
-  {
-    std::swap(keysSource, keysDest);
-    std::swap(valsSource, valsDest);
-  }
+  stable_sort_each_kernel<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, comp);
   
   for(int pass = 0; pass < numPasses; ++pass) 
   {
@@ -186,6 +55,11 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Com
 
     std::swap(keysDest, keysSource);
     std::swap(valsDest, valsSource);
+  }
+
+  if(1 & numPasses)
+  {
+    thrust::copy_n(thrust::cuda::tag(), thrust::make_zip_iterator(thrust::make_tuple(keysSource, valsSource)), count, thrust::make_zip_iterator(thrust::make_tuple(keysDest, valsDest)));
   }
 }
 
