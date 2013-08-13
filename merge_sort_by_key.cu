@@ -25,20 +25,10 @@ __global__ void stable_sort_each_kernel(RandomAccessIterator1 keys_first, Random
 }
 
 
-template<int NT, int VT, typename It1, typename It2, typename T, typename Comp>
+template<int NT, int VT, typename T, typename Comp>
 __device__
-void my_DeviceMergeKeysIndices(It1 a_global, It2 b_global, int4 range, int tid, T* keys_shared, T* results, int* indices, Comp comp)
+void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, T* results, int* indices, Comp comp)
 {
-  int a0 = range.x;
-  int a1 = range.y;
-  int b0 = range.z;
-  int b1 = range.w;
-  int aCount = a1 - a0;
-  int bCount = b1 - b0;
-  
-  // Load the data into shared memory.
-  mgpu::DeviceLoad2ToShared<NT, VT, VT>(a_global + a0, aCount, b_global + b0, bCount, tid, keys_shared);
-  
   // Run a merge path to find the start of the serial merge for each thread.
   int diag = VT * tid;
   int mp = mgpu::MergePath<mgpu::MgpuBoundsLower>(keys_shared, aCount, keys_shared + aCount, bCount, diag, comp);
@@ -61,16 +51,24 @@ void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
 	            KeyType* keys_shared, int* indices_shared, KeysIt3 keys_global,
 	            ValsIt3 vals_global, Comp comp)
 {
+  int a0 = range.x;
+  int a1 = range.y;
+  int b0 = range.z;
+  int b1 = range.w;
+  int aCount = a1 - a0;
+  int bCount = b1 - b0;
+  
+  // Load the keys into shared memory.
+  mgpu::DeviceLoad2ToShared<NT, VT, VT>(aKeys_global + a0, aCount, bKeys_global + b0, bCount, tid, keys_shared);
+
   KeyType results[VT];
   int indices[VT];
-  my_DeviceMergeKeysIndices<NT, VT>(aKeys_global, bKeys_global, range, tid, keys_shared, results, indices, comp);
+  my_DeviceMergeKeysIndices<NT, VT>(tid, keys_shared, aCount, bCount, results, indices, comp);
   
   // Store merge results back to shared memory.
   mgpu::DeviceThreadToShared<VT>(results, tid, keys_shared);
   
   // Store merged keys to global memory.
-  int aCount = range.y - range.x;
-  int bCount = range.w - range.z;
   mgpu::DeviceSharedToGlobal<NT, VT>(aCount + bCount, keys_shared, tid, keys_global + NT * VT * block);
   
   // Copy the values.
