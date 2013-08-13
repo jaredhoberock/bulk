@@ -2,6 +2,7 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/execution_policy.hpp>
+#include <bulk/algorithm/detail/stable_merge_sort.hpp>
 #include <thrust/detail/swap.h>
 
 BULK_NS_PREFIX
@@ -132,6 +133,23 @@ void stable_sort(const bounded<bound,agent<grainsize> > &exec,
 {
   bulk::detail::sort_detail::stable_odd_even_transpose_sort(exec, first, last, comp);
 } // end stable_sort()
+
+
+template<std::size_t bound, std::size_t groupsize, std::size_t grainsize,
+         typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename Compare>
+__device__
+typename thrust::detail::enable_if<
+  bound <= groupsize * grainsize
+>::type
+stable_sort_by_key(bulk::bounded<bound,bulk::concurrent_group<bulk::agent<grainsize>,groupsize> > &g,
+                   RandomAccessIterator1 keys_first, RandomAccessIterator1 keys_last,
+                   RandomAccessIterator2 values_first,
+                   Compare comp)
+{
+  bulk::detail::stable_merge_sort_by_key(g, keys_first, keys_last, values_first, comp);
+} // end stable_sort_by_key()
 
 
 } // end bulk
