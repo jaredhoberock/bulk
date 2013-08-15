@@ -61,35 +61,40 @@ void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
 	            KeyType* keys_shared, int* indices_shared, KeysIt3 keys_global,
 	            ValsIt3 vals_global, Comp comp)
 {
-  bulk::concurrent_group<bulk::agent<VT>, NT> exec(0, bulk::agent<VT>(threadIdx.x), blockIdx.x);
+  bulk::concurrent_group<bulk::agent<VT>, NT> g(0, bulk::agent<VT>(threadIdx.x), blockIdx.x);
+  typedef typename bulk::concurrent_group<bulk::agent<VT>,NT>::size_type size_type;
 
-  int a0 = range.x;
-  int a1 = range.y;
-  int b0 = range.z;
-  int b1 = range.w;
-  int aCount = a1 - a0;
-  int bCount = b1 - b0;
+  size_type a0 = range.x;
+  size_type a1 = range.y;
+  size_type b0 = range.z;
+  size_type b1 = range.w;
+  size_type aCount = a1 - a0;
+  size_type bCount = b1 - b0;
+  size_type n = aCount + bCount;
   
   // Load the keys into shared memory.
-  bulk::copy_n(bulk::bound<NT*VT>(exec),
+  bulk::copy_n(bulk::bound<NT*VT>(g),
                make_join_iterator(aKeys_global + a0, aCount, aKeys_global + b0),
                aCount + bCount,
                keys_shared);
 
-  KeyType results[VT];
-  int indices[VT];
+  KeyType   results[VT];
+  size_type indices[VT];
   my_DeviceMergeKeysIndices<NT, VT>(tid, keys_shared, aCount, bCount, results, indices, comp);
   
-  // Store merge results back to shared memory.
-  mgpu::DeviceThreadToShared<VT>(results, tid, keys_shared);
+  // each agent stores merged keys back to shared memory
+  size_type local_offset = VT * g.this_exec.index();
+  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(VT, n - local_offset));
+  bulk::copy_n(bulk::bound<VT>(g.this_exec), results, local_size, keys_shared + local_offset);
+  g.wait();
   
-  // Store merged keys to global memory.
+  // store merged keys to the result
   mgpu::DeviceSharedToGlobal<NT, VT>(aCount + bCount, keys_shared, tid, keys_global + NT * VT * block);
   
   // Copy the values.
   mgpu::DeviceThreadToShared<VT>(indices, tid, indices_shared);
   
-  bulk::gather(bulk::bound<NT*VT>(exec),
+  bulk::gather(bulk::bound<NT*VT>(g),
                indices_shared, indices_shared + aCount + bCount,
                make_join_iterator(aVals_global + a0, aCount, aVals_global + b0),
                vals_global + NT * VT * block);
