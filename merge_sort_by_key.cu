@@ -5,6 +5,7 @@
 #include <thrust/detail/minmax.h>
 #include <bulk/bulk.hpp>
 #include "time_invocation_cuda.hpp"
+#include "join_iterator.hpp"
 
 
 template<typename Tuning, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
@@ -31,7 +32,7 @@ void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, 
 {
   // Run a merge path to find the start of the serial merge for each thread.
   int diag = VT * tid;
-  int mp = mgpu::MergePath<mgpu::MgpuBoundsLower>(keys_shared, aCount, keys_shared + aCount, bCount, diag, comp);
+  int mp = bulk::merge_path(keys_shared, aCount, keys_shared + aCount, bCount, diag, comp);
   
   // Compute the ranges of the sources in shared memory.
   int a0tid = mp;
@@ -40,17 +41,28 @@ void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, 
   int b1tid = aCount + bCount;
   
   // Serial merge into register.
-  mgpu::SerialMerge<VT, true>(keys_shared, a0tid, a1tid, b0tid, b1tid, results, indices, comp);
+  bulk::agent<VT> exec(threadIdx.x);
+  bulk::merge_by_key(bulk::bound<VT>(exec),
+                     keys_shared + a0tid, keys_shared + a1tid,
+                     keys_shared + b0tid, keys_shared + b1tid,
+                     thrust::make_counting_iterator<int>(a0tid),
+                     thrust::make_counting_iterator<int>(b0tid),
+                     results,
+                     indices,
+                     comp);
+  __syncthreads();
 }
 
 
-template<int NT, int VT, typename KeysIt1, typename KeysIt2, typename KeysIt3, typename ValsIt1, typename ValsIt2, typename KeyType, typename ValsIt3, typename Comp>
+template<int NT, int VT, typename KeysIt1, typename KeysIt3, typename ValsIt1, typename KeyType, typename ValsIt3, typename Comp>
 __device__
 void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, 
-                    KeysIt2 bKeys_global, ValsIt2 bVals_global, int tid, int block, int4 range,
+                    int tid, int block, int4 range,
 	            KeyType* keys_shared, int* indices_shared, KeysIt3 keys_global,
 	            ValsIt3 vals_global, Comp comp)
 {
+  bulk::concurrent_group<bulk::agent<VT>, NT> exec(0, bulk::agent<VT>(threadIdx.x), blockIdx.x);
+
   int a0 = range.x;
   int a1 = range.y;
   int b0 = range.z;
@@ -59,7 +71,10 @@ void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
   int bCount = b1 - b0;
   
   // Load the keys into shared memory.
-  mgpu::DeviceLoad2ToShared<NT, VT, VT>(aKeys_global + a0, aCount, bKeys_global + b0, bCount, tid, keys_shared);
+  bulk::copy_n(bulk::bound<NT*VT>(exec),
+               make_join_iterator(aKeys_global + a0, aCount, aKeys_global + b0),
+               aCount + bCount,
+               keys_shared);
 
   KeyType results[VT];
   int indices[VT];
@@ -74,14 +89,17 @@ void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
   // Copy the values.
   mgpu::DeviceThreadToShared<VT>(indices, tid, indices_shared);
   
-  mgpu::DeviceTransferMergeValues<NT, VT>(aCount + bCount, aVals_global + range.x, bVals_global + range.z, aCount, indices_shared, tid, vals_global + NT * VT * block);
+  bulk::gather(bulk::bound<NT*VT>(exec),
+               indices_shared, indices_shared + aCount + bCount,
+               make_join_iterator(aVals_global + a0, aCount, aVals_global + b0),
+               vals_global + NT * VT * block);
 }
 
 
 template<typename Tuning, typename KeysIt1, 
-	typename KeysIt2, typename KeysIt3, typename ValsIt1, typename ValsIt2,
+	typename KeysIt3, typename ValsIt1,
 	typename ValsIt3, typename Comp>
-__global__ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount, KeysIt2 bKeys_global, ValsIt2 bVals_global, int bCount, const int* mp_global, int coop, KeysIt3 keys_global, ValsIt3 vals_global, Comp comp)
+__global__ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount, const int* mp_global, int coop, KeysIt3 keys_global, ValsIt3 vals_global, Comp comp)
 {
   typedef MGPU_LAUNCH_PARAMS Params;
   typedef typename std::iterator_traits<KeysIt1>::value_type KeyType;
@@ -92,7 +110,7 @@ __global__ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int a
   const int NV = NT * VT;
   union Shared
   {
-    KeyType keys[NT * (VT + 1)];
+    KeyType keys[NV];
     int indices[NV];
   };
   __shared__ Shared shared;
@@ -100,9 +118,9 @@ __global__ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int a
   int tid = threadIdx.x;
   int block = blockIdx.x;
   
-  int4 range = mgpu::ComputeMergeRange(aCount, bCount, block, coop, NT * VT, mp_global);
+  int4 range = mgpu::ComputeMergeRange(aCount, 0, block, coop, NT * VT, mp_global);
   
-  my_DeviceMerge<NT, VT>(aKeys_global, aVals_global, bKeys_global, bVals_global, tid, block, range, shared.keys, shared.indices, keys_global, vals_global, comp);
+  my_DeviceMerge<NT, VT>(aKeys_global, aVals_global, tid, block, range, shared.keys, shared.indices, keys_global, vals_global, comp);
 }
 
 
@@ -132,7 +150,7 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Com
     int coop = 2<< pass;
     MGPU_MEM(int) partitionsDevice = mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(keysSource, count, keysSource, 0, NV, coop, comp, context);
     
-    my_KernelMerge<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, keysSource, valsSource, 0, partitionsDevice->get(), coop, keysDest, valsDest, comp);
+    my_KernelMerge<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, partitionsDevice->get(), coop, keysDest, valsDest, comp);
 
     std::swap(keysDest, keysSource);
     std::swap(valsDest, valsSource);
