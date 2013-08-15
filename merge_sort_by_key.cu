@@ -89,7 +89,7 @@ void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
   g.wait();
   
   // store merged keys to the result
-  mgpu::DeviceSharedToGlobal<NT, VT>(aCount + bCount, keys_shared, tid, keys_global + NT * VT * block);
+  bulk::copy_n(bulk::bound<NT * VT>(g), keys_shared, n, keys_global + NT * VT * block);
   
   // Copy the values.
   mgpu::DeviceThreadToShared<VT>(indices, tid, indices_shared);
