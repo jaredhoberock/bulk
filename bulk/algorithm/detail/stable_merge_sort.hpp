@@ -54,6 +54,8 @@ inplace_merge_adjacent_partitions(bulk::bounded<bound,bulk::concurrent_group<bul
 
   size_type local_offset = grainsize * g.this_exec.index();
 
+  // XXX this loop seems to assume that groupsize is a power of two
+  //     NPOT groupsize crashes merge sort
   for(size_type num_agents_per_merge = 2; num_agents_per_merge <= groupsize; num_agents_per_merge *= 2)
   {
     // copy keys into the stage so we can dynamically index them
