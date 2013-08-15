@@ -1,7 +1,9 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
+#include <bulk/algorithm/copy.hpp>
 #include <bulk/execution_policy.hpp>
+#include <thrust/iterator/permutation_iterator.h>
 
 
 BULK_NS_PREFIX
@@ -9,6 +11,7 @@ namespace bulk
 {
 
 
+// XXX eliminate me!
 template<std::size_t bound,
          std::size_t grainsize,
          typename RandomAccessIterator1,
@@ -45,6 +48,21 @@ RandomAccessIterator3 gather(const bounded<bound,agent<grainsize> > &,
 
   return result + n;
 } // end scatter_if()
+
+
+template<typename ExecutionGroup, typename RandomAccessIterator1, typename RandomAccessIterator2, typename RandomAccessIterator3>
+__forceinline__ __device__
+RandomAccessIterator3 gather(ExecutionGroup &g,
+                             RandomAccessIterator1 map_first,
+                             RandomAccessIterator1 map_last,
+                             RandomAccessIterator2 input_first,
+                             RandomAccessIterator3 result)
+{
+  return bulk::copy_n(g,
+                      thrust::make_permutation_iterator(input_first, map_first),
+                      map_last - map_first,
+                      result);
+} // end gather()
 
 
 } // end bulk
