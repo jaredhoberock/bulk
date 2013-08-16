@@ -68,19 +68,19 @@ void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
   size_type a1 = range.y;
   size_type b0 = range.z;
   size_type b1 = range.w;
-  size_type aCount = a1 - a0;
-  size_type bCount = b1 - b0;
-  size_type n = aCount + bCount;
+  size_type n1 = a1 - a0;
+  size_type n2 = b1 - b0;
+  size_type  n = n1 + n2;
   
-  // Load the keys into shared memory.
+  // copy keys into shared memory
   bulk::copy_n(bulk::bound<NT*VT>(g),
-               make_join_iterator(aKeys_global + a0, aCount, aKeys_global + b0),
-               aCount + bCount,
+               make_join_iterator(aKeys_global + a0, n1, aKeys_global + b0),
+               n,
                keys_shared);
 
   KeyType   results[VT];
   size_type indices[VT];
-  my_DeviceMergeKeysIndices<NT, VT>(tid, keys_shared, aCount, bCount, results, indices, comp);
+  my_DeviceMergeKeysIndices<NT, VT>(tid, keys_shared, n1, n2, results, indices, comp);
   
   // each agent stores merged keys back to shared memory
   size_type local_offset = VT * g.this_exec.index();
@@ -91,13 +91,14 @@ void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
   // store merged keys to the result
   bulk::copy_n(bulk::bound<NT * VT>(g), keys_shared, n, keys_global + NT * VT * block);
   
-  // Copy the values.
+  // each agent copies the indices into shared memory
   bulk::copy_n(bulk::bound<VT>(g.this_exec), indices, local_size, indices_shared + local_offset);
   g.wait();
   
+  // gather values into merged order
   bulk::gather(bulk::bound<NT*VT>(g),
-               indices_shared, indices_shared + aCount + bCount,
-               make_join_iterator(aVals_global + a0, aCount, aVals_global + b0),
+               indices_shared, indices_shared + n,
+               make_join_iterator(aVals_global + a0, n1, aVals_global + b0),
                vals_global + NT * VT * block);
 }
 
