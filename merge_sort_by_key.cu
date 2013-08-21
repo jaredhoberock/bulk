@@ -54,15 +54,15 @@ void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, 
 }
 
 
-template<int NT, int VT, typename KeysIt1, typename KeysIt3, typename ValsIt1, typename KeyType, typename ValsIt3, typename Comp>
+template<std::size_t groupsize, std::size_t grainsize, typename KeysIt1, typename KeysIt3, typename ValsIt1, typename KeyType, typename ValsIt3, typename Comp>
 __device__
 void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, 
                     int tid, int block, int4 range,
 	            KeyType* keys_shared, int* indices_shared, KeysIt3 keys_global,
 	            ValsIt3 vals_global, Comp comp)
 {
-  bulk::concurrent_group<bulk::agent<VT>, NT> g(0, bulk::agent<VT>(threadIdx.x), blockIdx.x);
-  typedef typename bulk::concurrent_group<bulk::agent<VT>,NT>::size_type size_type;
+  bulk::concurrent_group<bulk::agent<grainsize>, groupsize> g(0, bulk::agent<grainsize>(threadIdx.x), blockIdx.x);
+  typedef typename bulk::concurrent_group<bulk::agent<grainsize>,groupsize>::size_type size_type;
 
   size_type a0 = range.x;
   size_type a1 = range.y;
@@ -73,33 +73,33 @@ void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
   size_type  n = n1 + n2;
   
   // copy keys into shared memory
-  bulk::copy_n(bulk::bound<NT*VT>(g),
+  bulk::copy_n(bulk::bound<groupsize*grainsize>(g),
                make_join_iterator(aKeys_global + a0, n1, aKeys_global + b0),
                n,
                keys_shared);
 
-  KeyType   results[VT];
-  size_type indices[VT];
-  my_DeviceMergeKeysIndices<NT, VT>(tid, keys_shared, n1, n2, results, indices, comp);
+  KeyType   results[grainsize];
+  size_type indices[grainsize];
+  my_DeviceMergeKeysIndices<groupsize, grainsize>(tid, keys_shared, n1, n2, results, indices, comp);
   
   // each agent stores merged keys back to shared memory
-  size_type local_offset = VT * g.this_exec.index();
-  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(VT, n - local_offset));
-  bulk::copy_n(bulk::bound<VT>(g.this_exec), results, local_size, keys_shared + local_offset);
+  size_type local_offset = grainsize * g.this_exec.index();
+  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, n - local_offset));
+  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), results, local_size, keys_shared + local_offset);
   g.wait();
   
   // store merged keys to the result
-  bulk::copy_n(bulk::bound<NT * VT>(g), keys_shared, n, keys_global + NT * VT * block);
+  bulk::copy_n(bulk::bound<groupsize * grainsize>(g), keys_shared, n, keys_global + groupsize * grainsize * block);
   
   // each agent copies the indices into shared memory
-  bulk::copy_n(bulk::bound<VT>(g.this_exec), indices, local_size, indices_shared + local_offset);
+  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), indices, local_size, indices_shared + local_offset);
   g.wait();
   
   // gather values into merged order
-  bulk::gather(bulk::bound<NT*VT>(g),
+  bulk::gather(bulk::bound<groupsize*grainsize>(g),
                indices_shared, indices_shared + n,
                make_join_iterator(aVals_global + a0, n1, aVals_global + b0),
-               vals_global + NT * VT * block);
+               vals_global + groupsize * grainsize * block);
 }
 
 
