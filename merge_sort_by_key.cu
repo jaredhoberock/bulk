@@ -54,52 +54,74 @@ void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, 
 }
 
 
-template<std::size_t groupsize, std::size_t grainsize, typename KeysIt1, typename KeysIt3, typename ValsIt1, typename KeyType, typename ValsIt3, typename Comp>
+template<std::size_t groupsize, std::size_t grainsize,
+         typename RandomAccessIterator1,
+         typename RandomAccessIterator2,
+         typename RandomAccessIterator3,
+         typename RandomAccessIterator4,
+         typename RandomAccessIterator5,
+         typename RandomAccessIterator6,
+         typename Compare>
 __device__
-void my_DeviceMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, 
-                    int tid, int block, int4 range,
-	            KeyType* keys_shared, int* indices_shared, KeysIt3 keys_global,
-	            ValsIt3 vals_global, Comp comp)
+thrust::pair<RandomAccessIterator5,RandomAccessIterator6>
+merge_by_key(bulk::bounded<
+               groupsize*grainsize,
+               bulk::concurrent_group<bulk::agent<grainsize>, groupsize>
+             > &g,
+             RandomAccessIterator1 keys_first1, RandomAccessIterator1 keys_last1,
+             RandomAccessIterator2 keys_first2, RandomAccessIterator2 keys_last2,
+             RandomAccessIterator3 values_first1,
+             RandomAccessIterator4 values_first2,
+             RandomAccessIterator5 keys_result,
+             RandomAccessIterator6 values_result,
+             Compare comp)
 {
-  bulk::concurrent_group<bulk::agent<grainsize>, groupsize> g(0, bulk::agent<grainsize>(threadIdx.x), blockIdx.x);
   typedef typename bulk::concurrent_group<bulk::agent<grainsize>,groupsize>::size_type size_type;
 
-  size_type a0 = range.x;
-  size_type a1 = range.y;
-  size_type b0 = range.z;
-  size_type b1 = range.w;
-  size_type n1 = a1 - a0;
-  size_type n2 = b1 - b0;
+  typedef typename thrust::iterator_value<RandomAccessIterator5>::type key_type;
+
+  // XXX use malloc
+  union shared
+  {
+    key_type  keys[groupsize * grainsize];
+    size_type indices[groupsize * grainsize];
+  };
+  __shared__ shared stage;
+
+  size_type n1 = keys_last1 - keys_first1;
+  size_type n2 = keys_last2 - keys_first2;
   size_type  n = n1 + n2;
   
   // copy keys into shared memory
-  bulk::copy_n(bulk::bound<groupsize*grainsize>(g),
-               make_join_iterator(aKeys_global + a0, n1, aKeys_global + b0),
+  bulk::copy_n(g,
+               make_join_iterator(keys_first1, n1, keys_first2),
                n,
-               keys_shared);
+               stage.keys);
 
-  KeyType   results[grainsize];
+  key_type  results[grainsize];
   size_type indices[grainsize];
-  my_DeviceMergeKeysIndices<groupsize, grainsize>(tid, keys_shared, n1, n2, results, indices, comp);
+  my_DeviceMergeKeysIndices<groupsize, grainsize>(g.this_exec.index(), stage.keys, n1, n2, results, indices, comp);
   
   // each agent stores merged keys back to shared memory
   size_type local_offset = grainsize * g.this_exec.index();
   size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, n - local_offset));
-  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), results, local_size, keys_shared + local_offset);
+  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), results, local_size, stage.keys + local_offset);
   g.wait();
   
   // store merged keys to the result
-  bulk::copy_n(bulk::bound<groupsize * grainsize>(g), keys_shared, n, keys_global + groupsize * grainsize * block);
+  keys_result = bulk::copy_n(g, stage.keys, n, keys_result);
   
   // each agent copies the indices into shared memory
-  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), indices, local_size, indices_shared + local_offset);
+  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), indices, local_size, stage.indices + local_offset);
   g.wait();
   
   // gather values into merged order
-  bulk::gather(bulk::bound<groupsize*grainsize>(g),
-               indices_shared, indices_shared + n,
-               make_join_iterator(aVals_global + a0, n1, aVals_global + b0),
-               vals_global + groupsize * grainsize * block);
+  values_result = bulk::gather(g,
+                               stage.indices, stage.indices + n,
+                               make_join_iterator(values_first1, n1, values_first2),
+                               values_result);
+
+  return thrust::make_pair(keys_result, values_result);
 }
 
 
@@ -108,26 +130,34 @@ template<typename Tuning, typename KeysIt1,
 	typename ValsIt3, typename Comp>
 __global__ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount, const int* mp_global, int coop, KeysIt3 keys_global, ValsIt3 vals_global, Comp comp)
 {
+  typedef int size_type;
+
   typedef MGPU_LAUNCH_PARAMS Params;
   typedef typename std::iterator_traits<KeysIt1>::value_type KeyType;
   typedef typename std::iterator_traits<ValsIt1>::value_type ValType;
   
   const int NT = Params::NT;
   const int VT = Params::VT;
-  const int NV = NT * VT;
-  union Shared
-  {
-    KeyType keys[NV];
-    int indices[NV];
-  };
-  __shared__ Shared shared;
   
-  int tid = threadIdx.x;
   int block = blockIdx.x;
   
   int4 range = mgpu::ComputeMergeRange(aCount, 0, block, coop, NT * VT, mp_global);
+
+  size_type a0 = range.x;
+  size_type a1 = range.y;
+  size_type b0 = range.z;
+  size_type b1 = range.w;
+
+  bulk::concurrent_group<bulk::agent<VT>, NT> g(0, bulk::agent<VT>(threadIdx.x), blockIdx.x);
   
-  my_DeviceMerge<NT, VT>(aKeys_global, aVals_global, tid, block, range, shared.keys, shared.indices, keys_global, vals_global, comp);
+  merge_by_key<NT, VT>(bulk::bound<NT*VT>(g),
+                       aKeys_global + a0, aKeys_global + a1,
+                       aKeys_global + b0, aKeys_global + b1,
+                       aVals_global + a0,
+                       aVals_global + b0,
+                       keys_global + NT * VT * block,
+                       vals_global + NT * VT * block,
+                       comp);
 }
 
 
