@@ -13,10 +13,11 @@ struct stable_sort_each_kernel
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
   __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g, RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int count, Compare comp)
   {
-    const int tilesize = groupsize * grainsize;
+    typedef typename bulk::concurrent_group<bulk::agent<grainsize,groupsize> >::size_type size_type;
+    const size_type tilesize = groupsize * grainsize;
   
-    int gid = tilesize * g.index();
-    int count2 = min(tilesize, count - gid);
+    size_type gid = tilesize * g.index();
+    size_type count2 = thrust::min<size_type>(tilesize, count - gid);
   
     bulk::stable_sort_by_key(bulk::bound<tilesize>(g), keys_first + gid, keys_first + gid + count2, values_first + gid, comp);
   }
