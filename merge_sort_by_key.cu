@@ -70,7 +70,7 @@ merge_by_key(bulk::bounded<
                n,
                stage.keys);
 
-  // find the stage of each agent's sequential merge
+  // find the start of each agent's sequential merge
   size_type diag = thrust::min<size_type>(n1 + n2, grainsize * g.this_exec.index());
   size_type mp = bulk::merge_path(stage.keys, n1, stage.keys + n1, n2, diag, comp);
   
@@ -117,39 +117,63 @@ merge_by_key(bulk::bounded<
 }
 
 
-template<typename Tuning, typename KeysIt1, 
-	typename KeysIt3, typename ValsIt1,
-	typename ValsIt3, typename Comp>
-__global__ void my_KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global, int aCount, const int* mp_global, int coop, KeysIt3 keys_global, ValsIt3 vals_global, Comp comp)
+template<typename Size>
+__device__
+thrust::tuple<Size,Size,Size,Size>
+  locate_merge_partitions(Size n, Size group_idx, Size num_groups_per_merge, Size num_elements_per_group, Size mp, Size right_mp)
+{
+  Size first_group_in_partition = ~(num_groups_per_merge - 1) & group_idx;
+  Size partition_size = num_elements_per_group * (num_groups_per_merge >> 1);
+
+  Size partition_first1 = num_elements_per_group * first_group_in_partition;
+  Size partition_first2 = partition_first1 + partition_size;
+
+  // Locate diag from the start of the A sublist.
+  Size diag = num_elements_per_group * group_idx - partition_first1;
+  Size start1 = partition_first1 + mp;
+  Size end1 = thrust::min<Size>(n, partition_first1 + right_mp);
+  Size start2 = thrust::min<Size>(n, partition_first2 + diag - mp);
+  Size end2 = thrust::min<Size>(n, partition_first2 + diag + num_elements_per_group - right_mp);
+  
+  // The end partition of the last group for each merge operation is computed
+  // and stored as the begin partition for the subsequent merge. i.e. it is
+  // the same partition but in the wrong coordinate system, so its 0 when it
+  // should be listSize. Correct that by checking if this is the last group
+  // in this merge operation.
+  if(num_groups_per_merge - 1 == ((num_groups_per_merge - 1) & group_idx))
+  {
+    end1 = thrust::min<Size>(n, partition_first1 + partition_size);
+    end2 = thrust::min<Size>(n, partition_first2 + partition_size);
+  }
+
+  return thrust::make_tuple(start1, end1, start2, end2);
+}
+
+
+template<std::size_t groupsize,
+         std::size_t grainsize,
+         typename RandomAccessIterator1, 
+	 typename RandomAccessIterator2,
+         typename RandomAccessIterator3,
+	 typename RandomAccessIterator4,
+         typename Compare>
+__global__ void merge_by_key_kernel(RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int n, const int* merge_paths, int num_groups_per_merge, RandomAccessIterator3 keys_result, RandomAccessIterator4 values_result, Compare comp)
 {
   typedef int size_type;
+  
+  bulk::concurrent_group<bulk::agent<grainsize>, groupsize> g(0, bulk::agent<grainsize>(threadIdx.x), blockIdx.x);
 
-  typedef MGPU_LAUNCH_PARAMS Params;
-  typedef typename std::iterator_traits<KeysIt1>::value_type KeyType;
-  typedef typename std::iterator_traits<ValsIt1>::value_type ValType;
+  size_type a0, a1, b0, b1;
+  thrust::tie(a0, a1, b0, b1) = locate_merge_partitions<size_type>(n, g.index(), num_groups_per_merge, groupsize * grainsize, merge_paths[g.index()], merge_paths[g.index()+1]);
   
-  const int NT = Params::NT;
-  const int VT = Params::VT;
-  
-  int block = blockIdx.x;
-  
-  int4 range = mgpu::ComputeMergeRange(aCount, 0, block, coop, NT * VT, mp_global);
-
-  size_type a0 = range.x;
-  size_type a1 = range.y;
-  size_type b0 = range.z;
-  size_type b1 = range.w;
-
-  bulk::concurrent_group<bulk::agent<VT>, NT> g(0, bulk::agent<VT>(threadIdx.x), blockIdx.x);
-  
-  merge_by_key<NT, VT>(bulk::bound<NT*VT>(g),
-                       aKeys_global + a0, aKeys_global + a1,
-                       aKeys_global + b0, aKeys_global + b1,
-                       aVals_global + a0,
-                       aVals_global + b0,
-                       keys_global + NT * VT * block,
-                       vals_global + NT * VT * block,
-                       comp);
+  merge_by_key(bulk::bound<groupsize*grainsize>(g),
+               keys_first + a0, keys_first + a1,
+               keys_first + b0, keys_first + b1,
+               values_first + a0,
+               values_first + b0,
+               keys_result + groupsize * grainsize * g.index(),
+               values_result + groupsize * grainsize * g.index(),
+               comp);
 }
 
 
@@ -176,10 +200,10 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Com
   
   for(int pass = 0; pass < numPasses; ++pass) 
   {
-    int coop = 2<< pass;
-    MGPU_MEM(int) partitionsDevice = mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(keysSource, count, keysSource, 0, NV, coop, comp, context);
+    int num_groups_per_merge = 2 << pass;
+    MGPU_MEM(int) partitionsDevice = mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(keysSource, count, keysSource, 0, NV, num_groups_per_merge, comp, context);
     
-    my_KernelMerge<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, partitionsDevice->get(), coop, keysDest, valsDest, comp);
+    merge_by_key_kernel<NT,VT><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, partitionsDevice->get(), num_groups_per_merge, keysDest, valsDest, comp);
 
     std::swap(keysDest, keysSource);
     std::swap(valsDest, valsSource);
