@@ -150,31 +150,32 @@ thrust::tuple<Size,Size,Size,Size>
 }
 
 
-template<std::size_t groupsize,
-         std::size_t grainsize,
-         typename RandomAccessIterator1, 
-	 typename RandomAccessIterator2,
-         typename RandomAccessIterator3,
-	 typename RandomAccessIterator4,
-         typename Compare>
-__global__ void merge_by_key_kernel(RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int n, const int* merge_paths, int num_groups_per_merge, RandomAccessIterator3 keys_result, RandomAccessIterator4 values_result, Compare comp)
+struct merge_by_key_kernel
 {
-  typedef int size_type;
-  
-  bulk::concurrent_group<bulk::agent<grainsize>, groupsize> g(0, bulk::agent<grainsize>(threadIdx.x), blockIdx.x);
+  template<std::size_t groupsize,
+           std::size_t grainsize,
+           typename RandomAccessIterator1, 
+	   typename RandomAccessIterator2,
+           typename RandomAccessIterator3,
+	   typename RandomAccessIterator4,
+           typename Compare>
+  __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g, RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int n, const int *merge_paths, int num_groups_per_merge, RandomAccessIterator3 keys_result, RandomAccessIterator4 values_result, Compare comp)
+  {
+    typedef int size_type;
 
-  size_type a0, a1, b0, b1;
-  thrust::tie(a0, a1, b0, b1) = locate_merge_partitions<size_type>(n, g.index(), num_groups_per_merge, groupsize * grainsize, merge_paths[g.index()], merge_paths[g.index()+1]);
-  
-  merge_by_key(bulk::bound<groupsize*grainsize>(g),
-               keys_first + a0, keys_first + a1,
-               keys_first + b0, keys_first + b1,
-               values_first + a0,
-               values_first + b0,
-               keys_result + groupsize * grainsize * g.index(),
-               values_result + groupsize * grainsize * g.index(),
-               comp);
-}
+    size_type a0, a1, b0, b1;
+    thrust::tie(a0, a1, b0, b1) = locate_merge_partitions<size_type>(n, g.index(), num_groups_per_merge, groupsize * grainsize, merge_paths[g.index()], merge_paths[g.index()+1]);
+    
+    merge_by_key(bulk::bound<groupsize*grainsize>(g),
+                 keys_first + a0, keys_first + a1,
+                 keys_first + b0, keys_first + b1,
+                 values_first + a0,
+                 values_first + b0,
+                 keys_result + groupsize * grainsize * g.index(),
+                 values_result + groupsize * grainsize * g.index(),
+                 comp);
+  }
+};
 
 
 template<typename KeyType, typename ValType, typename Comp>
@@ -203,7 +204,7 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Com
     int num_groups_per_merge = 2 << pass;
     MGPU_MEM(int) partitionsDevice = mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(keysSource, count, keysSource, 0, NV, num_groups_per_merge, comp, context);
     
-    merge_by_key_kernel<NT,VT><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, partitionsDevice->get(), num_groups_per_merge, keysDest, valsDest, comp);
+    bulk::async(bulk::grid<NT,VT>(numBlocks, 0), merge_by_key_kernel(), bulk::root.this_exec, keysSource, valsSource, count, partitionsDevice->get(), num_groups_per_merge, keysDest, valsDest, comp);
 
     std::swap(keysDest, keysSource);
     std::swap(valsDest, valsSource);
