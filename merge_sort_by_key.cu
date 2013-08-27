@@ -8,22 +8,19 @@
 #include "join_iterator.hpp"
 
 
-template<typename Tuning, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
-__global__ void stable_sort_each_kernel(RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int count, Compare comp)
+struct stable_sort_each_kernel
 {
-  typedef MGPU_LAUNCH_PARAMS Params;
+  template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
+  __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g, RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int count, Compare comp)
+  {
+    const int tilesize = groupsize * grainsize;
   
-  const int groupsize = Params::NT;
-  const int grainsize = Params::VT;
-  const int tilesize = groupsize * grainsize;
+    int gid = tilesize * g.index();
+    int count2 = min(tilesize, count - gid);
   
-  bulk::concurrent_group<bulk::agent<grainsize>,groupsize> g(0, bulk::agent<grainsize>(threadIdx.x), blockIdx.x);
-
-  int gid = tilesize * g.index();
-  int count2 = min(tilesize, count - gid);
-
-  bulk::stable_sort_by_key(bulk::bound<tilesize>(g), keys_first + gid, keys_first + gid + count2, values_first + gid, comp);
-}
+    bulk::stable_sort_by_key(bulk::bound<tilesize>(g), keys_first + gid, keys_first + gid + count2, values_first + gid, comp);
+  }
+};
 
 
 template<std::size_t groupsize, std::size_t grainsize,
@@ -197,7 +194,7 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Com
   ValType* valsSource = values_global;
   ValType* valsDest = valsDestDevice->get();
 
-  stable_sort_each_kernel<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource, count, comp);
+  bulk::async(bulk::grid<NT,VT>(numBlocks, 0), stable_sort_each_kernel(), bulk::root.this_exec, keysSource, valsSource, count, comp);
   
   for(int pass = 0; pass < numPasses; ++pass) 
   {
