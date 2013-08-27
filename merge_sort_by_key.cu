@@ -13,7 +13,7 @@ struct stable_sort_each_kernel
   template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
   __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g, RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int count, Compare comp)
   {
-    typedef typename bulk::concurrent_group<bulk::agent<grainsize,groupsize> >::size_type size_type;
+    typedef typename bulk::concurrent_group<bulk::agent<grainsize>,groupsize>::size_type size_type;
     const size_type tilesize = groupsize * grainsize;
   
     size_type gid = tilesize * g.index();
@@ -159,7 +159,7 @@ struct merge_by_key_kernel
            typename Compare>
   __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g, RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int n, const int *merge_paths, int num_groups_per_merge, RandomAccessIterator3 keys_result, RandomAccessIterator4 values_result, Compare comp)
   {
-    typedef int size_type;
+    typedef typename bulk::concurrent_group<bulk::agent<grainsize>, groupsize>::size_type size_type;
 
     size_type a0, a1, b0, b1;
     thrust::tie(a0, a1, b0, b1) = locate_merge_partitions<size_type>(n, g.index(), num_groups_per_merge, groupsize * grainsize, merge_paths[g.index()], merge_paths[g.index()+1]);
