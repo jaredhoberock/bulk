@@ -26,34 +26,6 @@ __global__ void stable_sort_each_kernel(RandomAccessIterator1 keys_first, Random
 }
 
 
-template<int NT, int VT, typename T, typename Comp>
-__device__
-void my_DeviceMergeKeysIndices(int tid, T* keys_shared, int aCount, int bCount, T* results, int* indices, Comp comp)
-{
-  // Run a merge path to find the start of the serial merge for each thread.
-  int diag = VT * tid;
-  int mp = bulk::merge_path(keys_shared, aCount, keys_shared + aCount, bCount, diag, comp);
-  
-  // Compute the ranges of the sources in shared memory.
-  int a0tid = mp;
-  int a1tid = aCount;
-  int b0tid = aCount + diag - mp;
-  int b1tid = aCount + bCount;
-  
-  // Serial merge into register.
-  bulk::agent<VT> exec(threadIdx.x);
-  bulk::merge_by_key(bulk::bound<VT>(exec),
-                     keys_shared + a0tid, keys_shared + a1tid,
-                     keys_shared + b0tid, keys_shared + b1tid,
-                     thrust::make_counting_iterator<int>(a0tid),
-                     thrust::make_counting_iterator<int>(b0tid),
-                     results,
-                     indices,
-                     comp);
-  __syncthreads();
-}
-
-
 template<std::size_t groupsize, std::size_t grainsize,
          typename RandomAccessIterator1,
          typename RandomAccessIterator2,
@@ -92,17 +64,37 @@ merge_by_key(bulk::bounded<
   size_type n2 = keys_last2 - keys_first2;
   size_type  n = n1 + n2;
   
-  // copy keys into shared memory
+  // copy keys into stage
   bulk::copy_n(g,
                make_join_iterator(keys_first1, n1, keys_first2),
                n,
                stage.keys);
 
+  // find the stage of each agent's sequential merge
+  size_type diag = thrust::min<size_type>(n1 + n2, grainsize * g.this_exec.index());
+  size_type mp = bulk::merge_path(stage.keys, n1, stage.keys + n1, n2, diag, comp);
+  
+  // compute the ranges of the sources in the stage.
+  size_type start1 = mp;
+  size_type start2 = n1 + diag - mp;
+
+  size_type end1 = n1;
+  size_type end2 = n1 + n2;
+  
+  // each agent merges sequentially
   key_type  results[grainsize];
   size_type indices[grainsize];
-  my_DeviceMergeKeysIndices<groupsize, grainsize>(g.this_exec.index(), stage.keys, n1, n2, results, indices, comp);
+  bulk::merge_by_key(bulk::bound<grainsize>(g.this_exec),
+                     stage.keys + start1, stage.keys + end1,
+                     stage.keys + start2, stage.keys + end2,
+                     thrust::make_counting_iterator<size_type>(start1),
+                     thrust::make_counting_iterator<size_type>(start2),
+                     results,
+                     indices,
+                     comp);
+  g.wait();
   
-  // each agent stores merged keys back to shared memory
+  // each agent stores merged keys back to the stage
   size_type local_offset = grainsize * g.this_exec.index();
   size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, n - local_offset));
   bulk::copy_n(bulk::bound<grainsize>(g.this_exec), results, local_size, stage.keys + local_offset);
@@ -111,7 +103,7 @@ merge_by_key(bulk::bounded<
   // store merged keys to the result
   keys_result = bulk::copy_n(g, stage.keys, n, keys_result);
   
-  // each agent copies the indices into shared memory
+  // each agent copies the indices into the stage
   bulk::copy_n(bulk::bound<grainsize>(g.this_exec), indices, local_size, stage.indices + local_offset);
   g.wait();
   
