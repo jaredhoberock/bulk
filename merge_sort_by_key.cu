@@ -86,43 +86,42 @@ struct merge_by_key_kernel
 
 
 template<typename KeyType, typename ValType, typename Comp>
-void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Comp comp, mgpu::CudaContext& context)
+void MergesortPairs(KeyType* keys_global, ValType* values_global, int n, Comp comp, mgpu::CudaContext& context)
 {
-  const int NT = 256;
-  const int VT = 11;
-  typedef mgpu::LaunchBoxVT<NT, VT> Tuning;
-  int2 launch = Tuning::GetLaunchParams(context);
+  const int groupsize = 256;
+  const int grainsize = 11;
   
-  const int NV = launch.x * launch.y;
-  int numBlocks = MGPU_DIV_UP(count, NV);
-  int numPasses = mgpu::FindLog2(numBlocks, true);
+  const int tilesize = groupsize * grainsize;
+  int num_groups = (n + tilesize - 1) / tilesize;
+  int num_passes = mgpu::FindLog2(num_groups, true);
   
-  MGPU_MEM(KeyType) keysDestDevice = context.Malloc<KeyType>(count);
-  MGPU_MEM(ValType) valsDestDevice = context.Malloc<ValType>(count);
+  MGPU_MEM(KeyType) keysDestDevice = context.Malloc<KeyType>(n);
+  MGPU_MEM(ValType) valsDestDevice = context.Malloc<ValType>(n);
+
   KeyType* keysSource = keys_global;
   KeyType* keysDest = keysDestDevice->get();
   ValType* valsSource = values_global;
   ValType* valsDest = valsDestDevice->get();
 
-  int heap_size = NT * VT * thrust::max(sizeof(KeyType), sizeof(ValType));
+  int heap_size = tilesize * thrust::max(sizeof(KeyType), sizeof(ValType));
 
-  bulk::async(bulk::grid<NT,VT>(numBlocks, heap_size), stable_sort_each_kernel(), bulk::root.this_exec, keysSource, valsSource, count, comp);
+  bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), stable_sort_each_kernel(), bulk::root.this_exec, keysSource, valsSource, n, comp);
   
-  for(int pass = 0; pass < numPasses; ++pass) 
+  for(int pass = 0; pass < num_passes; ++pass) 
   {
     int num_groups_per_merge = 2 << pass;
-    MGPU_MEM(int) partitionsDevice = mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(keysSource, count, keysSource, 0, NV, num_groups_per_merge, comp, context);
+    MGPU_MEM(int) partitionsDevice = mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(keysSource, n, keysSource, 0, tilesize, num_groups_per_merge, comp, context);
     
-    int heap_size = NT * VT * thrust::max(sizeof(KeyType), sizeof(int));
-    bulk::async(bulk::grid<NT,VT>(numBlocks, heap_size), merge_by_key_kernel(), bulk::root.this_exec, keysSource, valsSource, count, partitionsDevice->get(), num_groups_per_merge, keysDest, valsDest, comp);
+    int heap_size = tilesize * thrust::max(sizeof(KeyType), sizeof(int));
+    bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), merge_by_key_kernel(), bulk::root.this_exec, keysSource, valsSource, n, partitionsDevice->get(), num_groups_per_merge, keysDest, valsDest, comp);
 
     std::swap(keysDest, keysSource);
     std::swap(valsDest, valsSource);
   }
 
-  if(1 & numPasses)
+  if(1 & num_passes)
   {
-    thrust::copy_n(thrust::cuda::tag(), thrust::make_zip_iterator(thrust::make_tuple(keysSource, valsSource)), count, thrust::make_zip_iterator(thrust::make_tuple(keysDest, valsDest)));
+    thrust::copy_n(thrust::cuda::tag(), thrust::make_zip_iterator(thrust::make_tuple(keysSource, valsSource)), n, thrust::make_zip_iterator(thrust::make_tuple(keysDest, valsDest)));
   }
 }
 
