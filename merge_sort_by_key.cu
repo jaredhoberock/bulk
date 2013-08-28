@@ -50,13 +50,13 @@ merge_by_key(bulk::bounded<
 
   typedef typename thrust::iterator_value<RandomAccessIterator5>::type key_type;
 
-  // XXX use malloc
-  union shared
+  union
   {
-    key_type  keys[groupsize * grainsize];
-    size_type indices[groupsize * grainsize];
-  };
-  __shared__ shared stage;
+    key_type  *keys;
+    size_type *indices;
+  } stage;
+
+  stage.keys = static_cast<key_type*>(bulk::malloc(g, groupsize * grainsize * thrust::max(sizeof(key_type), sizeof(size_type))));
 
   size_type n1 = keys_last1 - keys_first1;
   size_type n2 = keys_last2 - keys_first2;
@@ -110,6 +110,8 @@ merge_by_key(bulk::bounded<
                                stage.indices, stage.indices + n,
                                make_join_iterator(values_first1, n1, values_first2),
                                values_result);
+
+  bulk::free(g, stage.keys);
 
   return thrust::make_pair(keys_result, values_result);
 }
@@ -169,7 +171,7 @@ struct merge_by_key_kernel
                  keys_first + b0, keys_first + b1,
                  values_first + a0,
                  values_first + b0,
-                 keys_result + groupsize * grainsize * g.index(),
+                 keys_result   + groupsize * grainsize * g.index(),
                  values_result + groupsize * grainsize * g.index(),
                  comp);
   }
@@ -202,7 +204,8 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Com
     int num_groups_per_merge = 2 << pass;
     MGPU_MEM(int) partitionsDevice = mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(keysSource, count, keysSource, 0, NV, num_groups_per_merge, comp, context);
     
-    bulk::async(bulk::grid<NT,VT>(numBlocks, 0), merge_by_key_kernel(), bulk::root.this_exec, keysSource, valsSource, count, partitionsDevice->get(), num_groups_per_merge, keysDest, valsDest, comp);
+    int heap_size = NT * VT * sizeof(KeyType);
+    bulk::async(bulk::grid<NT,VT>(numBlocks, heap_size), merge_by_key_kernel(), bulk::root.this_exec, keysSource, valsSource, count, partitionsDevice->get(), num_groups_per_merge, keysDest, valsDest, comp);
 
     std::swap(keysDest, keysSource);
     std::swap(valsDest, valsSource);
@@ -378,14 +381,12 @@ void validate(size_t n)
 
 int main()
 {
-//  std::cout << "small input: " << std::endl;
-//  std::cout << "int: " << std::endl;
-//
-//  validate<int>(20);
+  std::cout << "small input: " << std::endl;
+  std::cout << "int: " << std::endl;
+
+  validate<int>(20);
 
   size_t n = 12345678;
-
-  validate<int>(n);
 
   std::cout << "Large input: " << std::endl;
   std::cout << "int: " << std::endl;
