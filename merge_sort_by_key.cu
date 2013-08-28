@@ -24,109 +24,6 @@ struct stable_sort_each_kernel
 };
 
 
-template<std::size_t groupsize, std::size_t grainsize,
-         typename RandomAccessIterator1,
-         typename RandomAccessIterator2,
-         typename RandomAccessIterator3,
-         typename RandomAccessIterator4,
-         typename RandomAccessIterator5,
-         typename RandomAccessIterator6,
-         typename Compare>
-__device__
-thrust::pair<RandomAccessIterator5,RandomAccessIterator6>
-merge_by_key(bulk::bounded<
-               groupsize*grainsize,
-               bulk::concurrent_group<bulk::agent<grainsize>, groupsize>
-             > &g,
-             RandomAccessIterator1 keys_first1, RandomAccessIterator1 keys_last1,
-             RandomAccessIterator2 keys_first2, RandomAccessIterator2 keys_last2,
-             RandomAccessIterator3 values_first1,
-             RandomAccessIterator4 values_first2,
-             RandomAccessIterator5 keys_result,
-             RandomAccessIterator6 values_result,
-             Compare comp)
-{
-  typedef typename bulk::concurrent_group<bulk::agent<grainsize>,groupsize>::size_type size_type;
-
-  typedef typename thrust::iterator_value<RandomAccessIterator5>::type key_type;
-
-#if __CUDA_ARCH__ >= 200
-  union
-  {
-    key_type  *keys;
-    size_type *indices;
-  } stage;
-
-  stage.keys = static_cast<key_type*>(bulk::malloc(g, groupsize * grainsize * thrust::max(sizeof(key_type), sizeof(size_type))));
-#else
-  __shared__ union
-  {
-    key_type  keys[groupsize * grainsize];
-    size_type indices[groupsize * grainsize];
-  } stage;
-#endif
-
-  size_type n1 = keys_last1 - keys_first1;
-  size_type n2 = keys_last2 - keys_first2;
-  size_type  n = n1 + n2;
-  
-  // copy keys into stage
-  bulk::copy_n(g,
-               make_join_iterator(keys_first1, n1, keys_first2),
-               n,
-               stage.keys);
-
-  // find the start of each agent's sequential merge
-  size_type diag = thrust::min<size_type>(n1 + n2, grainsize * g.this_exec.index());
-  size_type mp = bulk::merge_path(stage.keys, n1, stage.keys + n1, n2, diag, comp);
-  
-  // compute the ranges of the sources in the stage.
-  size_type start1 = mp;
-  size_type start2 = n1 + diag - mp;
-
-  size_type end1 = n1;
-  size_type end2 = n1 + n2;
-  
-  // each agent merges sequentially
-  key_type  results[grainsize];
-  size_type indices[grainsize];
-  bulk::merge_by_key(bulk::bound<grainsize>(g.this_exec),
-                     stage.keys + start1, stage.keys + end1,
-                     stage.keys + start2, stage.keys + end2,
-                     thrust::make_counting_iterator<size_type>(start1),
-                     thrust::make_counting_iterator<size_type>(start2),
-                     results,
-                     indices,
-                     comp);
-  g.wait();
-  
-  // each agent stores merged keys back to the stage
-  size_type local_offset = grainsize * g.this_exec.index();
-  size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, n - local_offset));
-  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), results, local_size, stage.keys + local_offset);
-  g.wait();
-  
-  // store merged keys to the result
-  keys_result = bulk::copy_n(g, stage.keys, n, keys_result);
-  
-  // each agent copies the indices into the stage
-  bulk::copy_n(bulk::bound<grainsize>(g.this_exec), indices, local_size, stage.indices + local_offset);
-  g.wait();
-  
-  // gather values into merged order
-  values_result = bulk::gather(g,
-                               stage.indices, stage.indices + n,
-                               make_join_iterator(values_first1, n1, values_first2),
-                               values_result);
-
-#if __CUDA_ARCH__ >= 200
-  bulk::free(g, stage.keys);
-#endif
-
-  return thrust::make_pair(keys_result, values_result);
-}
-
-
 template<typename Size>
 __device__
 thrust::tuple<Size,Size,Size,Size>
@@ -176,14 +73,14 @@ struct merge_by_key_kernel
     size_type a0, a1, b0, b1;
     thrust::tie(a0, a1, b0, b1) = locate_merge_partitions<size_type>(n, g.index(), num_groups_per_merge, groupsize * grainsize, merge_paths[g.index()], merge_paths[g.index()+1]);
     
-    merge_by_key(bulk::bound<groupsize*grainsize>(g),
-                 keys_first + a0, keys_first + a1,
-                 keys_first + b0, keys_first + b1,
-                 values_first + a0,
-                 values_first + b0,
-                 keys_result   + groupsize * grainsize * g.index(),
-                 values_result + groupsize * grainsize * g.index(),
-                 comp);
+    bulk::merge_by_key(bulk::bound<groupsize*grainsize>(g),
+                       keys_first + a0, keys_first + a1,
+                       keys_first + b0, keys_first + b1,
+                       values_first + a0,
+                       values_first + b0,
+                       keys_result   + groupsize * grainsize * g.index(),
+                       values_result + groupsize * grainsize * g.index(),
+                       comp);
   }
 };
 
