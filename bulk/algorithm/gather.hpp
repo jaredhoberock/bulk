@@ -4,6 +4,7 @@
 #include <bulk/algorithm/copy.hpp>
 #include <bulk/execution_policy.hpp>
 #include <thrust/iterator/permutation_iterator.h>
+#include <thrust/iterator/retag.h>
 
 
 BULK_NS_PREFIX
@@ -58,8 +59,11 @@ RandomAccessIterator3 gather(ExecutionGroup &g,
                              RandomAccessIterator2 input_first,
                              RandomAccessIterator3 result)
 {
+  // force the permutation_iterator's base iterators to have the same system tags
+  typedef typename thrust::iterator_system<RandomAccessIterator2>::type system;
+
   return bulk::copy_n(g,
-                      thrust::make_permutation_iterator(input_first, map_first),
+                      thrust::make_permutation_iterator(input_first, thrust::reinterpret_tag<system>(map_first)),
                       map_last - map_first,
                       result);
 } // end gather()
