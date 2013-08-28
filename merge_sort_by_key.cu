@@ -207,14 +207,16 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int count, Com
   ValType* valsSource = values_global;
   ValType* valsDest = valsDestDevice->get();
 
-  bulk::async(bulk::grid<NT,VT>(numBlocks, 0), stable_sort_each_kernel(), bulk::root.this_exec, keysSource, valsSource, count, comp);
+  int heap_size = NT * VT * thrust::max(sizeof(KeyType), sizeof(ValType));
+
+  bulk::async(bulk::grid<NT,VT>(numBlocks, heap_size), stable_sort_each_kernel(), bulk::root.this_exec, keysSource, valsSource, count, comp);
   
   for(int pass = 0; pass < numPasses; ++pass) 
   {
     int num_groups_per_merge = 2 << pass;
     MGPU_MEM(int) partitionsDevice = mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(keysSource, count, keysSource, 0, NV, num_groups_per_merge, comp, context);
     
-    int heap_size = NT * VT * sizeof(KeyType);
+    int heap_size = NT * VT * thrust::max(sizeof(KeyType), sizeof(int));
     bulk::async(bulk::grid<NT,VT>(numBlocks, heap_size), merge_by_key_kernel(), bulk::root.this_exec, keysSource, valsSource, count, partitionsDevice->get(), num_groups_per_merge, keysDest, valsDest, comp);
 
     std::swap(keysDest, keysSource);

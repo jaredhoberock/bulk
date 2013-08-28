@@ -130,12 +130,21 @@ stable_merge_sort_by_key(bulk::bounded<bound,bulk::concurrent_group<bulk::agent<
   size_type local_offset = grainsize * g.this_exec.index();
   size_type local_size = thrust::max<size_type>(0, thrust::min<size_type>(grainsize, n - local_offset));
 
-  union shared 
+#if __CUDA_ARCH__ >= 200
+  union
+  {
+    key_type   *keys;
+    value_type *values;
+  } stage;
+
+  stage.keys = static_cast<key_type*>(bulk::malloc(g, tile_size * thrust::max(sizeof(key_type), sizeof(value_type))));
+#else
+  __shared__ union
   {
     key_type   keys[tile_size];
     value_type values[tile_size];
-  };
-  __shared__ shared stage;
+  } stage;
+#endif
   
   // load each agent's keys into registers
   bulk::copy_n(bulk::bound<tile_size>(g), keys_first, n, stage.keys);
@@ -156,11 +165,11 @@ stable_merge_sort_by_key(bulk::bounded<bound,bulk::concurrent_group<bulk::agent<
   // avoid dynamic sizes when possible
   if(n == tile_size)
   {
-    stable_merge_sort_detail::inplace_merge_adjacent_partitions(g, local_keys, local_values, &stage, tile_size, grainsize, comp);
+    stable_merge_sort_detail::inplace_merge_adjacent_partitions(g, local_keys, local_values, stage.keys, tile_size, grainsize, comp);
   } // end if
   else
   {
-    stable_merge_sort_detail::inplace_merge_adjacent_partitions(g, local_keys, local_values, &stage, n, local_size, comp);
+    stable_merge_sort_detail::inplace_merge_adjacent_partitions(g, local_keys, local_values, stage.keys, n, local_size, comp);
   } // end else
 
   // store the sorted keys back to the input
@@ -174,6 +183,10 @@ stable_merge_sort_by_key(bulk::bounded<bound,bulk::concurrent_group<bulk::agent<
   g.wait();
 
   bulk::copy_n(bulk::bound<tile_size>(g), stage.values, n, values_first);
+
+#if __CUDA_ARCH__ >= 200
+  bulk::free(g, stage.keys);
+#endif
 } // end stable_merge_sort_by_key()
 
 
