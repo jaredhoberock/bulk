@@ -65,8 +65,9 @@ struct merge_by_key_kernel
 	   typename RandomAccessIterator2,
            typename RandomAccessIterator3,
 	   typename RandomAccessIterator4,
+	   typename RandomAccessIterator5,
            typename Compare>
-  __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g, RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int n, const int *merge_paths, int num_groups_per_merge, RandomAccessIterator3 keys_result, RandomAccessIterator4 values_result, Compare comp)
+  __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g, RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int n, RandomAccessIterator3 merge_paths, int num_groups_per_merge, RandomAccessIterator4 keys_result, RandomAccessIterator5 values_result, Compare comp)
   {
     typedef typename bulk::concurrent_group<bulk::agent<grainsize>, groupsize>::size_type size_type;
 
@@ -85,15 +86,77 @@ struct merge_by_key_kernel
 };
 
 
+template<typename Iterator, typename Size, typename Compare>
+struct locate_merge_path
+{
+  Iterator haystack_first;
+  Size haystack_size;
+  Size num_elements_per_group;
+  Size num_groups_per_merge;
+  thrust::detail::wrapped_function<Compare,bool> comp;
+
+  locate_merge_path(Iterator haystack_first, Size haystack_size, Size num_elements_per_group, Size num_groups_per_merge, Compare comp)
+    : haystack_first(haystack_first),
+      haystack_size(haystack_size),
+      num_elements_per_group(num_elements_per_group),
+      num_groups_per_merge(num_groups_per_merge),
+      comp(comp)
+  {}
+
+  template<typename Index>
+  __host__ __device__
+  Index operator()(Index merge_path_idx)
+  {
+    // find the index of the first group that will participate in the eventual merge
+    Size first_group_in_partition = ~(num_groups_per_merge - 1) & merge_path_idx;
+
+    // the size of each group's input
+    Size size = num_elements_per_group * (num_groups_per_merge / 2);
+
+    // find pointers to the two input arrays
+    Size start1 = num_elements_per_group * first_group_in_partition;
+    Size start2 = thrust::min<Size>(haystack_size, start1 + size);
+
+    // the size of each input array
+    // note we clamp to the end of the total input to handle the last partial list
+    Size n1 = thrust::min<Size>(size, haystack_size - start1);
+    Size n2 = thrust::min<Size>(size, haystack_size - start2);
+    
+    // note that diag is computed as an offset from the beginning of the first list
+    Size diag = thrust::min<Size>(n1 + n2, num_elements_per_group * merge_path_idx - start1);
+
+    return bulk::merge_path(haystack_first + start1, n1, haystack_first + start2, n2, diag, comp);
+  }
+};
+
+
+template<typename DerivedPolicy, typename Iterator1, typename Size1, typename Iterator2, typename Size2, typename Compare>
+void locate_merge_paths_(thrust::system::cuda::execution_policy<DerivedPolicy> &exec,
+                         Iterator1 result,
+                         Size1 n,
+                         Iterator2 haystack_first,
+                         Size2 haystack_size,
+                         Size2 num_elements_per_group,
+                         Size2 num_groups_per_merge,
+                         Compare comp)
+{
+  locate_merge_path<Iterator2,Size2,Compare> f(haystack_first, haystack_size, num_elements_per_group, num_groups_per_merge, comp);
+
+  thrust::tabulate(exec, result, result + n, f);
+}
+
+
 template<typename KeyType, typename ValType, typename Comp>
 void MergesortPairs(KeyType* keys_global, ValType* values_global, int n, Comp comp, mgpu::CudaContext& context)
 {
-  const int groupsize = 256;
-  const int grainsize = 11;
+  typedef int size_type;
+
+  const size_type groupsize = 256;
+  const size_type grainsize = 11;
   
-  const int tilesize = groupsize * grainsize;
-  int num_groups = (n + tilesize - 1) / tilesize;
-  int num_passes = mgpu::FindLog2(num_groups, true);
+  const size_type tilesize = groupsize * grainsize;
+  size_type num_groups = (n + tilesize - 1) / tilesize;
+  size_type num_passes = mgpu::FindLog2(num_groups, true);
   
   MGPU_MEM(KeyType) keysDestDevice = context.Malloc<KeyType>(n);
   MGPU_MEM(ValType) valsDestDevice = context.Malloc<ValType>(n);
@@ -103,17 +166,22 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int n, Comp co
   ValType* valsSource = values_global;
   ValType* valsDest = valsDestDevice->get();
 
-  int heap_size = tilesize * thrust::max(sizeof(KeyType), sizeof(ValType));
+  size_type heap_size = tilesize * thrust::max(sizeof(KeyType), sizeof(ValType));
 
   bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), stable_sort_each_kernel(), bulk::root.this_exec, keysSource, valsSource, n, comp);
+
+  // XXX forward exec from parameters here
+  thrust::cuda::tag exec;
+  thrust::detail::temporary_array<size_type,thrust::cuda::tag> merge_paths(exec, num_groups + 1);
   
-  for(int pass = 0; pass < num_passes; ++pass) 
+  for(size_type pass = 0; pass < num_passes; ++pass) 
   {
-    int num_groups_per_merge = 2 << pass;
-    MGPU_MEM(int) partitionsDevice = mgpu::MergePathPartitions<mgpu::MgpuBoundsLower>(keysSource, n, keysSource, 0, tilesize, num_groups_per_merge, comp, context);
+    size_type num_groups_per_merge = 2 << pass;
+
+    locate_merge_paths_(exec, merge_paths.begin(), merge_paths.size(), keysSource, n, tilesize, num_groups_per_merge, comp);
     
-    int heap_size = tilesize * thrust::max(sizeof(KeyType), sizeof(int));
-    bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), merge_by_key_kernel(), bulk::root.this_exec, keysSource, valsSource, n, partitionsDevice->get(), num_groups_per_merge, keysDest, valsDest, comp);
+    size_type heap_size = tilesize * thrust::max(sizeof(KeyType), sizeof(size_type));
+    bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), merge_by_key_kernel(), bulk::root.this_exec, keysSource, valsSource, n, merge_paths.begin(), num_groups_per_merge, keysDest, valsDest, comp);
 
     std::swap(keysDest, keysSource);
     std::swap(valsDest, valsSource);
