@@ -3,6 +3,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 #include <thrust/detail/minmax.h>
+#include <thrust/random.h>
 #include <bulk/bulk.hpp>
 #include "time_invocation_cuda.hpp"
 #include "join_iterator.hpp"
@@ -158,8 +159,9 @@ void stable_merge_sort_by_key(RandomAccessIterator1 keys_first, RandomAccessIter
 
   typedef int size_type;
 
-  const size_type groupsize = 256;
-  const size_type grainsize = 11;
+  // 78/77/92
+  const size_type groupsize = 128;
+  const size_type grainsize = 7;
   
   const size_type tilesize = groupsize * grainsize;
   size_type num_groups = (n + tilesize - 1) / tilesize;
@@ -327,7 +329,11 @@ void validate(size_t n)
 
   stable_merge_sort_by_key(sorted_keys.begin(), sorted_keys.end(), sorted_values.begin(), my_less());
 
-  std::cout << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
+  cudaError_t error = cudaThreadSynchronize();
+  if(error)
+  {
+    std::cout << "CUDA error: " << cudaGetErrorString(error) << std::endl;
+  }
 
   if(n < 30 && sorted_keys != ref_keys)
   {
@@ -358,10 +364,20 @@ void validate(size_t n)
 
 int main()
 {
-  std::cout << "small input: " << std::endl;
-  std::cout << "int: " << std::endl;
+  for(size_t n = 1; n <= 1 << 20; n <<= 1)
+  {
+    std::cout << "Testing n = " << n << std::endl;
+    validate<int>(n);
+  }
 
-  validate<int>(20);
+  thrust::default_random_engine rng;
+  for(int i = 0; i < 20; ++i)
+  {
+    size_t n = rng() % (1 << 20);
+   
+    std::cout << "Testing n = " << n << std::endl;
+    validate<int>(n);
+  }
 
   size_t n = 12345678;
 
