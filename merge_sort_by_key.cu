@@ -50,6 +50,7 @@ merge_by_key(bulk::bounded<
 
   typedef typename thrust::iterator_value<RandomAccessIterator5>::type key_type;
 
+#if __CUDA_ARCH__ >= 200
   union
   {
     key_type  *keys;
@@ -57,6 +58,13 @@ merge_by_key(bulk::bounded<
   } stage;
 
   stage.keys = static_cast<key_type*>(bulk::malloc(g, groupsize * grainsize * thrust::max(sizeof(key_type), sizeof(size_type))));
+#else
+  __shared__ union
+  {
+    key_type  keys[groupsize * grainsize];
+    size_type indices[groupsize * grainsize];
+  } stage;
+#endif
 
   size_type n1 = keys_last1 - keys_first1;
   size_type n2 = keys_last2 - keys_first2;
@@ -111,7 +119,9 @@ merge_by_key(bulk::bounded<
                                make_join_iterator(values_first1, n1, values_first2),
                                values_result);
 
+#if __CUDA_ARCH__ >= 200
   bulk::free(g, stage.keys);
+#endif
 
   return thrust::make_pair(keys_result, values_result);
 }
