@@ -165,7 +165,7 @@ void stable_merge_sort_by_key(RandomAccessIterator1 keys_first, RandomAccessIter
   
   const size_type tilesize = groupsize * grainsize;
   size_type num_groups = (n + tilesize - 1) / tilesize;
-  size_type num_passes = mgpu::FindLog2(num_groups, true);
+  size_type num_passes = thrust::detail::log2_ri(num_groups);
 
   size_type heap_size = tilesize * thrust::max(sizeof(key_type), sizeof(value_type));
   bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), stable_sort_each_kernel(), bulk::root.this_exec, keys_first, values_first, n, comp);
