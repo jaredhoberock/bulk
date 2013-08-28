@@ -67,7 +67,7 @@ struct merge_by_key_kernel
 	   typename RandomAccessIterator4,
 	   typename RandomAccessIterator5,
            typename Compare>
-  __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g, RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, int n, RandomAccessIterator3 merge_paths, int num_groups_per_merge, RandomAccessIterator4 keys_result, RandomAccessIterator5 values_result, Compare comp)
+  __device__ void operator()(bulk::concurrent_group<bulk::agent<grainsize>, groupsize> &g, RandomAccessIterator1 keys_first, RandomAccessIterator2 values_first, unsigned int n, RandomAccessIterator3 merge_paths, int num_groups_per_merge, RandomAccessIterator4 keys_result, RandomAccessIterator5 values_result, Compare comp)
   {
     typedef typename bulk::concurrent_group<bulk::agent<grainsize>, groupsize>::size_type size_type;
 
@@ -146,9 +146,16 @@ void locate_merge_paths_(thrust::system::cuda::execution_policy<DerivedPolicy> &
 }
 
 
-template<typename KeyType, typename ValType, typename Comp>
-void MergesortPairs(KeyType* keys_global, ValType* values_global, int n, Comp comp, mgpu::CudaContext& context)
+template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
+void stable_merge_sort_by_key(RandomAccessIterator1 keys_first, RandomAccessIterator1 keys_last, RandomAccessIterator2 values_first, Compare comp)
 {
+  typename thrust::iterator_difference<RandomAccessIterator1>::type n = keys_last - keys_first;
+
+  if(n <= 0) return;
+
+  typedef typename thrust::iterator_value<RandomAccessIterator1>::type key_type;
+  typedef typename thrust::iterator_value<RandomAccessIterator2>::type value_type;
+
   typedef int size_type;
 
   const size_type groupsize = 256;
@@ -157,52 +164,46 @@ void MergesortPairs(KeyType* keys_global, ValType* values_global, int n, Comp co
   const size_type tilesize = groupsize * grainsize;
   size_type num_groups = (n + tilesize - 1) / tilesize;
   size_type num_passes = mgpu::FindLog2(num_groups, true);
-  
-  MGPU_MEM(KeyType) keysDestDevice = context.Malloc<KeyType>(n);
-  MGPU_MEM(ValType) valsDestDevice = context.Malloc<ValType>(n);
 
-  KeyType* keysSource = keys_global;
-  KeyType* keysDest = keysDestDevice->get();
-  ValType* valsSource = values_global;
-  ValType* valsDest = valsDestDevice->get();
-
-  size_type heap_size = tilesize * thrust::max(sizeof(KeyType), sizeof(ValType));
-
-  bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), stable_sort_each_kernel(), bulk::root.this_exec, keysSource, valsSource, n, comp);
+  size_type heap_size = tilesize * thrust::max(sizeof(key_type), sizeof(value_type));
+  bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), stable_sort_each_kernel(), bulk::root.this_exec, keys_first, values_first, n, comp);
 
   // XXX forward exec from parameters here
   thrust::cuda::tag exec;
+
+  // ping being true means the latest data is in the source array
+  bool ping = true;
+  thrust::detail::temporary_array<key_type,thrust::cuda::tag>   keys_pong(exec, n);
+  thrust::detail::temporary_array<value_type,thrust::cuda::tag> values_pong(exec, n);
+
   thrust::detail::temporary_array<size_type,thrust::cuda::tag> merge_paths(exec, num_groups + 1);
   
-  for(size_type pass = 0; pass < num_passes; ++pass) 
+  // merge_by_key_kernel's heap requirements differ
+  heap_size = tilesize * thrust::max(sizeof(key_type), sizeof(size_type));
+
+  for(size_type pass = 0; pass < num_passes; ++pass, ping = !ping) 
   {
     size_type num_groups_per_merge = 2 << pass;
 
-    locate_merge_paths_(exec, merge_paths.begin(), merge_paths.size(), keysSource, n, tilesize, num_groups_per_merge, comp);
-    
-    size_type heap_size = tilesize * thrust::max(sizeof(KeyType), sizeof(size_type));
-    bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), merge_by_key_kernel(), bulk::root.this_exec, keysSource, valsSource, n, merge_paths.begin(), num_groups_per_merge, keysDest, valsDest, comp);
-
-    std::swap(keysDest, keysSource);
-    std::swap(valsDest, valsSource);
+    if(ping)
+    {
+      locate_merge_paths_(exec, merge_paths.begin(), merge_paths.size(), keys_first, n, tilesize, num_groups_per_merge, comp);
+      
+      bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), merge_by_key_kernel(), bulk::root.this_exec, keys_first, values_first, n, merge_paths.begin(), num_groups_per_merge, keys_pong.begin(), values_pong.begin(), comp);
+    }
+    else
+    {
+      locate_merge_paths_(exec, merge_paths.begin(), merge_paths.size(), keys_pong.begin(), n, tilesize, num_groups_per_merge, comp);
+      
+      bulk::async(bulk::grid<groupsize,grainsize>(num_groups, heap_size), merge_by_key_kernel(), bulk::root.this_exec, keys_pong.begin(), values_pong.begin(), n, merge_paths.begin(), num_groups_per_merge, keys_first, values_first, comp);
+    }
   }
 
-  if(1 & num_passes)
+  if(!ping)
   {
-    thrust::copy_n(thrust::cuda::tag(), thrust::make_zip_iterator(thrust::make_tuple(keysSource, valsSource)), n, thrust::make_zip_iterator(thrust::make_tuple(keysDest, valsDest)));
+    thrust::copy_n(exec, keys_pong.begin(), n,   keys_first);
+    thrust::copy_n(exec, values_pong.begin(), n, values_first);
   }
-}
-
-
-template<typename RandomAccessIterator1, typename RandomAccessIterator2, typename Compare>
-void my_sort_by_key_(RandomAccessIterator1 keys_first, RandomAccessIterator1 keys_last, RandomAccessIterator2 values_first, Compare comp)
-{
-  mgpu::ContextPtr ctx = mgpu::CreateCudaDevice(0);
-  ::MergesortPairs(thrust::raw_pointer_cast(&*keys_first),
-                   thrust::raw_pointer_cast(&*values_first),
-                   keys_last - keys_first,
-                   comp,
-                   *ctx);
 }
 
 
@@ -225,7 +226,7 @@ void my_sort_by_key(const thrust::device_vector<T> *unsorted_keys,
 {
   *sorted_keys = *unsorted_keys;
   *sorted_values = *unsorted_values;
-  my_sort_by_key_(sorted_keys->begin(), sorted_keys->end(), sorted_values->begin(), my_less());
+  stable_merge_sort_by_key(sorted_keys->begin(), sorted_keys->end(), sorted_values->begin(), my_less());
 }
 
 
@@ -324,7 +325,7 @@ void validate(size_t n)
   thrust::device_vector<T> sorted_keys = unsorted_keys;
   thrust::device_vector<T> sorted_values = unsorted_values;
 
-  my_sort_by_key_(sorted_keys.begin(), sorted_keys.end(), sorted_values.begin(), my_less());
+  stable_merge_sort_by_key(sorted_keys.begin(), sorted_keys.end(), sorted_values.begin(), my_less());
 
   std::cout << "CUDA error: " << cudaGetErrorString(cudaThreadSynchronize()) << std::endl;
 
