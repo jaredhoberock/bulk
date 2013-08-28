@@ -112,15 +112,15 @@ class singleton_unsafe_on_chip_allocator
     
       block *b;
     
-      if(prev != heap_end() && (b = next(prev)) != heap_end())
+      if(prev != heap_end() && (b = prev->next()) != heap_end())
       {
         // can we split?
-        if((b->size - aligned_size) >= sizeof(block))
+        if((b->size() - aligned_size) >= sizeof(block))
         {
           split_block(b, aligned_size);
         } // end if
     
-        b->is_free = false;
+        b->set_is_free(false);
       } // end if
       else
       {
@@ -132,7 +132,7 @@ class singleton_unsafe_on_chip_allocator
         } // end if
       } // end else
     
-      return data(b);
+      return b->data();
     } // end allocate()
   
   
@@ -143,17 +143,17 @@ class singleton_unsafe_on_chip_allocator
         block *b = get_block(ptr);
     
         // free the block
-        b->is_free = true;
+        b->set_is_free(true);
     
         // try to fuse the freed block the previous block
-        if(prev(b) && prev(b)->is_free)
+        if(b->prev() && b->prev()->is_free())
         {
-          b = prev(b);
+          b = b->prev();
           fuse_block(b);
         } // end if
     
         // now try to fuse with the next block
-        if(next(b) != heap_end())
+        if(b->next() != heap_end())
         {
           fuse_block(b);
         } // end if
@@ -167,19 +167,56 @@ class singleton_unsafe_on_chip_allocator
 
 
   private:
-
-    // XXX we could probably encode the entire block structure
-    //     into a single 32b int:
-    //     | 1b wasted | 1b is_free | 15b size | 15b prev (left neighbor's size) |
-    //     this would make the maximum allocation 1 << 15 = 32kb
-    struct block
+    class block
     {
-      // XXX this can safely be uint32
-      size_t  size;
-      block  *prev;
-    
-      // XXX we could use the MSB of size to encode is_free
-      size_t  is_free;
+      public:
+        __device__ inline size_t size() const
+        {
+          return m_size;
+        } // end size()
+
+        __device__ void set_size(size_t sz)
+        {
+          m_size = sz;
+        } // end set_size()
+
+        __device__ inline block *prev() const
+        {
+          return m_prev;
+        } // end prev()
+
+        __device__ void set_prev(block *p)
+        {
+          m_prev = p;
+        } // end set_prev()
+
+        __device__ inline block *next() const
+        {
+          return reinterpret_cast<block*>(reinterpret_cast<char*>(data()) + size());
+        } // end next()
+
+        __device__ inline bool is_free() const
+        {
+          return m_is_free;
+        } // end is_free()
+
+        __device__ inline void set_is_free(bool f)
+        {
+          m_is_free = f;
+        } // end set_is_free()
+
+        __device__ inline void *data() const
+        {
+          return reinterpret_cast<char*>(const_cast<block*>(this)) + sizeof(block);
+        } // end data()
+
+      private:
+        // this packing ensures that sizeof(block) is compatible with 64b alignment, because:
+        // on a 32b platform, sizeof(block) == 64b
+        // on a 64b platform, sizeof(block) == 128b
+        bool   m_is_free : 1;
+        size_t m_size    : 8 * sizeof(size_t) - 1;
+        block *m_prev;
     };
   
   
@@ -195,24 +232,6 @@ class singleton_unsafe_on_chip_allocator
     {
       return reinterpret_cast<block*>(m_os.program_break());
     } // end heap_end();
-
-  
-    __device__ inline static void *data(block *b)
-    {
-      return reinterpret_cast<char*>(b) + sizeof(block);
-    } // end data
-  
-  
-    __device__ inline static block *prev(block *b)
-    {
-      return b->prev;
-    } // end prev()
-  
-  
-    __device__ inline static block *next(block *b)
-    {
-      return reinterpret_cast<block*>(reinterpret_cast<char*>(data(b)) + b->size);
-    } // end next()
   
   
     __device__ inline void split_block(block *b, size_t size)
@@ -220,34 +239,35 @@ class singleton_unsafe_on_chip_allocator
       block *new_block;
     
       // emplace a new block within the old one's data segment
-      new_block = reinterpret_cast<block*>(reinterpret_cast<char*>(data(b)) + size);
+      new_block = reinterpret_cast<block*>(reinterpret_cast<char*>(b->data()) + size);
     
       // the new block's size is the old block's size less the size of the split less the size of a block
-      new_block->size = b->size - size - sizeof(block);
+      new_block->set_size(b->size() - size - sizeof(block));
     
-      new_block->prev = b;
-      new_block->is_free = true;
+      new_block->set_prev(b);
+      new_block->set_is_free(true);
     
       // the old block's size is the size of the split
-      b->size = size;
+      b->set_size(size);
     
       // link the old block to the new one
-      if(next(new_block) != heap_end())
+      if(new_block->next() != heap_end())
       {
-        next(new_block)->prev = new_block;
+        new_block->next()->set_prev(new_block);
       } // end if
     } // end split_block()
   
   
     __device__ inline bool fuse_block(block *b)
     {
-      if(next(b) != heap_end() && next(b)->is_free)
+      if(b->next() != heap_end() && b->next()->is_free())
       {
-        b->size += sizeof(block) + next(b)->size;
+        // increment b's size by sizeof(block) plus the next's block's data size
+        b->set_size(sizeof(block) + b->next()->size() + b->size());
     
-        if(next(b) != heap_end())
+        if(b->next() != heap_end())
         {
-          next(b)->prev = b;
+          b->next()->set_prev(b);
         }
     
         return true;
@@ -268,10 +288,10 @@ class singleton_unsafe_on_chip_allocator
     {
       block *prev = last;
     
-      while(first != last && !(first->is_free && first->size >= size))
+      while(first != last && !(first->is_free() && first->size() >= size))
       {
         prev = first;
-        first = next(first);
+        first = first->next();
       }
     
       return prev;
@@ -290,9 +310,9 @@ class singleton_unsafe_on_chip_allocator
         return new_block;
       }
     
-      on_chip_cast(new_block)->size = size;
-      on_chip_cast(new_block)->prev = prev;
-      on_chip_cast(new_block)->is_free = false;
+      on_chip_cast(new_block)->set_size(size);
+      on_chip_cast(new_block)->set_prev(prev);
+      on_chip_cast(new_block)->set_is_free(false);
     
       return new_block;
     } // end extend_heap()
