@@ -20,7 +20,7 @@
 #include <bulk/execution_policy.hpp>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -71,5 +71,5 @@ RandomAccessIterator for_each_n(bounded<bound, bulk::agent<grainsize> > &b,
                                 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

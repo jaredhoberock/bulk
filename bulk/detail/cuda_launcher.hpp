@@ -24,7 +24,7 @@
 #include <thrust/system/cuda/detail/runtime_introspection.h>
 #include <thrust/system/cuda/detail/synchronize.h>
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 namespace detail
@@ -395,5 +395,5 @@ struct cuda_launcher<
 
 } // end detail
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

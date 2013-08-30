@@ -23,7 +23,7 @@
 #include <cstddef>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -620,5 +620,5 @@ parallel_group<
 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

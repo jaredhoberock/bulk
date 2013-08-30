@@ -23,7 +23,7 @@
 #include <thrust/detail/type_traits.h>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -273,5 +273,5 @@ copy_n(bulk::bounded<
 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

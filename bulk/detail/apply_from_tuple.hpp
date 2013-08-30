@@ -19,7 +19,7 @@
 #include <bulk/detail/config.hpp>
 #include <thrust/tuple.h>
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 namespace detail
@@ -161,5 +161,5 @@ void apply_from_tuple(Function f, const thrust::tuple<Arg1,Arg2,Arg3,Arg4,Arg5,A
 
 } // end detail
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

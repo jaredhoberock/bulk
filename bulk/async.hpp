@@ -23,7 +23,7 @@
 #include <thrust/detail/cstdint.h>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -73,7 +73,7 @@ future<void> async(ExecutionGroup g, Function f, Arg1 arg1, Arg2 arg2, Arg3 arg3
 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 
 #include <bulk/detail/async.inl>
 

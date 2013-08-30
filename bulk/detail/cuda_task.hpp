@@ -25,7 +25,7 @@
 #include <thrust/detail/type_traits.h>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 namespace detail
@@ -365,5 +365,5 @@ class cuda_task<parallel_group<agent<grainsize>,groupsize>,Closure>
 
 } // end detail
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

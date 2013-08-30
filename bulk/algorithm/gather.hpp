@@ -23,7 +23,7 @@
 #include <thrust/iterator/retag.h>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -86,5 +86,5 @@ RandomAccessIterator3 gather(ExecutionGroup &g,
 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

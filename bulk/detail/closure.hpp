@@ -22,7 +22,7 @@
 #include <thrust/detail/config.h>
 #include <thrust/tuple.h>
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 namespace detail
@@ -205,5 +205,5 @@ closure<
 
 } // end detail
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

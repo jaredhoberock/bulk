@@ -26,7 +26,7 @@
 #include <thrust/detail/minmax.h>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -606,5 +606,5 @@ merge_by_key(bulk::bounded<
 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

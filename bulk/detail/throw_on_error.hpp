@@ -19,7 +19,7 @@
 #include <bulk/detail/config.hpp>
 #include <thrust/system/cuda/error.h>
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 namespace detail
@@ -37,5 +37,5 @@ inline void throw_on_error(cudaError_t e, const char *message)
 
 } // end detail
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

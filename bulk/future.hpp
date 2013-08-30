@@ -22,7 +22,7 @@
 #include <stdexcept>
 #include <iostream>
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -172,5 +172,5 @@ struct future_core_access
 
 
 } // end namespace bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

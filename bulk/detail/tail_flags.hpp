@@ -24,7 +24,7 @@
 #include <thrust/functional.h>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 namespace detail
@@ -144,5 +144,5 @@ tail_flags_<RandomAccessIterator>
 
 } // end detail
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

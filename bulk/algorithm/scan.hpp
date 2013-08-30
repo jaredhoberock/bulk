@@ -27,7 +27,7 @@
 #include <thrust/detail/type_traits/iterator/is_output_iterator.h>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -575,5 +575,5 @@ exclusive_scan(bulk::concurrent_group<agent<grainsize>,groupsize> &g,
 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

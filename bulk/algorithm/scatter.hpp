@@ -19,7 +19,7 @@
 #include <bulk/detail/config.hpp>
 #include <bulk/execution_policy.hpp>
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -200,5 +200,5 @@ void scatter_if(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

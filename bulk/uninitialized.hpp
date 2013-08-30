@@ -23,7 +23,7 @@
 #include <new>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -296,5 +296,5 @@ template<typename T, std::size_t N>
 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

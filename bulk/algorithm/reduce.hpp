@@ -24,7 +24,7 @@
 #include <thrust/detail/minmax.h>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 namespace detail
@@ -247,5 +247,5 @@ T reduce(bulk::concurrent_group<> &g,
 
 
 } // end bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 

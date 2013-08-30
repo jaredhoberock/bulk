@@ -23,7 +23,7 @@
 #include <cstdlib>
 
 
-BULK_NS_PREFIX
+BULK_NAMESPACE_PREFIX
 namespace bulk
 {
 
@@ -577,5 +577,5 @@ inline void free(ConcurrentGroup &g, void *ptr)
 
 
 } // end namespace bulk
-BULK_NS_SUFFIX
+BULK_NAMESPACE_SUFFIX
 
