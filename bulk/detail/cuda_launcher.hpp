@@ -313,9 +313,6 @@ struct cuda_launcher<
 
   static grid_type configure(grid_type g)
   {
-    // check for an empty launch
-    if(g.size() == 0) return make_grid<grid_type>(0, make_block<block_type>(0, 0));
-
     size_type block_size = super_t::choose_group_size(g.this_exec.size());
     size_type heap_size  = super_t::choose_heap_size(block_size, g.this_exec.heap_size());
     size_type num_blocks = g.size();
@@ -395,10 +392,9 @@ struct cuda_launcher<
 
   static thrust::tuple<size_type,size_type> configure(group_type g)
   {
-    if(g.size() == 0) return thrust::make_tuple(0, 0);
-
     size_type block_size = thrust::min<size_type>(g.size(), super_t::choose_group_size(use_default));
-    size_type num_blocks = (g.size() + block_size - 1) / block_size;
+
+    size_type num_blocks = (block_size > 0) ? (g.size() + block_size - 1) / block_size : 0;
 
     return thrust::make_tuple(num_blocks, block_size);
   } // end configure()
