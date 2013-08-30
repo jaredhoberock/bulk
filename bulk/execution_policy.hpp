@@ -293,8 +293,8 @@ class async_launch
   private:
     bool stream_valid;
     ExecutionAgent e;
-    cudaEvent_t be;
     cudaStream_t s;
+    cudaEvent_t be;
 };
 
 
