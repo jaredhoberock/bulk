@@ -438,6 +438,7 @@ class singleton_on_chip_allocator
 }; // end singleton_on_chip_allocator
 
 
+// put the object in an anonymous namespace so that non-CUDA compilers don't complain about multiple definitions
 namespace
 {
 
