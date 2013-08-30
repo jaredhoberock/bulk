@@ -395,6 +395,8 @@ struct cuda_launcher<
 
   static thrust::tuple<size_type,size_type> configure(group_type g)
   {
+    if(g.size() == 0) return thrust::make_tuple(0, 0);
+
     size_type block_size = thrust::min<size_type>(g.size(), super_t::choose_group_size(use_default));
     size_type num_blocks = (g.size() + block_size - 1) / block_size;
 
