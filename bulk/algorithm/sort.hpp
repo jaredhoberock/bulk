@@ -37,7 +37,6 @@ struct stable_odd_even_transpose_sort_by_key_impl
   static __device__
   void sort(RandomAccessIterator1 keys, RandomAccessIterator2 values, int n, Compare comp)
   {
-    #pragma unroll
     for(int j = 1 & i; j < bound - 1; j += 2)
     {
       if(j + 1 < n && comp(keys[j + 1], keys[j]))
@@ -83,7 +82,6 @@ struct stable_odd_even_transpose_sort_impl
   static __device__
   void sort(RandomAccessIterator keys, int n, Compare comp)
   {
-    #pragma unroll
     for(int j = 1 & i; j < bound - 1; j += 2)
     {
       if(j + 1 < n && comp(keys[j + 1], keys[j]))
