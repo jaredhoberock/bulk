@@ -298,14 +298,14 @@ class async_launch
 };
 
 
-__host__ __device__
+inline __host__ __device__
 async_launch<bulk::parallel_group<> > par(cudaStream_t s, size_t num_threads)
 {
   return async_launch<bulk::parallel_group<> >(bulk::parallel_group<>(num_threads), s);
 }
 
 
-async_launch<bulk::parallel_group<> > par(bulk::future<void> &before, size_t num_threads)
+inline async_launch<bulk::parallel_group<> > par(bulk::future<void> &before, size_t num_threads)
 {
   cudaEvent_t before_event = bulk::detail::future_core_access::event(before);
 

@@ -438,7 +438,13 @@ class singleton_on_chip_allocator
 }; // end singleton_on_chip_allocator
 
 
+// put the object in an anonymous namespace so that non-CUDA compilers don't complain about multiple definitions
+namespace
+{
+
 __shared__  uninitialized<singleton_on_chip_allocator> s_on_chip_allocator;
+
+} // end anon namespace
 
 
 inline __device__ void init_on_chip_malloc(size_t max_data_segment_size)

@@ -25,7 +25,7 @@ namespace detail
 {
 
 
-__device__ unsigned int __isShared(const void *ptr)
+inline __device__ unsigned int __isShared(const void *ptr)
 {
   unsigned int ret;
 
@@ -47,13 +47,13 @@ __device__ unsigned int __isShared(const void *ptr)
 } // end __isShared()
 
 
-__device__ bool is_shared(const void *ptr)
+inline __device__ bool is_shared(const void *ptr)
 {
   return __isShared(ptr);
 } // end is_shared()
 
 
-__device__ bool is_global(const void *ptr)
+inline __device__ bool is_global(const void *ptr)
 {
 #if __CUDA_ARCH__ >= 200
   return __isGlobal(ptr);
