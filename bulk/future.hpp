@@ -17,6 +17,7 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
+#include <cuda_runtime_api.h>
 #include <utility>
 #include <stdexcept>
 #include <iostream>

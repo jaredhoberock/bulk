@@ -100,6 +100,8 @@ struct cuda_launcher_base
 
   void launch(size_type num_blocks, size_type block_size, size_type num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
   {
+    // guard use of triple chevrons from foreign compilers
+#ifdef __CUDACC__
     if(verbose)
     {
       std::clog << "CUDA error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
@@ -122,6 +124,7 @@ struct cuda_launcher_base
     bulk::detail::throw_on_error(cudaGetLastError(), "after kernel launch in cuda_launcher_base::launch()");
 
     thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
+#endif
   } // end launch()
 
 

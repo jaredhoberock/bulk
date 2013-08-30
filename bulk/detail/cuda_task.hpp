@@ -234,6 +234,8 @@ class cuda_task<
     __device__
     void operator()()
     {
+      // guard use of CUDA built-ins from foreign compilers
+#ifdef __CUDA_ARCH__
       // instantiate a view of this grid
       grid_type this_grid =
         make_grid<grid_type>(
@@ -257,6 +259,7 @@ class cuda_task<
 #endif
 
       substitute_placeholders_and_execute(this_grid, super_t::c);
+#endif
     } // end operator()
 }; // end cuda_task
 
@@ -289,6 +292,8 @@ class cuda_task<
     __device__
     void operator()()
     {
+      // guard use of CUDA built-ins from foreign compilers
+#ifdef __CUDA_ARCH__
       // instantiate a view of this block
       block_type this_block =
         make_block<block_type>(
@@ -308,6 +313,7 @@ class cuda_task<
 #endif
 
       substitute_placeholders_and_execute(this_block, super_t::c);
+#endif
     } // end operator()
 }; // end cuda_task
 
@@ -332,6 +338,8 @@ class cuda_task<parallel_group<agent<grainsize>,groupsize>,Closure>
     __device__
     void operator()()
     {
+      // guard use of CUDA built-ins from foreign compilers
+#ifdef __CUDA_ARCH__
       const size_t grid_size = gridDim.x * blockDim.x;
 
       for(size_t offset = blockDim.x * blockIdx.x; offset < super_t::g.size(); offset += grid_size)
@@ -350,6 +358,7 @@ class cuda_task<parallel_group<agent<grainsize>,groupsize>,Closure>
           substitute_placeholders_and_execute(this_group, super_t::c);
         } // end if
       } // end for
+#endif
     } // end operator()
 }; // end cuda_task
 

@@ -341,7 +341,10 @@ class concurrent_group
     __device__
     void wait() const
     {
+      // guard use of __syncthreads from foreign compilers
+#ifdef __CUDA_ARCH__
       __syncthreads();
+#endif
     }
 
     __host__ __device__
@@ -389,7 +392,10 @@ class concurrent_group<ExecutionAgent,dynamic_group_size>
     __device__
     void wait()
     {
+      // guard use of __syncthreads from foreign compilers
+#ifdef __CUDA_ARCH__
       __syncthreads();
+#endif
     }
 
     __host__ __device__
