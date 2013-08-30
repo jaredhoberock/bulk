@@ -83,14 +83,14 @@ template<typename T>
       return get();
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     __host__ __device__ __thrust_forceinline__
     void construct()
     {
       ::new(ptr()) T();
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg &a)
@@ -98,7 +98,7 @@ template<typename T>
       ::new(ptr()) T(a);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg1, typename Arg2>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg1 &a1, const Arg2 &a2)
@@ -106,7 +106,7 @@ template<typename T>
       ::new(ptr()) T(a1,a2);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg1, typename Arg2, typename Arg3>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg1 &a1, const Arg2 &a2, const Arg3 &a3)
@@ -114,7 +114,7 @@ template<typename T>
       ::new(ptr()) T(a1,a2,a3);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg1, typename Arg2, typename Arg3, typename Arg4>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg1 &a1, const Arg2 &a2, const Arg3 &a3, const Arg4 &a4)
@@ -122,7 +122,7 @@ template<typename T>
       ::new(ptr()) T(a1,a2,a3,a4);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg1 &a1, const Arg2 &a2, const Arg3 &a3, const Arg4 &a4, const Arg5 &a5)
@@ -130,7 +130,7 @@ template<typename T>
       ::new(ptr()) T(a1,a2,a3,a4,a5);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg1 &a1, const Arg2 &a2, const Arg3 &a3, const Arg4 &a4, const Arg5 &a5, const Arg6 &a6)
@@ -138,7 +138,7 @@ template<typename T>
       ::new(ptr()) T(a1,a2,a3,a4,a5,a6);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg1 &a1, const Arg2 &a2, const Arg3 &a3, const Arg4 &a4, const Arg5 &a5, const Arg6 &a6, const Arg7 &a7)
@@ -146,7 +146,7 @@ template<typename T>
       ::new(ptr()) T(a1,a2,a3,a4,a5,a6,a7);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7, typename Arg8>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg1 &a1, const Arg2 &a2, const Arg3 &a3, const Arg4 &a4, const Arg5 &a5, const Arg6 &a6, const Arg7 &a7, const Arg8 &a8)
@@ -154,7 +154,7 @@ template<typename T>
       ::new(ptr()) T(a1,a2,a3,a4,a5,a6,a7,a8);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7, typename Arg8, typename Arg9>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg1 &a1, const Arg2 &a2, const Arg3 &a3, const Arg4 &a4, const Arg5 &a5, const Arg6 &a6, const Arg7 &a7, const Arg8 &a8, const Arg9 &a9)
@@ -162,7 +162,7 @@ template<typename T>
       ::new(ptr()) T(a1,a2,a3,a4,a5,a6,a7,a8,a9);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     template<typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6, typename Arg7, typename Arg8, typename Arg9, typename Arg10>
     __host__ __device__ __thrust_forceinline__
     void construct(const Arg1 &a1, const Arg2 &a2, const Arg3 &a3, const Arg4 &a4, const Arg5 &a5, const Arg6 &a6, const Arg7 &a7, const Arg8 &a8, const Arg9 &a9, const Arg10 &a10)
@@ -170,7 +170,7 @@ template<typename T>
       ::new(ptr()) T(a1,a2,a3,a4,a5,a6,a7,a8,a9,a10);
     }
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     __host__ __device__ __thrust_forceinline__
     void destroy()
     {

@@ -78,7 +78,7 @@ template<typename RandomAccessIterator,
       thrust::zip_iterator<thrust::tuple<counting_iterator,RandomAccessIterator,RandomAccessIterator> >
     > iterator;
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     __host__ __device__
     //tail_flags(RandomAccessIterator first, RandomAccessIterator last)
     tail_flags_(RandomAccessIterator first, RandomAccessIterator last)
@@ -87,7 +87,7 @@ template<typename RandomAccessIterator,
         m_end(m_begin + (last - first))
     {}
 
-    #pragma hd_warning_disable
+    __bulk_hd_warning_disable__
     __host__ __device__
     //tail_flags(RandomAccessIterator first, RandomAccessIterator last, BinaryPredicate binary_pred)
     tail_flags_(RandomAccessIterator first, RandomAccessIterator last, BinaryPredicate binary_pred)
