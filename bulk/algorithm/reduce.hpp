@@ -99,9 +99,9 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
   T *buffer = buffer_impl.data();
 #endif
   
-  for(; first < last; first += elements_per_group)
+  for(size_type input_idx = 0; input_idx < n; input_idx += elements_per_group)
   {
-    size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
+    size_type partition_size = thrust::min<size_type>(elements_per_group, n - input_idx);
 
     typedef typename thrust::iterator_value<RandomAccessIterator>::type input_type;
     
@@ -114,7 +114,7 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
     {
       for(size_type i = 0; i < grainsize; ++i)
       {
-        inputs[i] = first[groupsize * i + tid];
+        inputs[i] = first[input_idx + groupsize * i + tid];
       } // end for
     } // end if
     else
@@ -124,7 +124,7 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
         size_type index = groupsize * i + tid;
         if(index < partition_size)
         {
-          inputs[i] = first[index];
+          inputs[i] = first[input_idx + index];
         } // end if
       } // end for
     } // end else
@@ -186,9 +186,9 @@ T reduce(bulk::concurrent_group<> &g,
 
   T *buffer = reinterpret_cast<T*>(bulk::malloc(g, groupsize * sizeof(T)));
   
-  for(; first < last; first += elements_per_group)
+  for(size_type input_idx = 0; input_idx < n; input_idx += elements_per_group)
   {
-    size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
+    size_type partition_size = thrust::min<size_type>(elements_per_group, n - input_idx);
 
     typedef typename thrust::iterator_value<RandomAccessIterator>::type input_type;
     
@@ -201,7 +201,7 @@ T reduce(bulk::concurrent_group<> &g,
     {
       for(size_type i = 0; i < grainsize; ++i)
       {
-        inputs[i] = first[groupsize * i + tid];
+        inputs[i] = first[input_idx + groupsize * i + tid];
       } // end for
     } // end if
     else
@@ -211,7 +211,7 @@ T reduce(bulk::concurrent_group<> &g,
         size_type index = groupsize * i + tid;
         if(index < partition_size)
         {
-          inputs[i] = first[index];
+          inputs[i] = first[input_idx + index];
         } // end if
       } // end for
     } // end else
