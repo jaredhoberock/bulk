@@ -22,6 +22,7 @@
 #include <bulk/algorithm/copy.hpp>
 #include <bulk/algorithm/gather.hpp>
 #include <bulk/uninitialized.hpp>
+#include <thrust/iterator/counting_iterator.h>
 #include <thrust/detail/minmax.h>
 
 
