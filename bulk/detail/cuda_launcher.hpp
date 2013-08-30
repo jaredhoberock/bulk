@@ -104,11 +104,15 @@ struct cuda_launcher_base
 #ifdef __CUDACC__
     if(verbose)
     {
-      std::clog << "CUDA error: " << cudaGetErrorString(cudaGetLastError()) << std::endl;
+      cudaError_t error = cudaGetLastError();
+
+      std::clog << "CUDA error: " << cudaGetErrorString(error) << std::endl;
       std::clog << "cuda_launcher_base::launch(): num_blocks: " << num_blocks << std::endl;
       std::clog << "cuda_launcher_base::launch(): block_size: " << block_size << std::endl;
       std::clog << "cuda_launcher_base::launch(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
       std::clog << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
+
+      bulk::detail::throw_on_error(error, "before kernel launch in cuda_launcher_base::launch()");
     } // end if
 
     if(num_blocks > 0)
