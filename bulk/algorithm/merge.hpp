@@ -98,7 +98,6 @@ OutputIterator merge(const bulk::bounded<bound,agent<grainsize> > &e,
   } // end if
 
   size_type i = 0;
-  #pragma unroll
   for(; i < bound; ++i)
   {
     // 4 cases:
