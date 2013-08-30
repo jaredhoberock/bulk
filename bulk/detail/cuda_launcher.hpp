@@ -314,7 +314,7 @@ struct cuda_launcher<
   static grid_type configure(grid_type g)
   {
     // check for an empty launch
-    if(g.size() == 0) return make_grid<grid_type>(0, make_block<block_type>(0));
+    if(g.size() == 0) return make_grid<grid_type>(0, make_block<block_type>(0, 0));
 
     size_type block_size = super_t::choose_group_size(g.this_exec.size());
     size_type heap_size  = super_t::choose_heap_size(block_size, g.this_exec.heap_size());
