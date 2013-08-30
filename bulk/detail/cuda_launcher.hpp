@@ -88,6 +88,7 @@ bool verbose = false;
 template<typename ExecutionGroup, typename Closure>
 struct cuda_launcher_base
 {
+  typedef typename ExecutionGroup::size_type size_type;
   typedef cuda_task<ExecutionGroup, Closure> task_type;
 
 #if BULK_ASYNC_USE_UNINITIALIZED
@@ -97,7 +98,7 @@ struct cuda_launcher_base
 #endif
 
 
-  void launch(size_t num_blocks, size_t block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
+  void launch(size_type num_blocks, size_type block_size, size_type num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
   {
     if(verbose)
     {
@@ -112,9 +113,9 @@ struct cuda_launcher_base
     uninitialized<task_type> wrapped_task;
     wrapped_task.construct(task);
 
-    get_global_function()<<<(unsigned int)num_blocks, (unsigned int)block_size, num_dynamic_smem_bytes, stream>>>(wrapped_task);
+    get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(wrapped_task);
 #else
-    get_global_function()<<<(unsigned int)num_blocks, (unsigned int)block_size, num_dynamic_smem_bytes, stream>>>(task);
+    get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(task);
 #endif
 
     // check that the launch got off the ground
@@ -147,26 +148,26 @@ struct cuda_launcher_base
   } // end device_properties()
 
 
-  static size_t max_active_blocks_per_multiprocessor(const device_properties_t &props,
-                                                     const function_attributes_t &attr,
-                                                     size_t num_threads_per_block,
-                                                     size_t num_smem_bytes_per_block)
+  static size_type max_active_blocks_per_multiprocessor(const device_properties_t &props,
+                                                        const function_attributes_t &attr,
+                                                        size_type num_threads_per_block,
+                                                        size_type num_smem_bytes_per_block)
   {
     return thrust::system::cuda::detail::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(props, attr, num_threads_per_block, num_smem_bytes_per_block);
   } // end max_active_blocks_per_multiprocessor()
 
 
   // returns the maximum number of additional dynamic smem bytes that would not lower the kernel's occupancy
-  static size_t dynamic_smem_occupancy_limit(device_properties_t &props, function_attributes_t &attr, size_t num_threads_per_block, size_t num_smem_bytes_per_block)
+  static size_type dynamic_smem_occupancy_limit(device_properties_t &props, function_attributes_t &attr, size_type num_threads_per_block, size_type num_smem_bytes_per_block)
   {
     // figure out the kernel's occupancy with 0 bytes of dynamic smem
-    size_t occupancy = max_active_blocks_per_multiprocessor(props, attr, num_threads_per_block, num_smem_bytes_per_block);
+    size_type occupancy = max_active_blocks_per_multiprocessor(props, attr, num_threads_per_block, num_smem_bytes_per_block);
 
     return thrust::system::cuda::detail::proportional_smem_allocation(props, attr, occupancy);
   } // end smem_occupancy_limit()
 
 
-  static size_t choose_heap_size(size_t group_size, size_t requested_size)
+  static size_type choose_heap_size(size_type group_size, size_type requested_size)
   {
     function_attributes_t attr = function_attributes();
 
@@ -179,7 +180,7 @@ struct cuda_launcher_base
 
     // how much smem could we allocate without reducing occupancy?
     device_properties_t props = device_properties();
-    size_t result = dynamic_smem_occupancy_limit(props, attr, group_size, 0);
+    size_type result = dynamic_smem_occupancy_limit(props, attr, group_size, 0);
 
     // did the caller request a particular size?
     if(requested_size != use_default)
@@ -198,9 +199,9 @@ struct cuda_launcher_base
   } // end choose_smem_size()
 
 
-  static size_t choose_group_size(size_t requested_size)
+  static size_type choose_group_size(size_type requested_size)
   {
-    size_t result = requested_size;
+    size_type result = requested_size;
 
     if(result == use_default)
     {
@@ -213,7 +214,7 @@ struct cuda_launcher_base
   } // end choose_group_size()
 
 
-  static unsigned int max_physical_grid_size()
+  static size_type max_physical_grid_size()
   {
     // get the limit of the actual device
     int actual_limit = device_properties().maxGridSize[0];
@@ -233,7 +234,7 @@ struct cuda_launcher_base
       ptx_limit = (1u << 31) - 1;
     } // end else
 
-    return thrust::min<unsigned int>(actual_limit, ptx_limit);
+    return thrust::min<size_type>(actual_limit, ptx_limit);
   } // end max_physical_grid_size()
 }; // end cuda_launcher_base
 
@@ -255,11 +256,11 @@ struct cuda_launcher<
   : public cuda_launcher_base<typename cuda_grid<gridsize,blocksize,grainsize>::type,Closure>
 {
   typedef cuda_launcher_base<typename cuda_grid<gridsize,blocksize,grainsize>::type,Closure> super_t;
+  typedef typename super_t::size_type size_type;
 
   typedef typename cuda_grid<gridsize,blocksize,grainsize>::type grid_type;
   typedef typename grid_type::agent_type                         block_type;
   typedef typename block_type::agent_type                        thread_type;
-  typedef typename grid_type::size_type                          size_type;
 
   typedef typename super_t::task_type task_type;
 
@@ -267,25 +268,25 @@ struct cuda_launcher<
   {
     grid_type g = configure(request);
 
-    size_t num_blocks = g.size();
-    size_t block_size = g.this_exec.size();
-    size_t heap_size  = g.this_exec.heap_size();
+    size_type num_blocks = g.size();
+    size_type block_size = g.this_exec.size();
+    size_type heap_size  = g.this_exec.heap_size();
 
-    size_t max_physical_grid_size = super_t::max_physical_grid_size();
+    size_type max_physical_grid_size = super_t::max_physical_grid_size();
 
     // launch multiple grids in order to accomodate potentially too large grid size requests
     // XXX these will all go in sequential order in the same stream, even though they are logically
     //     parallel
     if(block_size > 0)
     {
-      size_t num_remaining_physical_blocks = num_blocks;
+      size_type num_remaining_physical_blocks = num_blocks;
       for(size_type block_offset = 0;
           block_offset < num_blocks;
           block_offset += max_physical_grid_size)
       {
         task_type task(g, c, block_offset);
 
-        size_t num_physical_blocks = thrust::min<size_t>(num_remaining_physical_blocks, max_physical_grid_size);
+        size_type num_physical_blocks = thrust::min<size_type>(num_remaining_physical_blocks, max_physical_grid_size);
 
         if(bulk::detail::verbose)
         {
@@ -302,9 +303,9 @@ struct cuda_launcher<
 
   static grid_type configure(grid_type g)
   {
-    size_t block_size = super_t::choose_group_size(g.this_exec.size());
-    size_t heap_size  = super_t::choose_heap_size(block_size, g.this_exec.heap_size());
-    size_t num_blocks = g.size();
+    size_type block_size = super_t::choose_group_size(g.this_exec.size());
+    size_type heap_size  = super_t::choose_heap_size(block_size, g.this_exec.heap_size());
+    size_type num_blocks = g.size();
 
     return make_grid<grid_type>(num_blocks, make_block<block_type>(block_size, heap_size));
   } // end configure()
@@ -322,6 +323,7 @@ struct cuda_launcher<
   : public cuda_launcher_base<concurrent_group<agent<grainsize>,blocksize>,Closure>
 {
   typedef cuda_launcher_base<concurrent_group<agent<grainsize>,blocksize>,Closure> super_t;
+  typedef typename super_t::size_type size_type;
   typedef typename super_t::task_type task_type;
 
   typedef concurrent_group<agent<grainsize>,blocksize> block_type;
@@ -330,8 +332,8 @@ struct cuda_launcher<
   {
     block_type b = configure(request);
 
-    size_t block_size = b.size();
-    size_t heap_size  = b.heap_size();
+    size_type block_size = b.size();
+    size_type heap_size  = b.heap_size();
 
     if(block_size > 0)
     {
@@ -342,8 +344,8 @@ struct cuda_launcher<
 
   static block_type configure(block_type b)
   {
-    size_t block_size = super_t::choose_group_size(b.size());
-    size_t heap_size  = super_t::choose_heap_size(block_size, b.heap_size());
+    size_type block_size = super_t::choose_group_size(b.size());
+    size_type heap_size  = super_t::choose_heap_size(block_size, b.heap_size());
     return make_block<block_type>(block_size, heap_size);
   } // end configure()
 }; // end cuda_launcher
@@ -360,13 +362,14 @@ struct cuda_launcher<
   : public cuda_launcher_base<parallel_group<agent<grainsize>,groupsize>,Closure>
 {
   typedef cuda_launcher_base<parallel_group<agent<grainsize>,groupsize>,Closure> super_t;
+  typedef typename super_t::size_type size_type; 
   typedef typename super_t::task_type task_type;
 
   typedef parallel_group<agent<grainsize>,groupsize> group_type;
 
   void launch(group_type g, Closure c, cudaStream_t stream)
   {
-    size_t num_blocks, block_size;
+    size_type num_blocks, block_size;
     thrust::tie(num_blocks,block_size) = configure(g);
 
     if(num_blocks > 0 && block_size > 0)
@@ -377,10 +380,10 @@ struct cuda_launcher<
     } // end if
   } // end go()
 
-  static thrust::tuple<size_t,size_t> configure(group_type g)
+  static thrust::tuple<size_type,size_type> configure(group_type g)
   {
-    size_t block_size = thrust::min<size_t>(g.size(), super_t::choose_group_size(use_default));
-    size_t num_blocks = (g.size() + block_size - 1) / block_size;
+    size_type block_size = thrust::min<size_type>(g.size(), super_t::choose_group_size(use_default));
+    size_type num_blocks = (g.size() + block_size - 1) / block_size;
 
     return thrust::make_tuple(num_blocks, block_size);
   } // end configure()
