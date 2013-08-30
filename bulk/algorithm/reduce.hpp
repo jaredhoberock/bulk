@@ -102,9 +102,11 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
   for(; first < last; first += elements_per_group)
   {
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
+
+    typedef typename thrust::iterator_value<RandomAccessIterator>::type input_type;
     
     // load input into register
-    T inputs[grainsize];
+    input_type inputs[grainsize];
 
     // XXX this is a sequential strided copy
     //     the stride is groupsize
@@ -133,7 +135,7 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
       size_type index = groupsize * i + g.this_exec.index();
       if(index < partition_size)
       {
-        T x = inputs[i];
+        input_type x = inputs[i];
         this_sum = (i || this_sum_defined) ? binary_op(this_sum, x) : x;
       } // end if
     } // end for
@@ -187,9 +189,11 @@ T reduce(bulk::concurrent_group<> &g,
   for(; first < last; first += elements_per_group)
   {
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
+
+    typedef typename thrust::iterator_value<RandomAccessIterator>::type input_type;
     
     // load input into register
-    T inputs[grainsize];
+    input_type inputs[grainsize];
 
     // XXX this is a sequential strided copy
     //     the stride is groupsize
@@ -218,7 +222,7 @@ T reduce(bulk::concurrent_group<> &g,
       size_type index = groupsize * i + g.this_exec.index();
       if(index < partition_size)
       {
-        T x = inputs[i];
+        input_type x = inputs[i];
         this_sum = (i || this_sum_defined) ? binary_op(this_sum, x) : x;
       } // end if
     } // end for
