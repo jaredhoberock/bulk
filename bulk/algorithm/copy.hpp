@@ -75,7 +75,6 @@ template<typename ConcurrentGroup,
 __forceinline__ __device__
 RandomAccessIterator2 simple_copy_n(ConcurrentGroup &g, RandomAccessIterator1 first, Size n, RandomAccessIterator2 result)
 {
-  #pragma unroll
   for(Size i = g.this_exec.index();
       i < n;
       i += g.size())
@@ -121,7 +120,6 @@ typename thrust::detail::enable_if<
   // important special case which avoids the expensive for loop below
   if(chunk_size == n)
   {
-    #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
       size_type idx = size * i + tid;
@@ -138,7 +136,6 @@ typename thrust::detail::enable_if<
       // avoid conditional accesses when possible
       if((last - first) >= chunk_size)
       {
-        #pragma unroll
         for(size_type i = 0; i < grainsize; ++i)
         {
           size_type idx = size * i + tid;
@@ -147,7 +144,6 @@ typename thrust::detail::enable_if<
       } // end if
       else
       {
-        #pragma unroll
         for(size_type i = 0; i < grainsize; ++i)
         {
           size_type idx = size * i + tid;
@@ -237,14 +233,12 @@ copy_n(bulk::bounded<
   // avoid conditional accesses when possible
   if(groupsize * grainsize <= n)
   {
-    #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
       size_type src_idx = g.size() * i + tid;
       stage[i] = first[src_idx];
     } // end for i
 
-    #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
       size_type dst_idx = g.size() * i + tid;
@@ -253,7 +247,6 @@ copy_n(bulk::bounded<
   } // end if
   else
   {
-    #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
       size_type src_idx = g.size() * i + tid;
@@ -263,7 +256,6 @@ copy_n(bulk::bounded<
       } // end if
     } // end for
 
-    #pragma unroll
     for(size_type i = 0; i < grainsize; ++i)
     {
       size_type dst_idx = g.size() * i + tid;
