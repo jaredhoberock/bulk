@@ -42,7 +42,6 @@ RandomAccessIterator2
                  T init,
                  BinaryFunction binary_op)
 {
-  #pragma unroll
   for(int i = 0; i < exec.bound(); ++i)
   {
     if(first + i < last)
@@ -66,7 +65,6 @@ RandomAccessIterator2
                  T init,
                  BinaryFunction binary_op)
 {
-  #pragma unroll
   for(int i = 0; i < exec.bound(); ++i)
   {
     if(first + i < last)
@@ -248,7 +246,6 @@ scan(bulk::bounded<
   input_type x;
   
   // this loop is a sequential accumulate
-  #pragma unroll
   for(size_type i = 0; i < grainsize; ++i)
   {
     if(i < local_size)

@@ -44,7 +44,6 @@ T accumulate(const bounded<bound,bulk::agent<grainsize> > &exec,
 
   size_type n = last - first;
 
-  #pragma unroll
   for(size_type i = 0; i < exec.bound(); ++i)
   {
     if(i < n)
