@@ -111,19 +111,22 @@ struct cuda_launcher_base
       std::clog << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
     } // end if
 
+    if(num_blocks > 0)
+    {
 #if BULK_ASYNC_USE_UNINITIALIZED
-    uninitialized<task_type> wrapped_task;
-    wrapped_task.construct(task);
+      uninitialized<task_type> wrapped_task;
+      wrapped_task.construct(task);
 
-    get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(wrapped_task);
+      get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(wrapped_task);
 #else
-    get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(task);
+      get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(task);
 #endif
 
-    // check that the launch got off the ground
-    bulk::detail::throw_on_error(cudaGetLastError(), "after kernel launch in cuda_launcher_base::launch()");
+      // check that the launch got off the ground
+      bulk::detail::throw_on_error(cudaGetLastError(), "after kernel launch in cuda_launcher_base::launch()");
 
-    thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
+      thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
+    } // end if
 #endif
   } // end launch()
 
@@ -273,39 +276,46 @@ struct cuda_launcher<
 
     size_type num_blocks = g.size();
     size_type block_size = g.this_exec.size();
-    size_type heap_size  = g.this_exec.heap_size();
 
-    size_type max_physical_grid_size = super_t::max_physical_grid_size();
-
-    // launch multiple grids in order to accomodate potentially too large grid size requests
-    // XXX these will all go in sequential order in the same stream, even though they are logically
-    //     parallel
-    if(block_size > 0)
+    if(num_blocks > 0 && block_size > 0)
     {
-      size_type num_remaining_physical_blocks = num_blocks;
-      for(size_type block_offset = 0;
-          block_offset < num_blocks;
-          block_offset += max_physical_grid_size)
+      size_type heap_size  = g.this_exec.heap_size();
+
+      size_type max_physical_grid_size = super_t::max_physical_grid_size();
+
+      // launch multiple grids in order to accomodate potentially too large grid size requests
+      // XXX these will all go in sequential order in the same stream, even though they are logically
+      //     parallel
+      if(block_size > 0)
       {
-        task_type task(g, c, block_offset);
-
-        size_type num_physical_blocks = thrust::min<size_type>(num_remaining_physical_blocks, max_physical_grid_size);
-
-        if(bulk::detail::verbose)
+        size_type num_remaining_physical_blocks = num_blocks;
+        for(size_type block_offset = 0;
+            block_offset < num_blocks;
+            block_offset += max_physical_grid_size)
         {
-          std::clog << "cuda_launcher::launch(): max_physical_grid_size: " << max_physical_grid_size << std::endl;
-          std::clog << "cuda_launcher::launch(): requesting " << num_physical_blocks << " physical blocks" << std::endl;
-        }
+          task_type task(g, c, block_offset);
 
-        super_t::launch(num_physical_blocks, block_size, heap_size, stream, task);
+          size_type num_physical_blocks = thrust::min<size_type>(num_remaining_physical_blocks, max_physical_grid_size);
 
-        num_remaining_physical_blocks -= num_physical_blocks;
-      } // end for block_offset
+          if(bulk::detail::verbose)
+          {
+            std::clog << "cuda_launcher::launch(): max_physical_grid_size: " << max_physical_grid_size << std::endl;
+            std::clog << "cuda_launcher::launch(): requesting " << num_physical_blocks << " physical blocks" << std::endl;
+          }
+
+          super_t::launch(num_physical_blocks, block_size, heap_size, stream, task);
+
+          num_remaining_physical_blocks -= num_physical_blocks;
+        } // end for block_offset
+      } // end if
     } // end if
   } // end go()
 
   static grid_type configure(grid_type g)
   {
+    // check for an empty launch
+    if(g.size() == 0) return make_grid<grid_type>(0, make_block<block_type>(0));
+
     size_type block_size = super_t::choose_group_size(g.this_exec.size());
     size_type heap_size  = super_t::choose_heap_size(block_size, g.this_exec.heap_size());
     size_type num_blocks = g.size();
