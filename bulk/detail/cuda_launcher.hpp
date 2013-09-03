@@ -23,6 +23,10 @@
 #include <thrust/detail/minmax.h>
 #include <thrust/system/cuda/detail/runtime_introspection.h>
 #include <thrust/system/cuda/detail/synchronize.h>
+#include <thrust/system/cuda/detail/execution_policy.h>
+#include <thrust/system/cpp/detail/execution_policy.h>
+#include <thrust/detail/temporary_array.h>
+
 
 BULK_NAMESPACE_PREFIX
 namespace bulk
@@ -85,38 +89,32 @@ bool verbose = false;
 }
 
 
-template<typename ExecutionGroup, typename Closure>
-struct cuda_launcher_base
+// sm_10 devices have 256 bytes of parameter space
+template<typename Function, bool by_value = sizeof(Function) <= 256>
+class triple_chevron_launcher
 {
-  typedef typename ExecutionGroup::size_type size_type;
-  typedef cuda_task<ExecutionGroup, Closure> task_type;
+  public:
+    typedef Function task_type;
 
 #if BULK_ASYNC_USE_UNINITIALIZED
-  typedef void (*global_function_t)(uninitialized<task_type>);
+    typedef void (*global_function_t)(uninitialized<task_type>);
 #else
-  typedef void (*global_function_t)(task_type);
+    typedef void (*global_function_t)(task_type);
 #endif
 
 
-  void launch(size_type num_blocks, size_type block_size, size_type num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
-  {
-    // guard use of triple chevrons from foreign compilers
+    static global_function_t get_global_function()
+    {
+      return launch_by_value<task_type>;
+    } // end get_launch_function()
+
+
+    template<typename DerivedPolicy>
+    void launch(thrust::cuda::execution_policy<DerivedPolicy> &, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
+    {
+      // guard use of triple chevrons from foreign compilers
 #ifdef __CUDACC__
-    if(verbose)
-    {
-      cudaError_t error = cudaGetLastError();
 
-      std::clog << "CUDA error: " << cudaGetErrorString(error) << std::endl;
-      std::clog << "cuda_launcher_base::launch(): num_blocks: " << num_blocks << std::endl;
-      std::clog << "cuda_launcher_base::launch(): block_size: " << block_size << std::endl;
-      std::clog << "cuda_launcher_base::launch(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
-      std::clog << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
-
-      bulk::detail::throw_on_error(error, "before kernel launch in cuda_launcher_base::launch()");
-    } // end if
-
-    if(num_blocks > 0)
-    {
 #if BULK_ASYNC_USE_UNINITIALIZED
       uninitialized<task_type> wrapped_task;
       wrapped_task.construct(task);
@@ -126,19 +124,76 @@ struct cuda_launcher_base
       get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(task);
 #endif
 
+#endif // __CUDACC__
+    } // end launch()
+};
+
+
+template<typename Function>
+class triple_chevron_launcher<Function,false>
+{
+  public:
+    typedef Function task_type;
+    typedef void (*global_function_t)(const task_type*);
+
+    static global_function_t get_global_function()
+    {
+      return launch_by_pointer<task_type>;
+    } // end get_launch_function()
+
+
+    template<typename DerivedPolicy>
+    void launch(thrust::cuda::execution_policy<DerivedPolicy> &exec, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
+    {
+      // guard use of triple chevrons from foreign compilers
+#ifdef __CUDACC__
+      // use temporary storage for the task
+      thrust::cpp::tag host_tag;
+      thrust::detail::temporary_array<task_type,DerivedPolicy> task_storage(exec, host_tag, &task, &task + 1);
+
+      get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>((&task_storage[0]).get());
+#endif // __CUDACC__
+    } // end launch()
+};
+
+
+template<typename ExecutionGroup, typename Closure>
+struct cuda_launcher_base
+  : public triple_chevron_launcher<
+      cuda_task<ExecutionGroup,Closure>
+    >
+{
+  typedef triple_chevron_launcher<cuda_task<ExecutionGroup,Closure> > super_t;
+  typedef typename super_t::task_type                                 task_type;
+  typedef typename ExecutionGroup::size_type                          size_type;
+
+
+  void launch(size_type num_blocks, size_type block_size, size_type num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
+  {
+    if(verbose)
+    {
+      cudaError_t error = cudaGetLastError();
+
+      std::clog << "CUDA error: " << cudaGetErrorString(error) << std::endl;
+      std::clog << "cuda_launcher_base::launch(): num_blocks: " << num_blocks << std::endl;
+      std::clog << "cuda_launcher_base::launch(): block_size: " << block_size << std::endl;
+      std::clog << "cuda_launcher_base::launch(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
+      std::clog << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(super_t::get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
+
+      bulk::detail::throw_on_error(error, "before kernel launch in cuda_launcher_base::launch()");
+    } // end if
+
+    if(num_blocks > 0)
+    {
+      thrust::cuda::tag exec;
+      super_t::launch(exec, num_blocks, block_size, num_dynamic_smem_bytes, stream, task);
+
       // check that the launch got off the ground
       bulk::detail::throw_on_error(cudaGetLastError(), "after kernel launch in cuda_launcher_base::launch()");
 
       thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
     } // end if
-#endif
   } // end launch()
-
-
-  static global_function_t get_global_function()
-  {
-    return launch_by_value<task_type>;
-  } // end get_launch_function()
 
 
   typedef thrust::system::cuda::detail::function_attributes_t function_attributes_t;
@@ -146,7 +201,7 @@ struct cuda_launcher_base
 
   static function_attributes_t function_attributes()
   {
-    return thrust::system::cuda::detail::function_attributes(get_global_function());
+    return thrust::system::cuda::detail::function_attributes(super_t::get_global_function());
   } // end function_attributes()
 
 
