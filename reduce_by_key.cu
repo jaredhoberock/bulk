@@ -199,9 +199,11 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
     thrust::cuda::tag t;
     thrust::detail::temporary_array<size_type,thrust::cuda::tag> result_size_storage(t, 1);
 
-    // good for 32b types
-    const int groupsize = 512;
-    const int grainsize = 3;
+    // XXX these sizes aren't actually optimal, but anything larger
+    //     will cause sm_1x to run out of smem at compile time
+    const int groupsize = (sizeof(value_type) == sizeof(int)) ? 512 : 256;
+    const int grainsize = (sizeof(value_type) == sizeof(int)) ?   3 :   5;
+
     size_type heap_size = groupsize * grainsize * (sizeof(size_type) + sizeof(value_type));
     bulk::async(bulk::grid<groupsize,grainsize>(1,heap_size), reduce_by_key_kernel(), bulk::root.this_exec, keys_first, keys_last, values_first, keys_result, values_result, pred, binary_op, result_size_storage.begin());
 
