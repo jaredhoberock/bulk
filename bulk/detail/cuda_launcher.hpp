@@ -66,11 +66,14 @@ size_t maximum_potential_occupancy(Function kernel, size_t num_threads, size_t n
 
 
 #ifdef __CUDACC__
-   // if there are multiple versions of Bulk floating around, this may be #defined already
+// if there are multiple versions of Bulk floating around, this may be #defined already
 #  ifndef __bulk_launch_bounds__
 #    define __bulk_launch_bounds__(num_threads_per_block, num_blocks_per_sm) __launch_bounds__(num_threads_per_block, num_blocks_per_sm)
 #  endif
 #else
+#  ifndef __bulk_launch_bounds__
+#    define __bulk_launch_bounds__(num_threads_per_block, num_blocks_per_sm)
+#  endif
 #endif // __CUDACC__
 
 
