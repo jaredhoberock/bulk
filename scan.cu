@@ -103,7 +103,7 @@ RandomAccessIterator2 inclusive_scan(RandomAccessIterator1 first, RandomAccessIt
   {
     typedef bulk::detail::scan_detail::scan_buffer<512,3,RandomAccessIterator1,RandomAccessIterator2,BinaryFunction> heap_type;
     Size heap_size = sizeof(heap_type);
-    bulk::async(bulk::par(bulk::con<512,3>(heap_size), 1), inclusive_scan_n(), bulk::root.this_exec, first, n, result, init, binary_op);
+    bulk::async(bulk::con<512,3>(heap_size), inclusive_scan_n(), bulk::root, first, n, result, init, binary_op);
   } // end if
   else
   {
