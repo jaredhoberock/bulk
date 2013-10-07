@@ -60,12 +60,16 @@ __device__ T destructive_reduce_n(ConcurrentGroup &g, RandomAccessIterator first
 
   g.wait();
 
-  T result = (n > 0) ? binary_op(init,first[0]) : init;
+  T result = init;
+  if(n > 0)
+  {
+    result = binary_op(result,first[0]);
+  } // end if
 
   g.wait();
 
   return result;
-}
+} // end destructive_reduce_n()
 
 
 } // end reduce_detail
