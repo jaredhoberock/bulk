@@ -62,6 +62,59 @@ namespace accumulate_detail
 {
 
 
+// XXX this implementation is simply an inplace exclusive scan
+//     we could potentially do better with an implementation which uses Sean's bitfield reverse trick
+template<typename ConcurrentGroup, typename RandomAccessIterator, typename Size, typename T, typename BinaryFunction>
+__device__ T destructive_accumulate_n(ConcurrentGroup &g, RandomAccessIterator first, Size n, T init, BinaryFunction binary_op)
+{
+  typedef typename ConcurrentGroup::size_type size_type;
+
+  size_type tid = g.this_exec.index();
+
+  if(tid == 0)
+  {
+    first[0] = binary_op(init, first[0]);
+  }
+
+  T x = first[tid];
+
+  g.wait();
+
+  for(size_type offset = 1; offset < g.size(); offset += offset)
+  {
+    if(tid >= offset)
+    {
+      x = binary_op(first[tid - offset], x);
+    }
+
+    g.wait();
+
+    first[tid] = x;
+
+    g.wait();
+  }
+
+  T result = first[g.size() - 1];
+
+  if(tid == 0)
+  {
+    x = init;
+  }
+  else
+  {
+    x = first[tid - 1];
+  }
+
+  g.wait();
+
+  first[tid] = x;
+
+  g.wait();
+
+  return result;
+}
+
+
 template<std::size_t groupsize, std::size_t grainsize, typename RandomAccessIterator, typename T>
 struct buffer
 {
