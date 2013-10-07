@@ -140,7 +140,14 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
       if(index < partition_size)
       {
         input_type x = inputs[i];
-        this_sum = (i || this_sum_defined) ? binary_op(this_sum, x) : x;
+        if(i || this_sum_defined)
+        {
+          this_sum = binary_op(this_sum,x);
+        } // end if
+        else
+        {
+          this_sum = x;
+        } // end else
       } // end if
     } // end for
 
