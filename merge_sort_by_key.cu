@@ -131,14 +131,14 @@ struct locate_merge_path
 };
 
 
-template<typename DerivedPolicy, typename Iterator1, typename Size1, typename Iterator2, typename Size2, typename Compare>
+template<typename DerivedPolicy, typename Iterator1, typename Size1, typename Iterator2, typename Size2, typename Size3, typename Compare>
 void locate_merge_paths_(thrust::system::cuda::execution_policy<DerivedPolicy> &exec,
                          Iterator1 result,
                          Size1 n,
                          Iterator2 haystack_first,
                          Size2 haystack_size,
-                         Size2 num_elements_per_group,
-                         Size2 num_groups_per_merge,
+                         Size3 num_elements_per_group,
+                         Size3 num_groups_per_merge,
                          Compare comp)
 {
   locate_merge_path<Iterator2,Size2,Compare> f(haystack_first, haystack_size, num_elements_per_group, num_groups_per_merge, comp);
