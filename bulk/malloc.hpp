@@ -18,6 +18,7 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/detail/pointer_traits.hpp>
+#include <bulk/detail/alignment.hpp>
 #include <bulk/uninitialized.hpp>
 #include <thrust/detail/config.h>
 #include <cstdlib>
@@ -183,7 +184,8 @@ class singleton_unsafe_on_chip_allocator
 
 
   private:
-    class block
+    // align to two words
+    class block : public bulk::detail::aligned_type<sizeof(size_t) + sizeof(block*)>
     {
       public:
         __device__ inline size_t size() const
