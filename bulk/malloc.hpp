@@ -185,7 +185,7 @@ class singleton_unsafe_on_chip_allocator
 
   private:
     // align to two words
-    class block : public bulk::detail::aligned_type<sizeof(size_t) + sizeof(block*)>
+    class block : public bulk::detail::aligned_type<sizeof(size_t) + sizeof(block*)>::type
     {
       public:
         __device__ inline size_t size() const
