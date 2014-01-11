@@ -21,7 +21,7 @@ RandomAccessIterator4
 {
   // copy into the stage
   bulk::copy_n(bulk::bound<groupsize * grainsize>(exec),
-               make_join_iterator(first1, n1, first2),
+               ::make_join_iterator(first1, n1, first2),
                n1 + n2,
                stage);
 
