@@ -39,3 +39,17 @@
 #error "Bulk requires Thrust v1.8 (http://thrust.github.io) or better."
 #endif
 
+
+#if defined(__CUDACC__)
+#  if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__>= 350 && defined(__CUDACC_RDC__))
+#    define __BULK_HAS_CUDART__ 1
+#  else
+#    define __BULK_HAS_CUDART__ 0
+#  endif
+#else
+#  define __BULK_HAS_CUDART__ 0
+#endif
+
+
+#define __BULK_HAS_CUDA_LAUNCH__ __BULK_HAS_CUDART__
+
