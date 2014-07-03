@@ -24,6 +24,9 @@
 #include <thrust/system/cuda/error.h>
 
 
+#if __BULK_HAS_CUDART__
+
+
 BULK_NAMESPACE_PREFIX
 namespace bulk
 {
@@ -160,4 +163,7 @@ inline size_t compute_capability()
 } // end namespace detail
 } // end namespace bulk
 BULK_NAMESPACE_SUFFIX
+
+
+#endif // __BULK_HAS_CUDART__
 

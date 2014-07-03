@@ -24,6 +24,11 @@
 // #include this for size_t
 #include <cstddef>
 
+
+// runtime introspection isn't possible without CUDART
+#if __BULK_HAS_CUDART__
+
+
 BULK_NAMESPACE_PREFIX
 namespace bulk
 {
@@ -62,6 +67,9 @@ inline size_t compute_capability();
 } // end namespace detail
 } // end namespace bulk
 BULK_NAMESPACE_SUFFIX
+
+
+#endif // __BULK_HAS_CUDART__
 
 #include <bulk/detail/runtime_introspection.inl>
 

@@ -19,6 +19,7 @@
 #include <bulk/detail/cuda_launcher.hpp>
 #include <bulk/detail/closure.hpp>
 #include <bulk/detail/throw_on_error.hpp>
+#include <bulk/detail/terminate.hpp>
 
 
 BULK_NAMESPACE_PREFIX
@@ -36,16 +37,33 @@ future<void> async_in_stream(ExecutionGroup g, Closure c, cudaStream_t s, cudaEv
     throw_on_error(cudaStreamWaitEvent(s, before_event, 0), "cudaStreamWaitEvent in async_in_stream");
   }
 
+  // the reason we create the launcher even though we might not use it
+  // is to force the instantiation of __global__ functions we may need
   bulk::detail::cuda_launcher<ExecutionGroup, Closure> launcher;
+
+#if __BULK_HAS_CUDA_LAUNCH__
   launcher.launch(g, c, s);
 
   return future_core_access::create(s, false);
+#else
+  // avoid "declared but never referenced" warnings
+  (void)launcher;
+
+  // XXX should terminate with a message or something
+  bulk::detail::terminate();
+  return future<void>();
+#endif
 } // end async_in_stream()
 
 
 template<typename ExecutionGroup, typename Closure>
 future<void> async(ExecutionGroup g, Closure c, cudaEvent_t before_event)
 {
+  // the reason we create the launcher even though we might not use it
+  // is to force the instantiation of __global__ functions we may need
+  bulk::detail::cuda_launcher<ExecutionGroup, Closure> launcher;
+
+#if __BULK_HAS_CUDA_LAUNCH__
   cudaStream_t s;
   bulk::detail::throw_on_error(cudaStreamCreate(&s), "cudaStreamCreate in bulk::detail::async");
 
@@ -54,10 +72,17 @@ future<void> async(ExecutionGroup g, Closure c, cudaEvent_t before_event)
     throw_on_error(cudaStreamWaitEvent(s, before_event, 0), "cudaStreamWaitEvent in bulk::detail::async");
   }
 
-  bulk::detail::cuda_launcher<ExecutionGroup, Closure> launcher;
   launcher.launch(g, c, s);
 
   return future_core_access::create(s, true);
+#else
+  // avoid "declared but never referenced" warnings
+  (void)launcher;
+
+  // XXX should terminate with a message or something
+  bulk::detail::terminate();
+  return future<void>();
+#endif
 } // end async()
 
 
