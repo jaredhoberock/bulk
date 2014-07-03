@@ -17,6 +17,7 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
+#include <exception>
 
 BULK_NAMESPACE_PREFIX
 namespace bulk
@@ -25,10 +26,14 @@ namespace detail
 {
 
 
-__device__
+__host__ __device__
 inline void terminate()
 {
+#ifdef __CUDA_ARCH__
   asm("trap;");
+#else
+  std::terminate();
+#endif
 } // end terminate()
 
 
