@@ -20,8 +20,9 @@
 #include <bulk/uninitialized.hpp>
 #include <bulk/detail/cuda_task.hpp>
 #include <bulk/detail/throw_on_error.hpp>
+#include <bulk/detail/runtime_introspection.hpp>
+#include <bulk/detail/cuda_launch_config.hpp>
 #include <thrust/detail/minmax.h>
-#include <thrust/system/cuda/detail/runtime_introspection.h>
 #include <thrust/system/cuda/detail/synchronize.h>
 #include <thrust/system/cuda/detail/execution_policy.h>
 #include <thrust/system/cpp/detail/execution_policy.h>
@@ -55,14 +56,12 @@ namespace detail
 template<typename Function>
 size_t maximum_potential_occupancy(Function kernel, size_t num_threads, size_t num_smem_bytes)
 {
-  namespace ns = thrust::system::cuda::detail;
+  function_attributes_t attr = bulk::detail::function_attributes(kernel);
 
-  ns::function_attributes_t attr = ns::function_attributes(kernel);
-
-  return ns::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(ns::device_properties(),
-                                                                             attr,
-                                                                             num_threads,
-                                                                             0);
+  return bulk::detail::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(device_properties(),
+                                                                                       attr,
+                                                                                       num_threads,
+                                                                                       0);
 }
 
 
@@ -231,21 +230,10 @@ struct cuda_launcher_base
   } // end launch()
 
 
-  typedef thrust::system::cuda::detail::function_attributes_t function_attributes_t;
-
-
   static function_attributes_t function_attributes()
   {
-    return thrust::system::cuda::detail::function_attributes(super_t::get_global_function());
+    return bulk::detail::function_attributes(super_t::get_global_function());
   } // end function_attributes()
-
-
-  typedef thrust::system::cuda::detail::device_properties_t device_properties_t;
-
-  static device_properties_t device_properties()
-  {
-    return thrust::system::cuda::detail::device_properties();
-  } // end device_properties()
 
 
   static size_type max_active_blocks_per_multiprocessor(const device_properties_t &props,
@@ -253,7 +241,7 @@ struct cuda_launcher_base
                                                         size_type num_threads_per_block,
                                                         size_type num_smem_bytes_per_block)
   {
-    return thrust::system::cuda::detail::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(props, attr, num_threads_per_block, num_smem_bytes_per_block);
+    return bulk::detail::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(props, attr, num_threads_per_block, num_smem_bytes_per_block);
   } // end max_active_blocks_per_multiprocessor()
 
 
@@ -268,7 +256,7 @@ struct cuda_launcher_base
     // if the kernel footprint is already too large, return (0,0)
     if(occupancy < 1) return thrust::make_pair(0,0);
 
-    return thrust::make_pair(thrust::system::cuda::detail::proportional_smem_allocation(props, attr, occupancy), occupancy);
+    return thrust::make_pair(bulk::detail::proportional_smem_allocation(props, attr, occupancy), occupancy);
   } // end smem_occupancy_limit()
 
 
@@ -319,9 +307,9 @@ struct cuda_launcher_base
 
     if(result == use_default)
     {
-      function_attributes_t attr = function_attributes();
+      bulk::detail::function_attributes_t attr = function_attributes();
 
-      return thrust::system::cuda::detail::block_size_with_maximum_potential_occupancy(attr, device_properties());
+      return bulk::detail::block_size_with_maximum_potential_occupancy(attr, device_properties());
     } // end if
 
     return result;
