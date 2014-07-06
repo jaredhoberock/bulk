@@ -36,6 +36,7 @@ namespace runtime_introspection_detail
 {
 
 
+__host__ __device__
 inline void get_device_properties(device_properties_t &p, int device_id)
 {
   cudaDeviceProp properties;
@@ -66,37 +67,32 @@ inline void get_device_properties(device_properties_t &p, int device_id)
 } // end runtime_introspection_detail
 
 
+__host__ __device__
 inline device_properties_t device_properties(int device_id)
 {
-  // cache the result of get_device_properties, because it is slow
-  // only cache the first few devices
-  static const int max_num_devices                              = 16;
+  device_properties_t prop;
 
-  static bool properties_exist[max_num_devices]                 = {0};
-  static device_properties_t device_properties[max_num_devices] = {};
+  cudaError_t error = cudaDeviceGetAttribute(&prop.major,           cudaDevAttrComputeCapabilityMajor,      device_id);
+  error = cudaDeviceGetAttribute(&prop.maxGridSize[0],              cudaDevAttrMaxGridDimX,                 device_id);
+  error = cudaDeviceGetAttribute(&prop.maxGridSize[1],              cudaDevAttrMaxGridDimY,                 device_id);
+  error = cudaDeviceGetAttribute(&prop.maxGridSize[2],              cudaDevAttrMaxGridDimZ,                 device_id);
+  error = cudaDeviceGetAttribute(&prop.maxThreadsPerBlock,          cudaDevAttrMaxThreadsPerBlock,          device_id);
+  error = cudaDeviceGetAttribute(&prop.maxThreadsPerMultiProcessor, cudaDevAttrMaxThreadsPerMultiProcessor, device_id);
+  error = cudaDeviceGetAttribute(&prop.minor,                       cudaDevAttrComputeCapabilityMinor,      device_id);
+  error = cudaDeviceGetAttribute(&prop.multiProcessorCount,         cudaDevAttrMultiProcessorCount,         device_id);
+  error = cudaDeviceGetAttribute(&prop.regsPerBlock,                cudaDevAttrMaxRegistersPerBlock,        device_id);
+  int temp;
+  error = cudaDeviceGetAttribute(&temp,                             cudaDevAttrMaxSharedMemoryPerBlock,     device_id);
+  prop.sharedMemPerBlock = temp;
+  error = cudaDeviceGetAttribute(&prop.warpSize,                    cudaDevAttrWarpSize,                    device_id);
 
-  if(device_id >= max_num_devices)
-  {
-    device_properties_t result;
-    runtime_introspection_detail::get_device_properties(result, device_id);
-    return result;
-  }
+  throw_on_error(error, "cudaDeviceGetProperty in get_device_properties");
 
-  if(!properties_exist[device_id])
-  {
-    runtime_introspection_detail::get_device_properties(device_properties[device_id], device_id);
-
-    // disallow the compiler to move the write to properties_exist[device_id]
-    // before the initialization of device_properties[device_id]
-    __thrust_compiler_fence();
-    
-    properties_exist[device_id] = true;
-  }
-
-  return device_properties[device_id];
+  return prop;
 }
 
 
+__host__ __device__
 inline int current_device()
 {
   int result = -1;
@@ -112,6 +108,7 @@ inline int current_device()
 }
 
 
+__host__ __device__
 inline device_properties_t device_properties()
 {
   return device_properties(current_device());
@@ -119,6 +116,7 @@ inline device_properties_t device_properties()
 
 
 template <typename KernelFunction>
+__host__ __device__
 inline function_attributes_t function_attributes(KernelFunction kernel)
 {
 // cudaFuncGetAttributes(), used below, only exists when __CUDACC__ is defined
@@ -148,12 +146,14 @@ inline function_attributes_t function_attributes(KernelFunction kernel)
 }
 
 
+__host__ __device__
 inline size_t compute_capability(const device_properties_t &properties)
 {
   return 10 * properties.major + properties.minor;
 }
 
 
+__host__ __device__
 inline size_t compute_capability()
 {
   return compute_capability(device_properties());

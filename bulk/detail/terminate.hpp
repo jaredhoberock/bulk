@@ -17,6 +17,7 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
+#include <cstdio>
 #include <exception>
 
 BULK_NAMESPACE_PREFIX
@@ -35,6 +36,17 @@ inline void terminate()
   std::terminate();
 #endif
 } // end terminate()
+
+
+__host__ __device__
+inline void terminate_with_message(const char* message)
+{
+#if __BULK_HAS_PRINTF__
+  std::printf(message);
+#endif
+
+  bulk::detail::terminate();
+}
 
 
 } // end detail

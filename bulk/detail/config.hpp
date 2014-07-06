@@ -53,3 +53,13 @@
 
 #define __BULK_HAS_CUDA_LAUNCH__ __BULK_HAS_CUDART__
 
+#if defined(__CUDACC__)
+#  if !defined(__CUDA_ARCH__) || (__CUDA_ARCH__ >= 200)
+#    define __BULK_HAS_PRINTF__ 1
+#  else
+#    define __BULK_HAS_PRINTF__ 0
+#  endif
+#else
+#  define __BULK_HAS_PRINTF__ 1
+#endif
+
