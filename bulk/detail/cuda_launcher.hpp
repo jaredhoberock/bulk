@@ -22,12 +22,22 @@
 #include <bulk/detail/throw_on_error.hpp>
 #include <bulk/detail/runtime_introspection.hpp>
 #include <bulk/detail/cuda_launch_config.hpp>
+#include <bulk/detail/synchronize.hpp>
 #include <thrust/detail/minmax.h>
-#include <thrust/system/cuda/detail/synchronize.h>
 #include <thrust/system/cuda/detail/execution_policy.h>
 #include <thrust/system/cpp/detail/execution_policy.h>
 #include <thrust/detail/temporary_array.h>
 #include <thrust/pair.h>
+
+
+// It's not possible to launch a CUDA kernel unless __BULK_HAS_CUDA_LAUNCH__
+// is 1, so we'd like to just hide all this code when that macro is 0.
+// Unfortunately, we can't actually modulate kernel launches based on that macro
+// because that will hide __global__ function template instantiations from critical
+// nvcc compilation phases. This means that nvcc won't actually place the kernel in the
+// binary and we'll get an undefined __global__ function error at runtime.
+// So we allow the user to unconditionally create instances of classes like cuda_launcher
+// even though the member function .launch(...) isn't always available.
 
 
 namespace thrust
@@ -54,14 +64,19 @@ namespace detail
 
 
 template<typename Function>
+__host__ __device__
 size_t maximum_potential_occupancy(Function kernel, size_t num_threads, size_t num_smem_bytes)
 {
+#if __BULK_HAS_CUDART__
   function_attributes_t attr = bulk::detail::function_attributes(kernel);
 
   return bulk::detail::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(device_properties(),
                                                                                        attr,
                                                                                        num_threads,
                                                                                        0);
+#else
+  return 0;
+#endif
 }
 
 
@@ -120,27 +135,79 @@ bool verbose = false;
 }
 
 
+// triple_chevron_launcher_base is the base class of triple_chevron_launcher
+// it primarily serves to choose (statically) which __global__ function is used as the kernel
 // sm_10 devices have 256 bytes of parameter space
-template<unsigned int block_size_, typename Function, bool by_value = sizeof(Function) <= 256>
-class triple_chevron_launcher
+// XXX since sm_10 is unsupported, we should use whatever is the parameter space of sm_20 & above (4096 i think)
+template<unsigned int block_size, typename Function, bool by_value = (sizeof(Function) <= 256)> class triple_chevron_launcher_base;
+
+
+template<unsigned int block_size, typename Function>
+class triple_chevron_launcher_base<block_size,Function,true>
 {
+  protected:
+#if BULK_ASYNC_USE_UNINITIALIZED
+    typedef void (*global_function_pointer_t)(uninitialized<Function>);
+#else
+    typedef void (*global_function_pointer_t)(Function);
+#endif
+
+    static const global_function_pointer_t global_function_pointer;
+  
+    __host__ __device__
+    triple_chevron_launcher_base()
+    {
+      // XXX this use of global_function_pointer seems to force
+      //     nvcc to include the __global__ function in the binary
+      //     without this line, it can be lost
+      (void)global_function_pointer;
+    }
+};
+template<unsigned int block_size, typename Function>
+const typename triple_chevron_launcher_base<block_size,Function,true>::global_function_pointer_t
+  triple_chevron_launcher_base<block_size,Function,true>::global_function_pointer
+    = launch_by_value<block_size,Function>;
+
+
+template<unsigned int block_size, typename Function>
+struct triple_chevron_launcher_base<block_size,Function,false>
+{
+#if BULK_ASYNC_USE_UNINITIALIZED
+  typedef void (*global_function_pointer_t)(uninitialized<Function>);
+#else
+  typedef void (*global_function_pointer_t)(Function);
+#endif
+
+  static const global_function_pointer_t global_function_pointer;
+
+  __host__ __device__
+  triple_chevron_launcher_base()
+  {
+    // XXX this use of global_function_pointer seems to force
+    //     nvcc to include the __global__ function in the binary
+    //     without this line, it can be lost
+    (void)global_function_pointer;
+  }
+};
+template<unsigned int block_size, typename Function>
+const typename triple_chevron_launcher_base<block_size,Function,false>::global_function_pointer_t
+  triple_chevron_launcher_base<block_size,Function,false>::global_function_pointer
+    = launch_by_pointer<block_size,Function>;
+
+
+// sm_10 devices have 256 bytes of parameter space
+// XXX since sm_10 is unsupported, we should use whatever is the parameter space of sm_20 & above (1024 i think)
+template<unsigned int block_size_, typename Function, bool by_value = sizeof(Function) <= 256>
+class triple_chevron_launcher : protected triple_chevron_launcher_base<block_size_, Function>
+{
+  private:
+    typedef triple_chevron_launcher_base<block_size_,Function> super_t;
+
   public:
     typedef Function task_type;
 
-#if BULK_ASYNC_USE_UNINITIALIZED
-    typedef void (*global_function_t)(uninitialized<task_type>);
-#else
-    typedef void (*global_function_t)(task_type);
-#endif
-
-
-    static global_function_t get_global_function()
-    {
-      return launch_by_value<block_size_, task_type>;
-    } // end get_launch_function()
-
-
     template<typename DerivedPolicy>
+    __host__ __device__
     void launch(thrust::cuda::execution_policy<DerivedPolicy> &, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
     {
       // guard use of triple chevrons from foreign compilers
@@ -150,9 +217,9 @@ class triple_chevron_launcher
       uninitialized<task_type> wrapped_task;
       wrapped_task.construct(task);
 
-      get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(wrapped_task);
+      super_t::global_function_pointer<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(wrapped_task);
 #else
-      get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(task);
+      super_t::global_function_pointer<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(task);
 #endif
 
 #endif // __CUDACC__
@@ -161,19 +228,16 @@ class triple_chevron_launcher
 
 
 template<unsigned int block_size_, typename Function>
-class triple_chevron_launcher<block_size_,Function,false>
+class triple_chevron_launcher<block_size_,Function,false> : protected triple_chevron_launcher_base<block_size_,Function>
 {
+  private:
+    typedef triple_chevron_launcher_base<block_size_,Function> super_t;
+
   public:
     typedef Function task_type;
-    typedef void (*global_function_t)(const task_type*);
-
-    static global_function_t get_global_function()
-    {
-      return launch_by_pointer<block_size_, task_type>;
-    } // end get_launch_function()
-
 
     template<typename DerivedPolicy>
+    __host__ __device__
     void launch(thrust::cuda::execution_policy<DerivedPolicy> &exec, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
     {
       // guard use of triple chevrons from foreign compilers
@@ -182,7 +246,7 @@ class triple_chevron_launcher<block_size_,Function,false>
       thrust::cpp::tag host_tag;
       thrust::detail::temporary_array<task_type,DerivedPolicy> task_storage(exec, host_tag, &task, &task + 1);
 
-      get_global_function()<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>((&task_storage[0]).get());
+      super_t::global_function_pointer<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>((&task_storage[0]).get());
 #endif // __CUDACC__
     } // end launch()
 };
@@ -202,8 +266,10 @@ struct cuda_launcher_base
   typedef typename ExecutionGroup::size_type                                       size_type;
 
 
+  __host__ __device__
   void launch(size_type num_blocks, size_type block_size, size_type num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
   {
+#ifndef __CUDA_ARCH__
     if(verbose)
     {
       cudaError_t error = cudaGetLastError();
@@ -212,10 +278,11 @@ struct cuda_launcher_base
       std::clog << "cuda_launcher_base::launch(): num_blocks: " << num_blocks << std::endl;
       std::clog << "cuda_launcher_base::launch(): block_size: " << block_size << std::endl;
       std::clog << "cuda_launcher_base::launch(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
-      std::clog << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(super_t::get_global_function(), block_size, num_dynamic_smem_bytes) << std::endl;
+      std::clog << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(super_t::global_function_pointer, block_size, num_dynamic_smem_bytes) << std::endl;
 
       bulk::detail::throw_on_error(error, "before kernel launch in cuda_launcher_base::launch()");
     } // end if
+#endif
 
     if(num_blocks > 0)
     {
@@ -225,17 +292,12 @@ struct cuda_launcher_base
       // check that the launch got off the ground
       bulk::detail::throw_on_error(cudaGetLastError(), "after kernel launch in cuda_launcher_base::launch()");
 
-      thrust::system::cuda::detail::synchronize_if_enabled("bulk_kernel_by_value");
+      bulk::detail::synchronize_if_enabled("bulk_kernel_by_value");
     } // end if
   } // end launch()
 
 
-  static function_attributes_t function_attributes()
-  {
-    return bulk::detail::function_attributes(super_t::get_global_function());
-  } // end function_attributes()
-
-
+  __host__ __device__
   static size_type max_active_blocks_per_multiprocessor(const device_properties_t &props,
                                                         const function_attributes_t &attr,
                                                         size_type num_threads_per_block,
@@ -248,6 +310,7 @@ struct cuda_launcher_base
   // returns
   // 1. maximum number of additional dynamic smem bytes that would not lower the kernel's occupancy
   // 2. kernel occupancy
+  __host__ __device__
   static thrust::pair<size_type,size_type> dynamic_smem_occupancy_limit(const device_properties_t &props, const function_attributes_t &attr, size_type num_threads_per_block, size_type num_smem_bytes_per_block)
   {
     // figure out the kernel's occupancy with 0 bytes of dynamic smem
@@ -260,9 +323,10 @@ struct cuda_launcher_base
   } // end smem_occupancy_limit()
 
 
+  __host__ __device__
   static size_type choose_heap_size(size_type group_size, size_type requested_size)
   {
-    function_attributes_t attr = function_attributes();
+    function_attributes_t attr = bulk::detail::function_attributes(super_t::global_function_pointer);
 
     // if the kernel's ptx version is < 200, we return 0 because there is no heap
     // if the user requested no heap, give him no heap
@@ -301,28 +365,35 @@ struct cuda_launcher_base
   } // end choose_smem_size()
 
 
+  __host__ __device__
   static size_type choose_group_size(size_type requested_size)
   {
+#if __BULK_HAS_CUDART__
     size_type result = requested_size;
 
     if(result == use_default)
     {
-      bulk::detail::function_attributes_t attr = function_attributes();
+      bulk::detail::function_attributes_t attr = bulk::detail::function_attributes(super_t::global_function_pointer);
 
       return bulk::detail::block_size_with_maximum_potential_occupancy(attr, device_properties());
     } // end if
 
     return result;
+#else
+    return 0;
+#endif
   } // end choose_group_size()
 
 
+  __host__ __device__
   static size_type max_physical_grid_size()
   {
+#if __BULK_HAS_CUDART__
     // get the limit of the actual device
     int actual_limit = device_properties().maxGridSize[0];
 
     // get the limit of the PTX version of the kernel
-    int ptx_version = function_attributes().ptxVersion;
+    int ptx_version = bulk::detail::function_attributes(super_t::global_function_pointer).ptxVersion;
 
     int ptx_limit = 0;
 
@@ -337,6 +408,9 @@ struct cuda_launcher_base
     } // end else
 
     return thrust::min<size_type>(actual_limit, ptx_limit);
+#else
+    return 0;
+#endif
   } // end max_physical_grid_size()
 }; // end cuda_launcher_base
 
@@ -366,6 +440,9 @@ struct cuda_launcher<
 
   typedef typename super_t::task_type task_type;
 
+  // launch(...) requires CUDA launch capability
+#if __BULK_HAS_CUDA_LAUNCH__
+  __host__ __device__
   void launch(grid_type request, Closure c, cudaStream_t stream)
   {
     grid_type g = configure(request);
@@ -407,6 +484,7 @@ struct cuda_launcher<
     } // end if
   } // end go()
 
+  __host__ __device__
   static grid_type configure(grid_type g)
   {
     size_type block_size = super_t::choose_group_size(g.this_exec.size());
@@ -415,6 +493,7 @@ struct cuda_launcher<
 
     return make_grid<grid_type>(num_blocks, make_block<block_type>(block_size, heap_size));
   } // end configure()
+#endif // __BULK_HAS_CUDA_LAUNCH__
 }; // end cuda_launcher
 
 
@@ -434,6 +513,7 @@ struct cuda_launcher<
 
   typedef concurrent_group<agent<grainsize>,blocksize> block_type;
 
+  __host__ __device__
   void launch(block_type request, Closure c, cudaStream_t stream)
   {
     block_type b = configure(request);
@@ -448,6 +528,7 @@ struct cuda_launcher<
     } // end if
   } // end go()
 
+  __host__ __device__
   static block_type configure(block_type b)
   {
     size_type block_size = super_t::choose_group_size(b.size());
@@ -473,6 +554,7 @@ struct cuda_launcher<
 
   typedef parallel_group<agent<grainsize>,groupsize> group_type;
 
+  __host__ __device__
   void launch(group_type g, Closure c, cudaStream_t stream)
   {
     size_type num_blocks, block_size;
@@ -486,6 +568,7 @@ struct cuda_launcher<
     } // end if
   } // end go()
 
+  __host__ __device__
   static thrust::tuple<size_type,size_type> configure(group_type g)
   {
     size_type block_size = thrust::min<size_type>(g.size(), super_t::choose_group_size(use_default));
