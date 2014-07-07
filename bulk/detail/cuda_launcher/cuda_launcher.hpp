@@ -17,16 +17,13 @@
 #pragma once
 
 #include <bulk/detail/config.hpp>
-#include <bulk/uninitialized.hpp>
 #include <bulk/detail/cuda_task.hpp>
+#include <bulk/detail/cuda_launcher/triple_chevron_launcher.hpp>
 #include <bulk/detail/throw_on_error.hpp>
 #include <bulk/detail/runtime_introspection.hpp>
 #include <bulk/detail/cuda_launch_config.hpp>
 #include <bulk/detail/synchronize.hpp>
 #include <thrust/detail/minmax.h>
-#include <thrust/system/cuda/detail/execution_policy.h>
-#include <thrust/system/cpp/detail/execution_policy.h>
-#include <thrust/detail/temporary_array.h>
 #include <thrust/pair.h>
 
 
@@ -38,22 +35,6 @@
 // binary and we'll get an undefined __global__ function error at runtime.
 // So we allow the user to unconditionally create instances of classes like cuda_launcher
 // even though the member function .launch(...) isn't always available.
-
-
-namespace thrust
-{
-namespace detail
-{
-
-
-// XXX WAR circular inclusion problems with this forward declaration
-// XXX consider not using temporary_array at all here to avoid these
-//     issues
-template<typename, typename> class temporary_array;
-
-
-} // end detail
-} // end thrust
 
 
 BULK_NAMESPACE_PREFIX
@@ -80,50 +61,6 @@ size_t maximum_potential_occupancy(Function kernel, size_t num_threads, size_t n
 }
 
 
-#ifdef __CUDACC__
-// if there are multiple versions of Bulk floating around, this may be #defined already
-#  ifndef __bulk_launch_bounds__
-#    define __bulk_launch_bounds__(num_threads_per_block, num_blocks_per_sm) __launch_bounds__(num_threads_per_block, num_blocks_per_sm)
-#  endif
-#else
-#  ifndef __bulk_launch_bounds__
-#    define __bulk_launch_bounds__(num_threads_per_block, num_blocks_per_sm)
-#  endif
-#endif // __CUDACC__
-
-
-#if BULK_ASYNC_USE_UNINITIALIZED
-// XXX uninitialized is a performance hazard
-//     disable it for the moment
-template<unsigned int block_size, typename Function>
-__global__
-__bulk_launch_bounds__(block_size, 0)
-void bulk_launch_by_value(uninitialized<Function> f)
-{
-  f.get()();
-}
-#else
-template<unsigned int block_size, typename Function>
-__global__
-__bulk_launch_bounds__(block_size, 0)
-void bulk_launch_by_value(Function f)
-{
-  f();
-}
-#endif
-
-
-template<unsigned int block_size, typename Function>
-__global__
-__bulk_launch_bounds__(block_size, 0)
-void bulk_launch_by_pointer(const Function *f)
-{
-  // copy to registers
-  Function f_reg = *f;
-  f_reg();
-}
-
-
 // put this state in an anon namespace
 namespace
 {
@@ -133,119 +70,6 @@ bool verbose = false;
 
 
 }
-
-
-// triple_chevron_launcher_base is the base class of triple_chevron_launcher
-// it primarily serves to choose (statically) which __global__ function is used as the kernel
-// sm_20+ devices have 4096 bytes of parameter space
-// http://docs.nvidia.com/cuda/cuda-c-programming-guide/#function-parameters
-template<unsigned int block_size, typename Function, bool by_value = (sizeof(Function) <= 4096)> class triple_chevron_launcher_base;
-
-
-template<unsigned int block_size, typename Function>
-class triple_chevron_launcher_base<block_size,Function,true>
-{
-  protected:
-#if BULK_ASYNC_USE_UNINITIALIZED
-    typedef void (*global_function_pointer_t)(uninitialized<Function>);
-#else
-    typedef void (*global_function_pointer_t)(Function);
-#endif
-
-    static const global_function_pointer_t global_function_pointer;
-  
-    __host__ __device__
-    triple_chevron_launcher_base()
-    {
-      // XXX this use of global_function_pointer seems to force
-      //     nvcc to include the __global__ function in the binary
-      //     without this line, it can be lost
-      (void)global_function_pointer;
-    }
-};
-template<unsigned int block_size, typename Function>
-const typename triple_chevron_launcher_base<block_size,Function,true>::global_function_pointer_t
-  triple_chevron_launcher_base<block_size,Function,true>::global_function_pointer
-    = bulk_launch_by_value<block_size,Function>;
-
-
-template<unsigned int block_size, typename Function>
-struct triple_chevron_launcher_base<block_size,Function,false>
-{
-#if BULK_ASYNC_USE_UNINITIALIZED
-  typedef void (*global_function_pointer_t)(const uninitialized<Function>*);
-#else
-  typedef void (*global_function_pointer_t)(const Function*);
-#endif
-
-  static const global_function_pointer_t global_function_pointer;
-
-  __host__ __device__
-  triple_chevron_launcher_base()
-  {
-    // XXX this use of global_function_pointer seems to force
-    //     nvcc to include the __global__ function in the binary
-    //     without this line, it can be lost
-    (void)global_function_pointer;
-  }
-};
-template<unsigned int block_size, typename Function>
-const typename triple_chevron_launcher_base<block_size,Function,false>::global_function_pointer_t
-  triple_chevron_launcher_base<block_size,Function,false>::global_function_pointer
-    = bulk_launch_by_pointer<block_size,Function>;
-
-
-// sm_20+ devices have 4096 bytes of parameter space
-// http://docs.nvidia.com/cuda/cuda-c-programming-guide/#function-parameters
-template<unsigned int block_size_, typename Function, bool by_value = sizeof(Function) <= 4096>
-class triple_chevron_launcher : protected triple_chevron_launcher_base<block_size_, Function>
-{
-  private:
-    typedef triple_chevron_launcher_base<block_size_,Function> super_t;
-
-  public:
-    typedef Function task_type;
-
-#if __BULK_HAS_CUDA_LAUNCH__
-    template<typename DerivedPolicy>
-    __host__ __device__
-    void launch(thrust::cuda::execution_policy<DerivedPolicy> &, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
-    {
-#if BULK_ASYNC_USE_UNINITIALIZED
-      uninitialized<task_type> wrapped_task;
-      wrapped_task.construct(task);
-
-      super_t::global_function_pointer<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(wrapped_task);
-#else
-      super_t::global_function_pointer<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(task);
-#endif
-    } // end launch()
-#endif // __BULK_HAS_CUDA_LAUNCH__
-};
-
-
-template<unsigned int block_size_, typename Function>
-class triple_chevron_launcher<block_size_,Function,false> : protected triple_chevron_launcher_base<block_size_,Function>
-{
-  private:
-    typedef triple_chevron_launcher_base<block_size_,Function> super_t;
-
-  public:
-    typedef Function task_type;
-
-#if __BULK_HAS_CUDA_LAUNCH__
-    template<typename DerivedPolicy>
-    __host__ __device__
-    void launch(thrust::cuda::execution_policy<DerivedPolicy> &exec, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
-    {
-      // use temporary storage for the task
-      thrust::cpp::tag host_tag;
-      thrust::detail::temporary_array<task_type,DerivedPolicy> task_storage(exec, host_tag, &task, &task + 1);
-
-      super_t::global_function_pointer<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>((&task_storage[0]).get());
-    } // end launch()
-#endif // __BULK_HAS_CUDA_LAUNCH__
-};
 
 
 // XXX instead of passing block_size_ as a template parameter to cuda_launcher_base,

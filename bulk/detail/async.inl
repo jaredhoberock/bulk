@@ -16,7 +16,7 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/async.hpp>
-#include <bulk/detail/cuda_launcher.hpp>
+#include <bulk/detail/cuda_launcher/cuda_launcher.hpp>
 #include <bulk/detail/closure.hpp>
 #include <bulk/detail/throw_on_error.hpp>
 #include <bulk/detail/terminate.hpp>
