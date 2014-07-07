@@ -476,7 +476,7 @@ struct cuda_launcher<
             std::clog << "cuda_launcher::launch(): max_physical_grid_size: " << max_physical_grid_size << std::endl;
             std::clog << "cuda_launcher::launch(): requesting " << num_physical_blocks << " physical blocks" << std::endl;
           }
-#else
+#endif // __CUDA_ARCH__
 
           super_t::launch(num_physical_blocks, block_size, heap_size, stream, task);
 
