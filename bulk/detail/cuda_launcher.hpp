@@ -275,7 +275,7 @@ struct cuda_launcher_base
       std::clog << "cuda_launcher_base::launch(): num_blocks: " << num_blocks << std::endl;
       std::clog << "cuda_launcher_base::launch(): block_size: " << block_size << std::endl;
       std::clog << "cuda_launcher_base::launch(): num_dynamic_smem_bytes: " << num_dynamic_smem_bytes << std::endl;
-      std::clog << "cuda_launcher_base::launch(): occupancy: " << maximum_potential_occupancy(super_t::global_function_pointer, block_size, num_dynamic_smem_bytes) << std::endl;
+      std::clog << "cuda_launcher_base::launch(): occupancy: " << bulk::detail::maximum_potential_occupancy(super_t::global_function_pointer, block_size, num_dynamic_smem_bytes) << std::endl;
 
       bulk::detail::throw_on_error(error, "before kernel launch in cuda_launcher_base::launch()");
     } // end if
