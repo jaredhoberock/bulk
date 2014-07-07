@@ -206,13 +206,11 @@ class triple_chevron_launcher : protected triple_chevron_launcher_base<block_siz
   public:
     typedef Function task_type;
 
+#if __BULK_HAS_CUDA_LAUNCH__
     template<typename DerivedPolicy>
     __host__ __device__
     void launch(thrust::cuda::execution_policy<DerivedPolicy> &, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
     {
-      // guard use of triple chevrons from foreign compilers
-#ifdef __CUDACC__
-
 #if BULK_ASYNC_USE_UNINITIALIZED
       uninitialized<task_type> wrapped_task;
       wrapped_task.construct(task);
@@ -221,9 +219,8 @@ class triple_chevron_launcher : protected triple_chevron_launcher_base<block_siz
 #else
       super_t::global_function_pointer<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>(task);
 #endif
-
-#endif // __CUDACC__
     } // end launch()
+#endif // __BULK_HAS_CUDA_LAUNCH__
 };
 
 
@@ -236,19 +233,18 @@ class triple_chevron_launcher<block_size_,Function,false> : protected triple_che
   public:
     typedef Function task_type;
 
+#if __BULK_HAS_CUDA_LAUNCH__
     template<typename DerivedPolicy>
     __host__ __device__
     void launch(thrust::cuda::execution_policy<DerivedPolicy> &exec, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
     {
-      // guard use of triple chevrons from foreign compilers
-#ifdef __CUDACC__
       // use temporary storage for the task
       thrust::cpp::tag host_tag;
       thrust::detail::temporary_array<task_type,DerivedPolicy> task_storage(exec, host_tag, &task, &task + 1);
 
       super_t::global_function_pointer<<<static_cast<unsigned int>(num_blocks), static_cast<unsigned int>(block_size), static_cast<size_t>(num_dynamic_smem_bytes), stream>>>((&task_storage[0]).get());
-#endif // __CUDACC__
     } // end launch()
+#endif // __BULK_HAS_CUDA_LAUNCH__
 };
 
 
@@ -266,6 +262,7 @@ struct cuda_launcher_base
   typedef typename ExecutionGroup::size_type                                       size_type;
 
 
+#if __BULK_HAS_CUDA_LAUNCH__
   __host__ __device__
   void launch(size_type num_blocks, size_type block_size, size_type num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
   {
@@ -368,7 +365,6 @@ struct cuda_launcher_base
   __host__ __device__
   static size_type choose_group_size(size_type requested_size)
   {
-#if __BULK_HAS_CUDART__
     size_type result = requested_size;
 
     if(result == use_default)
@@ -379,16 +375,12 @@ struct cuda_launcher_base
     } // end if
 
     return result;
-#else
-    return 0;
-#endif
   } // end choose_group_size()
 
 
   __host__ __device__
   static size_type max_physical_grid_size()
   {
-#if __BULK_HAS_CUDART__
     // get the limit of the actual device
     int actual_limit = device_properties().maxGridSize[0];
 
@@ -408,10 +400,8 @@ struct cuda_launcher_base
     } // end else
 
     return thrust::min<size_type>(actual_limit, ptx_limit);
-#else
-    return 0;
-#endif
   } // end max_physical_grid_size()
+#endif // __BULK_HAS_CUDA_LAUNCH__
 }; // end cuda_launcher_base
 
 
@@ -515,6 +505,7 @@ struct cuda_launcher<
 
   typedef concurrent_group<agent<grainsize>,blocksize> block_type;
 
+#if __BULK_HAS_CUDA_LAUNCH__
   __host__ __device__
   void launch(block_type request, Closure c, cudaStream_t stream)
   {
@@ -537,6 +528,7 @@ struct cuda_launcher<
     size_type heap_size  = super_t::choose_heap_size(block_size, b.heap_size());
     return make_block<block_type>(block_size, heap_size);
   } // end configure()
+#endif // __BULK_HAS_CUDA_LAUNCH__
 }; // end cuda_launcher
 
 
@@ -556,6 +548,7 @@ struct cuda_launcher<
 
   typedef parallel_group<agent<grainsize>,groupsize> group_type;
 
+#if __BULK_HAS_CUDA_LAUNCH__
   __host__ __device__
   void launch(group_type g, Closure c, cudaStream_t stream)
   {
@@ -583,6 +576,7 @@ struct cuda_launcher<
 
     return thrust::make_tuple(num_blocks, block_size);
   } // end configure()
+#endif // __BULK_HAS_CUDA_LAUNCH__
 }; // end cuda_launcher
 
 
