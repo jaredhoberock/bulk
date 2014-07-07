@@ -164,9 +164,9 @@ class triple_chevron_launcher : protected triple_chevron_launcher_base<block_siz
       cudaSetupArgument(task, 0);
       bulk::detail::throw_on_error(cudaLaunch(super_t::global_function_pointer), "after cudaLaunch in triple_chevron_launcher::launch()");
 #else
-      void *params = cudaGetParameterBuffer(alignment_of<task_type>::value, sizeof(task_type));
-      std::memcpy(params, &task, sizeof(task_type));
-      bulk::detail::throw_on_error(cudaLaunchDevice(reinterpret_cast<void*>(super_t::global_function_pointer), params, dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream),
+      void *param_buffer = cudaGetParameterBuffer(alignment_of<task_type>::value, sizeof(task_type));
+      std::memcpy(param_buffer, &task, sizeof(task_type));
+      bulk::detail::throw_on_error(cudaLaunchDevice(reinterpret_cast<void*>(super_t::global_function_pointer), param_buffer, dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream),
                                    "after cudaLaunchDevice in triple_chevron_launcher::launch()");
 #endif
     } // end launch()
@@ -195,9 +195,10 @@ class triple_chevron_launcher<block_size_,Function,false> : protected triple_che
       cudaSetupArgument(static_cast<const task_type*>(parm.get()), 0);
       bulk::detail::throw_on_error(cudaLaunch(super_t::global_function_pointer), "after cudaLaunch in triple_chevron_launcher::launch()");
 #else
-      void *params = cudaGetParameterBuffer(alignment_of<task_type>::value, sizeof(task_type));
-      std::memcpy(params, &task.get(), sizeof(task_type*));
-      bulk::detail::throw_on_error(cudaLaunchDevice(reinterpret_cast<void*>(super_t::global_function_pointer), params, dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream),
+      void *param_buffer = cudaGetParameterBuffer(alignment_of<task_type>::value, sizeof(task_type));
+      task_type *task_ptr = parm.get();
+      std::memcpy(param_buffer, &task_ptr, sizeof(task_type*));
+      bulk::detail::throw_on_error(cudaLaunchDevice(reinterpret_cast<void*>(super_t::global_function_pointer), param_buffer, dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream),
                                    "after cudaLaunchDevice in triple_chevron_launcher::launch()");
 #endif
     } // end launch()
