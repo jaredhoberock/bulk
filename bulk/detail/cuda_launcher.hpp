@@ -98,7 +98,7 @@ size_t maximum_potential_occupancy(Function kernel, size_t num_threads, size_t n
 template<unsigned int block_size, typename Function>
 __global__
 __bulk_launch_bounds__(block_size, 0)
-void launch_by_value(uninitialized<Function> f)
+void bulk_launch_by_value(uninitialized<Function> f)
 {
   f.get()();
 }
@@ -106,7 +106,7 @@ void launch_by_value(uninitialized<Function> f)
 template<unsigned int block_size, typename Function>
 __global__
 __bulk_launch_bounds__(block_size, 0)
-void launch_by_value(Function f)
+void bulk_launch_by_value(Function f)
 {
   f();
 }
@@ -116,7 +116,7 @@ void launch_by_value(Function f)
 template<unsigned int block_size, typename Function>
 __global__
 __bulk_launch_bounds__(block_size, 0)
-void launch_by_pointer(const Function *f)
+void bulk_launch_by_pointer(const Function *f)
 {
   // copy to registers
   Function f_reg = *f;
@@ -166,7 +166,7 @@ class triple_chevron_launcher_base<block_size,Function,true>
 template<unsigned int block_size, typename Function>
 const typename triple_chevron_launcher_base<block_size,Function,true>::global_function_pointer_t
   triple_chevron_launcher_base<block_size,Function,true>::global_function_pointer
-    = launch_by_value<block_size,Function>;
+    = bulk_launch_by_value<block_size,Function>;
 
 
 template<unsigned int block_size, typename Function>
@@ -192,7 +192,7 @@ struct triple_chevron_launcher_base<block_size,Function,false>
 template<unsigned int block_size, typename Function>
 const typename triple_chevron_launcher_base<block_size,Function,false>::global_function_pointer_t
   triple_chevron_launcher_base<block_size,Function,false>::global_function_pointer
-    = launch_by_pointer<block_size,Function>;
+    = bulk_launch_by_pointer<block_size,Function>;
 
 
 // sm_20+ devices have 4096 bytes of parameter space
