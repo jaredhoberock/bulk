@@ -18,10 +18,10 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/detail/cuda_task.hpp>
-#include <bulk/detail/cuda_launcher/triple_chevron_launcher.hpp>
 #include <bulk/detail/throw_on_error.hpp>
-#include <bulk/detail/runtime_introspection.hpp>
-#include <bulk/detail/cuda_launch_config.hpp>
+#include <bulk/detail/cuda_launcher/runtime_introspection.hpp>
+#include <bulk/detail/cuda_launcher/triple_chevron_launcher.hpp>
+#include <bulk/detail/cuda_launcher/cuda_launch_config.hpp>
 #include <bulk/detail/synchronize.hpp>
 #include <thrust/detail/minmax.h>
 #include <thrust/pair.h>

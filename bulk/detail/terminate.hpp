@@ -49,6 +49,19 @@ inline void terminate_with_message(const char* message)
 }
 
 
+__host__ __device__
+inline void terminate_on_error(cudaError_t e, const char* message)
+{
+  if(e)
+  {
+#if (__BULK_HAS_PRINTF__ && __BULK_HAS_CUDART__)
+    printf("Error after: %s: %s\n", message, cudaGetErrorString(e));
+#endif
+    bulk::detail::terminate();
+  }
+}
+
+
 } // end detail
 } // end bulk
 BULK_NAMESPACE_SUFFIX

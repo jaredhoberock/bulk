@@ -15,7 +15,7 @@
  */
 
 #include <bulk/detail/config.hpp>
-#include <bulk/detail/runtime_introspection.hpp>
+#include <bulk/detail/cuda_launcher/runtime_introspection.hpp>
 #include <bulk/detail/throw_on_error.hpp>
 #include <thrust/system/cuda/detail/guarded_cuda_runtime_api.h>
 #include <thrust/detail/util/blocking.h>

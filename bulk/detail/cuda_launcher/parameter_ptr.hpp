@@ -19,6 +19,7 @@
 #include <bulk/detail/config.hpp>
 #include <bulk/detail/guarded_cuda_runtime_api.hpp>
 #include <bulk/detail/throw_on_error.hpp>
+#include <bulk/detail/terminate.hpp>
 #include <thrust/detail/swap.h>
 #include <cstring>
 
@@ -56,12 +57,7 @@ class parameter_ptr
     {
       if(m_ptr)
       {
-        // swallow errors in destructor
-        cudaError_t error = cudaFree(m_ptr);
-        if(error)
-        {
-          printf("parameter_ptr dtor(): CUDA error: %s\n", cudaGetErrorString(error));
-        }
+        bulk::detail::terminate_on_error(cudaFree(m_ptr), "in parameter_ptr dtor");
       }
     }
 

@@ -19,7 +19,7 @@
 #include <bulk/detail/config.hpp>
 
 // #include this for device_properties_t and function_attributes_t
-#include <bulk/detail/cuda_launch_config.hpp>
+#include <bulk/detail/cuda_launcher/cuda_launch_config.hpp>
 
 // #include this for size_t
 #include <cstddef>
