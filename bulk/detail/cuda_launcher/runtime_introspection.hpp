@@ -78,5 +78,5 @@ BULK_NAMESPACE_SUFFIX
 
 #endif // __BULK_HAS_CUDART__
 
-#include <bulk/detail/runtime_introspection.inl>
+#include <bulk/detail/cuda_launcher/runtime_introspection.inl>
 
