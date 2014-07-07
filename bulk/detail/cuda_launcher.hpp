@@ -173,9 +173,9 @@ template<unsigned int block_size, typename Function>
 struct triple_chevron_launcher_base<block_size,Function,false>
 {
 #if BULK_ASYNC_USE_UNINITIALIZED
-  typedef void (*global_function_pointer_t)(uninitialized<Function>);
+  typedef void (*global_function_pointer_t)(const uninitialized<Function>*);
 #else
-  typedef void (*global_function_pointer_t)(Function);
+  typedef void (*global_function_pointer_t)(const Function*);
 #endif
 
   static const global_function_pointer_t global_function_pointer;
