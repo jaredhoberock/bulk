@@ -137,9 +137,9 @@ bool verbose = false;
 
 // triple_chevron_launcher_base is the base class of triple_chevron_launcher
 // it primarily serves to choose (statically) which __global__ function is used as the kernel
-// sm_10 devices have 256 bytes of parameter space
-// XXX since sm_10 is unsupported, we should use whatever is the parameter space of sm_20 & above (4096 i think)
-template<unsigned int block_size, typename Function, bool by_value = (sizeof(Function) <= 256)> class triple_chevron_launcher_base;
+// sm_20+ devices have 4096 bytes of parameter space
+// http://docs.nvidia.com/cuda/cuda-c-programming-guide/#function-parameters
+template<unsigned int block_size, typename Function, bool by_value = (sizeof(Function) <= 4096)> class triple_chevron_launcher_base;
 
 
 template<unsigned int block_size, typename Function>
@@ -195,9 +195,9 @@ const typename triple_chevron_launcher_base<block_size,Function,false>::global_f
     = launch_by_pointer<block_size,Function>;
 
 
-// sm_10 devices have 256 bytes of parameter space
-// XXX since sm_10 is unsupported, we should use whatever is the parameter space of sm_20 & above (1024 i think)
-template<unsigned int block_size_, typename Function, bool by_value = sizeof(Function) <= 256>
+// sm_20+ devices have 4096 bytes of parameter space
+// http://docs.nvidia.com/cuda/cuda-c-programming-guide/#function-parameters
+template<unsigned int block_size_, typename Function, bool by_value = sizeof(Function) <= 4096>
 class triple_chevron_launcher : protected triple_chevron_launcher_base<block_size_, Function>
 {
   private:
@@ -470,11 +470,13 @@ struct cuda_launcher<
 
           size_type num_physical_blocks = thrust::min<size_type>(num_remaining_physical_blocks, max_physical_grid_size);
 
+#ifndef __CUDA_ARCH__
           if(bulk::detail::verbose)
           {
             std::clog << "cuda_launcher::launch(): max_physical_grid_size: " << max_physical_grid_size << std::endl;
             std::clog << "cuda_launcher::launch(): requesting " << num_physical_blocks << " physical blocks" << std::endl;
           }
+#else
 
           super_t::launch(num_physical_blocks, block_size, heap_size, stream, task);
 
