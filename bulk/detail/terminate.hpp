@@ -42,7 +42,7 @@ __host__ __device__
 inline void terminate_with_message(const char* message)
 {
 #if __BULK_HAS_PRINTF__
-  std::printf(message);
+  std::printf("%s\n", message);
 #endif
 
   bulk::detail::terminate();
