@@ -80,8 +80,7 @@ struct cuda_launcher_base
   {
     if(num_blocks > 0)
     {
-      thrust::cuda::tag exec;
-      super_t::launch(exec, num_blocks, block_size, num_dynamic_smem_bytes, stream, task);
+      super_t::launch(num_blocks, block_size, num_dynamic_smem_bytes, stream, task);
 
       bulk::detail::synchronize_if_enabled("bulk_kernel_by_value");
     } // end if

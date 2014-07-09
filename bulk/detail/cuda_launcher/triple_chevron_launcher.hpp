@@ -20,7 +20,6 @@
 #include <bulk/detail/alignment.hpp>
 #include <bulk/detail/throw_on_error.hpp>
 #include <bulk/detail/cuda_launcher/parameter_ptr.hpp>
-#include <thrust/system/cuda/detail/execution_policy.h>
 
 // It's not possible to launch a CUDA kernel unless __BULK_HAS_CUDART__
 // is 1, so we'd like to just hide all this code when that macro is 0.
@@ -115,9 +114,8 @@ class triple_chevron_launcher : protected triple_chevron_launcher_base<block_siz
   public:
     typedef Function task_type;
 
-    template<typename DerivedPolicy>
-    __host__ __device__
-    void launch(thrust::cuda::execution_policy<DerivedPolicy> &, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
+    inline __host__ __device__
+    void launch(unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
     {
       struct workaround
       {
@@ -167,14 +165,13 @@ class triple_chevron_launcher<block_size_,Function,false> : protected triple_che
   public:
     typedef Function task_type;
 
-    template<typename DerivedPolicy>
-    __host__ __device__
-    void launch(thrust::cuda::execution_policy<DerivedPolicy> &exec, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
+    inline __host__ __device__
+    void launch(unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
     {
       struct workaround
       {
         __host__ __device__
-        static void supported_path(thrust::cuda::execution_policy<DerivedPolicy> &exec, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
+        static void supported_path(unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
         {
           bulk::detail::parameter_ptr<task_type> parm = bulk::detail::make_parameter<task_type>(task);
 
@@ -194,16 +191,16 @@ class triple_chevron_launcher<block_size_,Function,false> : protected triple_che
         }
 
         __host__ __device__
-        static void unsupported_path(thrust::cuda::execution_policy<DerivedPolicy> &, unsigned int, unsigned int, size_t, cudaStream_t, task_type)
+        static void unsupported_path(unsigned int, unsigned int, size_t, cudaStream_t, task_type)
         {
           bulk::detail::terminate_with_message("triple_chevron_launcher::launch(): CUDA kernel launch requires CUDART.");
         }
       };
 
 #if __BULK_HAS_CUDART__
-      workaround::supported_path(exec, num_blocks, block_size, num_dynamic_smem_bytes, stream, task);
+      workaround::supported_path(num_blocks, block_size, num_dynamic_smem_bytes, stream, task);
 #else
-      workaround::unsupported_path(exec, num_blocks, block_size, num_dynamic_smem_bytes, stream, task);
+      workaround::unsupported_path(num_blocks, block_size, num_dynamic_smem_bytes, stream, task);
 #endif
     } // end launch()
 };
