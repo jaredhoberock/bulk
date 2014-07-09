@@ -60,17 +60,23 @@ future<void> async(ExecutionGroup g, Closure c, cudaEvent_t before_event)
 #if (__BULK_HAS_CUDART__ && !defined(__CUDA_ARCH__))
   bulk::detail::throw_on_error(cudaStreamCreate(&s), "cudaStreamCreate in bulk::detail::async");
 #else
+  s = 0;
   bulk::detail::terminate_with_message("bulk::async(): cudaStreamCreate() is unsupported in __device__ code.");
 #endif
 
+#if __BULK_HAS_CUDART__
   if(before_event != 0)
   {
     bulk::detail::throw_on_error(cudaStreamWaitEvent(s, before_event, 0), "cudaStreamWaitEvent in bulk::detail::async");
   }
+#else
+  bulk::detail::terminate_with_message("async_in_stream(): cudaStreamWaitEvent requires CUDART");
+#endif
 
   bulk::detail::cuda_launcher<ExecutionGroup, Closure> launcher;
   launcher.launch(g, c, s);
 
+  // note we pass true here, unlike false above
   return future_core_access::create(s, true);
 } // end async()
 
