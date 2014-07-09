@@ -73,15 +73,6 @@ struct triple_chevron_launcher_base<block_size,Function,true>
   typedef void (*global_function_pointer_t)(Function);
 
   __host__ __device__
-  triple_chevron_launcher_base()
-  {
-    // XXX this use of global_function_pointer seems to force
-    //     nvcc to include the __global__ function in the binary
-    //     without this line, it can be lost
-    (void)global_function_pointer;
-  }
-
-  __host__ __device__
   static global_function_pointer_t global_function_pointer()
   {
     return launch_by_value<block_size,Function>;
@@ -104,15 +95,6 @@ template<unsigned int block_size, typename Function>
 struct triple_chevron_launcher_base<block_size,Function,false>
 {
   typedef void (*global_function_pointer_t)(const Function*);
-
-  __host__ __device__
-  triple_chevron_launcher_base()
-  {
-    // XXX this use of global_function_pointer seems to force
-    //     nvcc to include the __global__ function in the binary
-    //     without this line, it can be lost
-    (void)global_function_pointer;
-  }
 
   __host__ __device__
   static global_function_pointer_t global_function_pointer()
@@ -142,17 +124,15 @@ class triple_chevron_launcher : protected triple_chevron_launcher_base<block_siz
         __host__ __device__
         static void supported_path(unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
         {
-          typename super_t::global_function_pointer_t kernel = super_t::global_function_pointer();
-
 #if __BULK_HAS_CUDART__
 #  ifndef __CUDA_ARCH__
           cudaConfigureCall(dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream);
           cudaSetupArgument(task, 0);
-          bulk::detail::throw_on_error(cudaLaunch(kernel), "after cudaLaunch in triple_chevron_launcher::launch()");
+          bulk::detail::throw_on_error(cudaLaunch(super_t::global_function_pointer()), "after cudaLaunch in triple_chevron_launcher::launch()");
 #  else
           void *param_buffer = cudaGetParameterBuffer(alignment_of<task_type>::value, sizeof(task_type));
           std::memcpy(param_buffer, &task, sizeof(task_type));
-          bulk::detail::throw_on_error(cudaLaunchDevice(reinterpret_cast<void*>(kernel), param_buffer, dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream),
+          bulk::detail::throw_on_error(cudaLaunchDevice(reinterpret_cast<void*>(super_t::global_function_pointer()), param_buffer, dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream),
                                        "after cudaLaunchDevice in triple_chevron_launcher::launch()");
 #  endif // __CUDA_ARCH__
 #endif // __BULK_HAS_CUDART__
@@ -196,19 +176,18 @@ class triple_chevron_launcher<block_size_,Function,false> : protected triple_che
         __host__ __device__
         static void supported_path(thrust::cuda::execution_policy<DerivedPolicy> &exec, unsigned int num_blocks, unsigned int block_size, size_t num_dynamic_smem_bytes, cudaStream_t stream, task_type task)
         {
-          typename super_t::global_function_pointer_t kernel = super_t::global_function_pointer();
           bulk::detail::parameter_ptr<task_type> parm = bulk::detail::make_parameter<task_type>(task);
 
 #if __BULK_HAS_CUDART__
 #  ifndef __CUDA_ARCH__
           cudaConfigureCall(dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream);
           cudaSetupArgument(static_cast<const task_type*>(parm.get()), 0);
-          bulk::detail::throw_on_error(cudaLaunch(kernel), "after cudaLaunch in triple_chevron_launcher::launch()");
+          bulk::detail::throw_on_error(cudaLaunch(super_t::global_function_pointer()), "after cudaLaunch in triple_chevron_launcher::launch()");
 #  else
           void *param_buffer = cudaGetParameterBuffer(alignment_of<task_type>::value, sizeof(task_type));
           task_type *task_ptr = parm.get();
           std::memcpy(param_buffer, &task_ptr, sizeof(task_type*));
-          bulk::detail::throw_on_error(cudaLaunchDevice(reinterpret_cast<void*>(kernel), param_buffer, dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream),
+          bulk::detail::throw_on_error(cudaLaunchDevice(reinterpret_cast<void*>(super_t::global_function_pointer()), param_buffer, dim3(num_blocks), dim3(block_size), num_dynamic_smem_bytes, stream),
                                        "after cudaLaunchDevice in triple_chevron_launcher::launch()");
 #  endif // __CUDA_ARCH__
 #endif // __BULK_HAS_CUDART__
