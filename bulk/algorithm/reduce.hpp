@@ -125,9 +125,12 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
 
   bool this_sum_defined = false;
 
-  typename thrust::iterator_traits<RandomAccessIterator>::difference_type n = last - first;
+  size_type n = last - first;
 
-  for(; first < last; first += elements_per_group)
+  // XXX we use offset as the loop counter variable instead of first
+  //     because elements_per_group can actually overflow some kinds of iterators
+  //     with small difference_types
+  for(size_type offset = 0; offset < n; first += elements_per_group, offset += elements_per_group)
   {
     size_type partition_size = thrust::min<size_type>(elements_per_group, last - first);
 
