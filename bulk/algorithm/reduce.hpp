@@ -149,12 +149,24 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
     size_type local_size = 0;
     if(partition_size < elements_per_group)
     {
+//  XXX i guess nvcc miscompiles this loop for counting_iterators
+//      size_type index = tid;
+//      for(size_type i = 0; i < grainsize; ++i, ++local_first, index += groupsize)
+//      {
+//        if(index < partition_size)
+//        {
+//          local_inputs[i] = *local_first;
+//          ++local_size;
+//        } // end if
+//      } // end for
+//
+      RandomAccessIterator iter = local_first.base();
       size_type index = tid;
-      for(size_type i = 0; i < grainsize; ++i, ++local_first, index += groupsize)
+      for(size_type i = 0; i < grainsize; ++i, index += groupsize, iter += groupsize)
       {
         if(index < partition_size)
         {
-          local_inputs[i] = *local_first;
+          local_inputs[i] = *iter;
           ++local_size;
         } // end if
       } // end for
@@ -162,10 +174,16 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
     else
     {
       local_size = grainsize;
-      bulk::copy_n(bulk::bound<grainsize>(g.this_exec),
-                   local_first,
-                   local_size,
-                   local_inputs);
+//  XXX nvcc 6.5 RC miscompiles this loop when RandomAccessIterator is a counting_iterator
+//      bulk::copy_n(bulk::bound<grainsize>(g.this_exec),
+//                   local_first,
+//                   local_size,
+//                   local_inputs);
+      RandomAccessIterator iter = local_first.base();
+      for(size_type i = 0; i < grainsize; ++i, iter += groupsize)
+      {
+        local_inputs[i] = *iter;
+      } // end for
     } // end else
 
     // reduce local_inputs sequentially
