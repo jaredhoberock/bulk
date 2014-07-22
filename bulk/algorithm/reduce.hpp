@@ -168,7 +168,7 @@ T reduce(bulk::concurrent_group<bulk::agent<grainsize>,groupsize> &g,
     // reduce local_inputs sequentially
     this_sum = this_sum_defined ?
       bulk::reduce(bulk::bound<grainsize>(g.this_exec), local_inputs, local_inputs + local_size, this_sum, binary_op) :
-      bulk::reduce(bulk::bound<grainsize-1>(g.this_exec), local_inputs + 1, local_inputs + local_size, local_inputs[0], binary_op);
+      bulk::reduce(bulk::bound<grainsize-1>(g.this_exec), local_inputs + 1, local_inputs + local_size, T(local_inputs[0]), binary_op);
 
     this_sum_defined = true;
   } // end for
