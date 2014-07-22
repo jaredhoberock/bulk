@@ -225,7 +225,7 @@ thrust::pair<RandomAccessIterator3,RandomAccessIterator4>
 
   size_type subscription = 100;
   size_type num_groups = thrust::min<size_type>(subscription * bulk::concurrent_group<>::hardware_concurrency(), (n + interval_size - 1) / interval_size);
-  uniform_decomposition<size_type> decomp(n, num_groups);
+  aligned_decomposition<size_type> decomp(n, num_groups, tile_size);
 
   // count the number of tail flags in each interval
   tail_flags<

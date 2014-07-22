@@ -67,7 +67,7 @@ T my_reduce(RandomAccessIterator first, RandomAccessIterator last, T init, Binar
   if(n <= 0) return init;
 
   const size_type groupsize = 128;
-  const size_type grainsize = 9;
+  const size_type grainsize = 7;
   const size_type tile_size = groupsize * grainsize;
   const size_type num_tiles = (n + tile_size - 1) / tile_size;
   const size_type subscription = 10;
