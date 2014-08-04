@@ -18,6 +18,7 @@
 
 #include <bulk/detail/config.hpp>
 #include <bulk/execution_policy.hpp>
+#include <bulk/choose_sizes.hpp>
 #include <bulk/future.hpp>
 #include <bulk/async.hpp>
 #include <bulk/malloc.hpp>

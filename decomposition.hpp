@@ -11,6 +11,11 @@ class trivial_decomposition
     typedef thrust::pair<size_type,size_type> range;
 
     __host__ __device__
+    trivial_decomposition()
+      : m_n(0)
+    {}
+
+    __host__ __device__
     trivial_decomposition(size_type n)
       : m_n(n)
     {}
@@ -54,6 +59,13 @@ class blocked_decomposition
     typedef Size size_type;
 
     typedef thrust::pair<size_type,size_type> range;
+
+    __host__ __device__
+    blocked_decomposition()
+      : m_n(0),
+        m_block_size(0),
+        m_num_partitions(0)
+    {}
 
     __host__ __device__
     blocked_decomposition(size_type n, Size block_size)
@@ -108,6 +120,11 @@ class uniform_decomposition
 
   public:
     __host__ __device__
+    uniform_decomposition()
+      : super_t()
+    {}
+
+    __host__ __device__
     uniform_decomposition(Size n, Size num_partitions)
       : super_t(n, n / num_partitions)
     {}
@@ -129,6 +146,13 @@ class aligned_decomposition
     typedef Size size_type;
 
     typedef thrust::pair<size_type,size_type> range;
+
+    __host__ __device__
+    aligned_decomposition()
+      : m_n(0),
+        m_num_partitions(0),
+        m_tile_size(0)
+    {}
 
     __host__ __device__
     aligned_decomposition(Size n, Size num_partitions, Size aligned_size)
