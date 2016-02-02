@@ -16,13 +16,13 @@
 
 #pragma once
 
-#include <thrust/system/cuda/detail/bulk/detail/config.hpp>
-#include <thrust/system/cuda/detail/bulk/detail/alignment.hpp>
-#include <thrust/system/cuda/detail/bulk/detail/cuda_task.hpp>
-#include <thrust/system/cuda/detail/bulk/detail/cuda_launcher/runtime_introspection.hpp>
-#include <thrust/system/cuda/detail/bulk/detail/cuda_launcher/triple_chevron_launcher.hpp>
-#include <thrust/system/cuda/detail/bulk/detail/cuda_launcher/cuda_launch_config.hpp>
-#include <thrust/system/cuda/detail/bulk/detail/synchronize.hpp>
+#include <bulk/detail/config.hpp>
+#include <bulk/detail/alignment.hpp>
+#include <bulk/detail/cuda_task.hpp>
+#include <bulk/detail/cuda_launcher/runtime_introspection.hpp>
+#include <bulk/detail/cuda_launcher/triple_chevron_launcher.hpp>
+#include <bulk/detail/cuda_launcher/cuda_launch_config.hpp>
+#include <bulk/detail/synchronize.hpp>
 #include <thrust/detail/minmax.h>
 #include <thrust/pair.h>
 
