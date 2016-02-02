@@ -16,13 +16,13 @@
 
 #pragma once
 
-#include <bulk/detail/config.hpp>
-#include <bulk/detail/alignment.hpp>
-#include <bulk/detail/cuda_task.hpp>
-#include <bulk/detail/cuda_launcher/runtime_introspection.hpp>
-#include <bulk/detail/cuda_launcher/triple_chevron_launcher.hpp>
-#include <bulk/detail/cuda_launcher/cuda_launch_config.hpp>
-#include <bulk/detail/synchronize.hpp>
+#include <thrust/system/cuda/detail/bulk/detail/config.hpp>
+#include <thrust/system/cuda/detail/bulk/detail/alignment.hpp>
+#include <thrust/system/cuda/detail/bulk/detail/cuda_task.hpp>
+#include <thrust/system/cuda/detail/bulk/detail/cuda_launcher/runtime_introspection.hpp>
+#include <thrust/system/cuda/detail/bulk/detail/cuda_launcher/triple_chevron_launcher.hpp>
+#include <thrust/system/cuda/detail/bulk/detail/cuda_launcher/cuda_launch_config.hpp>
+#include <thrust/system/cuda/detail/bulk/detail/synchronize.hpp>
 #include <thrust/detail/minmax.h>
 #include <thrust/pair.h>
 
@@ -82,7 +82,7 @@ struct cuda_launcher_base
                                                         size_type num_threads_per_block,
                                                         size_type num_smem_bytes_per_block)
   {
-    return bulk::detail::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(props, attr, num_threads_per_block, num_smem_bytes_per_block);
+    return static_cast<size_type>(bulk::detail::cuda_launch_config_detail::max_active_blocks_per_multiprocessor(props, attr, num_threads_per_block, num_smem_bytes_per_block));
   } // end max_active_blocks_per_multiprocessor()
 
 
@@ -98,7 +98,7 @@ struct cuda_launcher_base
     // if the kernel footprint is already too large, return (0,0)
     if(occupancy < 1) return thrust::make_pair(0,0);
 
-    return thrust::make_pair(bulk::detail::proportional_smem_allocation(props, attr, occupancy), occupancy);
+    return thrust::make_pair(static_cast<size_type>(bulk::detail::proportional_smem_allocation(props, attr, occupancy)), occupancy);
   } // end smem_occupancy_limit()
 
 
@@ -152,7 +152,7 @@ struct cuda_launcher_base
     {
       bulk::detail::function_attributes_t attr = bulk::detail::function_attributes(super_t::global_function_pointer());
 
-      return bulk::detail::block_size_with_maximum_potential_occupancy(attr, device_properties());
+      return static_cast<size_type>(bulk::detail::block_size_with_maximum_potential_occupancy(attr, device_properties()));
     } // end if
 
     return result;
