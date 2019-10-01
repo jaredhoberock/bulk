@@ -125,7 +125,7 @@ class triple_chevron_launcher : protected triple_chevron_launcher_base<block_siz
 #if __BULK_HAS_CUDART__
 #  ifndef __CUDA_ARCH__
           // create an array of void*s which point to each argument
-          void* pointers_to_args[] = {reinterpret_cast<void*>(const_cast<Args*>(&task))};
+          void* pointers_to_args[] = {reinterpret_cast<void*>(const_cast<task_type*>(&task))};
 
           bulk::detail::throw_on_error(
             cudaLaunchKernel(super_t::global_function_pointer(), dim3(num_blocks), dim3(block_size), pointers_to_args, num_dynamic_smem_bytes, stream),
@@ -182,7 +182,7 @@ class triple_chevron_launcher<block_size_,Function,false> : protected triple_che
 #if __BULK_HAS_CUDART__
 #  ifndef __CUDA_ARCH__
           // create an array of void*s which point to each argument
-          void* pointers_to_args[] = {reinterpret_cast<void*>(const_cast<Args*>(parm.get()))};
+          void* pointers_to_args[] = {reinterpret_cast<void*>(const_cast<task_type*>(parm.get()))};
 
           bulk::detail::throw_on_error(
             cudaLaunchKernel(super_t::global_function_pointer(), dim3(num_blocks), dim3(block_size), pointers_to_args, num_dynamic_smem_bytes, stream),
