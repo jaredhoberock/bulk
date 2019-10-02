@@ -127,8 +127,11 @@ class triple_chevron_launcher : protected triple_chevron_launcher_base<block_siz
           // create an array of void*s which point to each argument
           void* pointers_to_args[] = {reinterpret_cast<void*>(const_cast<task_type*>(&task))};
 
+          // get a void* to the global function
+          void* kernel = reinterpret_cast<void*>(super_t::global_function_pointer());
+
           bulk::detail::throw_on_error(
-            cudaLaunchKernel(super_t::global_function_pointer(), dim3(num_blocks), dim3(block_size), pointers_to_args, num_dynamic_smem_bytes, stream),
+            cudaLaunchKernel(kernel, dim3(num_blocks), dim3(block_size), pointers_to_args, num_dynamic_smem_bytes, stream),
             "after cudaLaunchKernel in triple_chevron_launcher::launch()"
           );
 #  else
@@ -184,8 +187,11 @@ class triple_chevron_launcher<block_size_,Function,false> : protected triple_che
           // create an array of void*s which point to each argument
           void* pointers_to_args[] = {reinterpret_cast<void*>(const_cast<task_type*>(parm.get()))};
 
+          // get a void* to the global function
+          void* kernel = reinterpret_cast<void*>(super_t::global_function_pointer());
+
           bulk::detail::throw_on_error(
-            cudaLaunchKernel(super_t::global_function_pointer(), dim3(num_blocks), dim3(block_size), pointers_to_args, num_dynamic_smem_bytes, stream),
+            cudaLaunchKernel(kernel, dim3(num_blocks), dim3(block_size), pointers_to_args, num_dynamic_smem_bytes, stream),
             "after cudaLaunchKernel in triple_chevron_launcher::launch()"
           );
 #  else
